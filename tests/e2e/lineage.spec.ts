@@ -85,24 +85,16 @@ test('can hide and show columns for all nodes', async ({ page }) => {
   await expect(outputNode.getByText('customer_name')).toBeVisible();
 });
 
-test('can resize a node height to reveal more columns', async ({ page }) => {
+test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {
   await page.goto('/');
 
   const node = page.getByTestId('rf__node-cte_recent_orders');
   await expect(node).toBeVisible();
-  const before = await node.boundingBox();
-  const resizeGrip = page.locator('[aria-label="Resize recent_orders height"]');
-  const gripBox = await resizeGrip.boundingBox();
-  expect(before).not.toBeNull();
-  expect(gripBox).not.toBeNull();
+  await expect(node.getByText('amount')).toBeVisible();
+  await expect(page.locator('[aria-label="Resize recent_orders height"]')).toHaveCount(0);
 
-  await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
-  await page.mouse.down();
-  await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2 + 160, { steps: 8 });
-  await page.mouse.up();
-
-  const after = await node.boundingBox();
-  expect(after?.height).toBeGreaterThan((before?.height ?? 0) + 40);
+  const overflowY = await node.locator('.lineage-node-body').evaluate((element) => window.getComputedStyle(element).overflowY);
+  expect(overflowY).toBe('visible');
 });
 
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
@@ -120,9 +112,12 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toHaveClass(/lineage-column-source/);
   await expect(orderItemsNode.getByRole('button', { name: 'unit_price', exact: true })).toHaveClass(/lineage-column-source/);
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
 
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
@@ -139,6 +134,8 @@ test('highlights downstream output lineage when a source column is selected', as
   await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(orderTotalsNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
 });
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {

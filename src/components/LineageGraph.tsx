@@ -19,7 +19,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const previousLineageRef = useRef(lineage);
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
-  const [nodeHeights, setNodeHeights] = useState<Map<string, number>>(() => new Map());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
@@ -42,13 +41,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return new Set(lineage.nodes.map((node) => node.id));
     });
   }, [lineage.nodes]);
-  const resizeNode = useCallback((nodeId: string, height: number) => {
-    setNodeHeights((current) => {
-      const next = new Map(current);
-      next.set(nodeId, height);
-      return next;
-    });
-  }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     setSelectedColumn((current) =>
       current?.columnId === column.id
@@ -61,7 +53,10 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     );
   }, []);
   const columnHighlights = useMemo(
-    () => (selectedColumn ? resolveColumnHighlights(lineage.nodes, selectedColumn) : { highlightedColumnIds: new Set<string>(), sourceColumnIds: new Set<string>() }),
+    () =>
+      selectedColumn
+        ? resolveColumnHighlights(lineage.nodes, selectedColumn)
+        : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
     [lineage.nodes, selectedColumn],
   );
   const graphNodes = useMemo(
@@ -71,9 +66,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         data: {
           ...node.data,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
-          nodeHeight: nodeHeights.get(node.id),
           onToggleColumns: toggleColumns,
-          onNodeResize: resizeNode,
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
@@ -81,19 +74,45 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         },
       })),
     [
+      columnHighlights.highlightedEdgeIds,
       columnHighlights.highlightedColumnIds,
       columnHighlights.sourceColumnIds,
       graph.nodes,
       hiddenColumnNodeIds,
-      nodeHeights,
-      resizeNode,
       selectColumn,
       selectedColumn?.columnId,
       toggleColumns,
     ],
   );
+  const graphEdges = useMemo(
+    () =>
+      graph.edges.map((edge) => {
+        if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
+          return edge;
+        }
+
+        const baseStyle = edge.style ?? {};
+        return {
+          ...edge,
+          animated: true,
+          style: {
+            ...baseStyle,
+            stroke: '#2563eb',
+            strokeWidth: 5,
+          },
+          markerEnd:
+            edge.markerEnd && typeof edge.markerEnd === 'object'
+              ? {
+                  ...edge.markerEnd,
+                  color: '#2563eb',
+                }
+              : edge.markerEnd,
+        };
+      }),
+    [columnHighlights.highlightedEdgeIds, graph.edges],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
 
   useEffect(() => {
     if (previousLineageRef.current !== lineage) {
@@ -122,13 +141,12 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   }, [graphNodes, lineage, setNodes]);
 
   useEffect(() => {
-    setEdges(graph.edges);
-  }, [graph.edges, setEdges]);
+    setEdges(graphEdges);
+  }, [graphEdges, setEdges]);
 
   useEffect(() => {
     setSelectedColumn(null);
     setHiddenColumnNodeIds(new Set());
-    setNodeHeights(new Map());
   }, [lineage]);
 
   return (
@@ -171,10 +189,14 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   );
 }
 
-function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedColumn): { highlightedColumnIds: Set<string>; sourceColumnIds: Set<string> } {
+function resolveColumnHighlights(
+  nodes: LineageNode[],
+  selectedColumn: SelectedColumn,
+): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const downstreamByColumnKey = new Map<string, Array<{ columnName: string; nodeId: string }>>();
   const highlightedColumnIds = new Set<string>();
+  const highlightedEdgeIds = new Set<string>();
   const sourceColumnIds = new Set<string>();
   const visitedUpstream = new Set<string>();
   const visitedDownstream = new Set<string>();
@@ -208,6 +230,7 @@ function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedC
 
     let resolvedAny = false;
     for (const ref of upstream) {
+      highlightedEdgeIds.add(edgeKey(ref.nodeId, nodeId));
       resolvedAny = visitUpstream(ref.nodeId, ref.columnName) || resolvedAny;
     }
 
@@ -234,6 +257,7 @@ function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedC
       }
 
       highlightedColumnIds.add(downstreamColumn.id);
+      highlightedEdgeIds.add(edgeKey(nodeId, ref.nodeId));
       visitDownstream(ref.nodeId, ref.columnName);
     }
   };
@@ -242,9 +266,13 @@ function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedC
   visitDownstream(selectedColumn.nodeId, selectedColumn.columnName);
   highlightedColumnIds.delete(selectedColumn.columnId);
   sourceColumnIds.delete(selectedColumn.columnId);
-  return { highlightedColumnIds, sourceColumnIds };
+  return { highlightedColumnIds, highlightedEdgeIds, sourceColumnIds };
 }
 
 function columnKey(nodeId: string, columnName: string) {
   return `${nodeId}:${columnName}`;
+}
+
+function edgeKey(sourceId: string, targetId: string) {
+  return `${sourceId}-${targetId}`;
 }

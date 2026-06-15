@@ -418,37 +418,8 @@ textarea {
   flex: 1 1 auto;
   gap: 5px;
   min-height: 0;
-  max-height: 170px;
-  padding: 10px 12px 18px;
-  overflow: auto;
-}
-
-.lineage-node-resized .lineage-node-body {
-  max-height: none;
-}
-
-.lineage-node-resize {
-  position: absolute;
-  right: 6px;
-  bottom: 5px;
-  width: 24px;
-  height: 14px;
-  cursor: ns-resize;
-}
-
-.lineage-node-resize::before {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  width: 16px;
-  height: 8px;
-  border-right: 2px solid rgb(71 85 105 / 48%);
-  border-bottom: 2px solid rgb(71 85 105 / 48%);
-  content: "";
-}
-
-.lineage-node-resize:hover::before {
-  border-color: #2563eb;
+  padding: 10px 12px 12px;
+  overflow: visible;
 }
 
 .lineage-column {

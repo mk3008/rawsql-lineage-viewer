@@ -13,13 +13,11 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const Icon = iconByType[node.type];
   const columnsVisible = data.columnsVisible ?? true;
-  const nodeStyle = data.nodeHeight && columnsVisible ? { height: data.nodeHeight } : undefined;
 
   return (
     <div
-      className={`lineage-node lineage-node-${node.type} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${data.nodeHeight ? 'lineage-node-resized' : ''}`}
+      className={`lineage-node lineage-node-${node.type} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'}`}
       data-testid={`lineage-node-${node.type}`}
-      style={nodeStyle}
     >
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
@@ -67,30 +65,6 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}
         </div>
-      ) : null}
-      {columnsVisible ? (
-        <div
-          aria-label={`Resize ${node.label} height`}
-          className="lineage-node-resize nodrag"
-          onMouseDown={(event) => {
-            event.preventDefault();
-            event.stopPropagation();
-            const startY = event.clientY;
-            const startHeight = event.currentTarget.parentElement?.offsetHeight ?? data.nodeHeight ?? 210;
-
-            const onMouseMove = (moveEvent: MouseEvent) => {
-              data.onNodeResize?.(node.id, Math.max(118, Math.min(520, startHeight + moveEvent.clientY - startY)));
-            };
-            const onMouseUp = () => {
-              window.removeEventListener('mousemove', onMouseMove);
-              window.removeEventListener('mouseup', onMouseUp);
-            };
-
-            window.addEventListener('mousemove', onMouseMove);
-            window.addEventListener('mouseup', onMouseUp);
-          }}
-          role="separator"
-        />
       ) : null}
       <Handle type="source" position={Position.Right} />
     </div>
