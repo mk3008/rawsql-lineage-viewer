@@ -16,21 +16,20 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_orders-cte_recent_orders')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders')).toBeAttached();
-  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders-JOIN')).toBeAttached();
-  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN')).toBeAttached();
-  await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output-LEFT_JOIN')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders-JOIN')).not.toBeAttached();
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN')).not.toBeAttached();
+  await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output-LEFT_JOIN')).not.toBeAttached();
 
-  const innerJoinStyle = await page.getByTestId('rf__edge-table_order_items-cte_recent_orders-JOIN').locator('.react-flow__edge-path').first().getAttribute('style');
-  const outerJoinStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN').locator('.react-flow__edge-path').first().getAttribute('style');
   const outerDataFlowStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
-  expect(innerJoinStyle).not.toContain('stroke-dasharray');
-  expect(outerJoinStyle).toContain('stroke-dasharray');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
+  await expect(page.locator('.react-flow__edge-text')).toHaveCount(0);
+  await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
-  await expect(page.getByTestId('graph-info')).toContainText('JOIN');
+  await expect(page.getByTestId('graph-info')).toContainText('Derived');
+  await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
 });
 
-test('can toggle data flow and join edges independently', async ({ page }) => {
+test('does not render join edges while keeping outer join context on data flows', async ({ page }) => {
   await page.goto('/');
 
   const dataFlowEdge = page.getByTestId('rf__edge-table_customers-main_output');
@@ -39,19 +38,9 @@ test('can toggle data flow and join edges independently', async ({ page }) => {
 
   await expect(dataFlowEdge).toBeAttached();
   await expect(outerDataFlowEdge).toBeAttached();
-  await expect(joinEdge).toBeAttached();
-
-  await page.getByRole('checkbox', { name: 'JOIN' }).uncheck();
-  await expect(dataFlowEdge).toBeAttached();
-  await expect(outerDataFlowEdge).toBeAttached();
   await expect(joinEdge).not.toBeAttached();
   const outerDataFlowStyle = await outerDataFlowEdge.locator('.react-flow__edge-path').first().getAttribute('style');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
-
-  await page.getByRole('checkbox', { name: 'JOIN' }).check();
-  await page.getByRole('checkbox', { name: 'DataFlow' }).uncheck();
-  await expect(dataFlowEdge).not.toBeAttached();
-  await expect(joinEdge).toBeAttached();
 });
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
@@ -60,6 +49,7 @@ test('can drag lineage nodes to separate overlapping lines', async ({ page }) =>
   const node = page.getByTestId('rf__node-table_orders');
   await expect(node).toBeVisible();
   const before = await node.boundingBox();
+  const beforeTransform = await node.getAttribute('style');
   expect(before).not.toBeNull();
 
   await page.mouse.move(before!.x + before!.width / 2, before!.y + before!.height / 2);
@@ -67,10 +57,7 @@ test('can drag lineage nodes to separate overlapping lines', async ({ page }) =>
   await page.mouse.move(before!.x + before!.width / 2 + 90, before!.y + before!.height / 2 + 70, { steps: 8 });
   await page.mouse.up();
 
-  const after = await node.boundingBox();
-  expect(after).not.toBeNull();
-  expect(after!.x).toBeGreaterThan(before!.x + 40);
-  expect(after!.y).toBeGreaterThan(before!.y + 30);
+  await expect(node).not.toHaveAttribute('style', beforeTransform ?? '');
 });
 
 test('updates the lineage graph after editing SQL', async ({ page }) => {
@@ -82,6 +69,7 @@ test('updates the lineage graph after editing SQL', async ({ page }) => {
   await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
   await expect(page.getByTestId('rf__node-table_users')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_accounts')).toBeVisible();
-  await expect(page.getByTestId('rf__edge-table_accounts-main_output-LEFT_JOIN')).toBeAttached();
-  await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN').first()).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_accounts-main_output')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_accounts-main_output-LEFT_JOIN')).not.toBeAttached();
+  await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
 });

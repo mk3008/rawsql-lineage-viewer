@@ -189,45 +189,11 @@ textarea {
 
 .canvas-area {
   display: grid;
-  grid-template-rows: auto auto 1fr auto;
+  grid-template-rows: auto minmax(360px, 1fr) auto;
   min-width: 0;
   min-height: 0;
   padding: 18px 20px 16px;
   gap: 12px;
-}
-
-.edge-filter {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 36px;
-}
-
-.edge-filter label {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 0 10px;
-  border: 1px solid #d7e0ec;
-  border-radius: 6px;
-  background: #fff;
-  color: #334155;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.edge-filter input {
-  width: 14px;
-  height: 14px;
-  accent-color: #2563eb;
-}
-
-.edge-filter span {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
 }
 
 .canvas-toolbar {
@@ -288,6 +254,11 @@ textarea {
   border-color: #10b981;
 }
 
+.legend-dot.derived {
+  background: #fef3c7;
+  border-color: #f59e0b;
+}
+
 .legend-dot.output {
   background: #f3e8ff;
   border-color: #8b5cf6;
@@ -304,17 +275,13 @@ textarea {
   border-color: #059669;
 }
 
-.legend-line.join {
-  border-color: #2563eb;
-}
-
 .legend-line.outer {
   border-color: #64748b;
   border-top-style: dashed;
 }
 
 .graph-shell {
-  min-height: 0;
+  min-height: 360px;
   overflow: hidden;
   border: 1px solid #dfe6f1;
   border-radius: 8px;

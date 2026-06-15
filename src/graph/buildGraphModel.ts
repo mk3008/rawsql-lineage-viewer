@@ -1,4 +1,4 @@
-import type { EdgeVisibility, GraphEdge, GraphModel } from '../domain/graph';
+import type { GraphEdge, GraphModel } from '../domain/graph';
 import type { LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
 const nodeSize = {
@@ -11,23 +11,16 @@ const layoutSpacing = {
   y: 230,
 };
 
-export function buildGraphModel(lineage: LineageModel, edgeVisibility: EdgeVisibility): GraphModel {
+export function buildGraphModel(lineage: LineageModel): GraphModel {
   const positioned = layoutNodes(lineage.nodes, lineage.edges);
-  const visibleEdges = lineage.edges.filter((edge) => {
-    if (edge.type === 'dataFlow') {
-      return edgeVisibility.dataFlow;
-    }
-    if (edge.type === 'join') {
-      return edgeVisibility.join;
-    }
-    return true;
-  });
+  const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
 
   return {
     nodes: positioned.map((node) => ({
       id: node.id,
       type: 'lineageNode',
       position: node.position,
+      draggable: true,
       data: {
         lineageNode: node.lineageNode,
       },
@@ -114,7 +107,6 @@ function calculateDepths(nodes: LineageNode[], edges: LineageEdge[]): Map<string
 }
 
 function toGraphEdge(edge: LineageEdge): GraphEdge {
-  const isJoin = edge.type === 'join';
   const isOuterJoinContext = edge.joinType !== undefined && edge.joinType !== 'inner';
   return {
     id: edge.id,
@@ -122,18 +114,17 @@ function toGraphEdge(edge: LineageEdge): GraphEdge {
     target: edge.target,
     type: 'default',
     animated: false,
-    label: edge.label,
     data: {
       lineageEdge: edge,
     },
     style: {
-      stroke: isJoin ? '#2563eb' : '#059669',
+      stroke: '#059669',
       strokeWidth: 2,
       strokeDasharray: isOuterJoinContext ? '8 5' : undefined,
     },
     markerEnd: {
       type: 'arrowclosed',
-      color: isJoin ? '#2563eb' : '#059669',
+      color: '#059669',
     },
   };
 }

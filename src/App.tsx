@@ -1,7 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Code2, GitBranch, Menu, Play, X } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
-import type { EdgeVisibility } from './domain/graph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
 
@@ -9,10 +8,6 @@ export function App() {
   const [sql, setSql] = useState(salesSummarySql);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(salesSummarySql);
-  const [edgeVisibility, setEdgeVisibility] = useState<EdgeVisibility>({
-    dataFlow: true,
-    join: true,
-  });
 
   const analysis = useMemo(() => {
     try {
@@ -36,9 +31,9 @@ export function App() {
     ? {
         tables: adapterResult.lineage.nodes.filter((node) => node.type === 'table').length,
         ctes: adapterResult.lineage.nodes.filter((node) => node.type === 'cte').length,
+        derived: adapterResult.lineage.nodes.filter((node) => node.type === 'derived').length,
         outputs: adapterResult.lineage.nodes.filter((node) => node.type === 'output').length,
         dataFlows: adapterResult.lineage.edges.filter((edge) => edge.type === 'dataFlow').length,
-        joins: adapterResult.lineage.edges.filter((edge) => edge.type === 'join').length,
       }
     : null;
 
@@ -105,40 +100,22 @@ export function App() {
             <div className="legend">
               <span><i className="legend-dot table" />Table</span>
               <span><i className="legend-dot cte" />CTE</span>
+              <span><i className="legend-dot derived" />Derived</span>
               <span><i className="legend-dot output" />Output</span>
               <span><i className="legend-line data" />Data flow</span>
-              <span><i className="legend-line join" />Join</span>
               <span><i className="legend-line outer" />Outer join</span>
             </div>
-          </div>
-          <div className="edge-filter" aria-label="Edge visibility">
-            <label>
-              <input
-                type="checkbox"
-                checked={edgeVisibility.dataFlow}
-                onChange={(event) => setEdgeVisibility((value) => ({ ...value, dataFlow: event.target.checked }))}
-              />
-              <span><i className="legend-line data" />DataFlow</span>
-            </label>
-            <label>
-              <input
-                type="checkbox"
-                checked={edgeVisibility.join}
-                onChange={(event) => setEdgeVisibility((value) => ({ ...value, join: event.target.checked }))}
-              />
-              <span><i className="legend-line join" />JOIN</span>
-            </label>
           </div>
 
           {adapterResult ? (
             <>
-              <LineageGraph lineage={adapterResult.lineage} edgeVisibility={edgeVisibility} />
+              <LineageGraph lineage={adapterResult.lineage} />
               <div className="graph-info" data-testid="graph-info">
                 <span>Tables <strong>{graphStats?.tables}</strong></span>
                 <span>CTEs <strong>{graphStats?.ctes}</strong></span>
+                <span>Derived <strong>{graphStats?.derived}</strong></span>
                 <span>Output <strong>{graphStats?.outputs}</strong></span>
                 <span>DataFlow <strong>{graphStats?.dataFlows}</strong></span>
-                <span>JOIN <strong>{graphStats?.joins}</strong></span>
                 <span>Warnings <strong>{adapterResult.lineage.analysisWarnings.length}</strong></span>
               </div>
             </>

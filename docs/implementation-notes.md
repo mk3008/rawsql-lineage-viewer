@@ -26,6 +26,6 @@ The current adapter uses `SelectQueryParser.parse()` and reads the `rawsql-ts` A
 - `SimpleSelectQuery.fromClause.joins` provides joined sources and join types.
 - CTE names are resolved to CTE nodes; other table sources become table nodes.
 
-JOIN edges are routed from the joined source to the current query result node, not from one source to another. This keeps SELECT lineage directional: physical tables remain upstream sources, while CTEs and the final output receive incoming reference edges. CUD statements with `RETURNING` are a separate future scope and may need different target rules.
+JOIN edges are kept in the internal lineage model and are routed from the joined source to the current query result node, not from one source to another. This keeps SELECT lineage directional: physical tables remain upstream sources, while CTEs and the final output receive incoming reference edges. The graph renderer intentionally hides JOIN edges and edge labels for now; JOIN context is only reflected on data-flow edges through dashed outer-join styling. CUD statements with `RETURNING` are a separate future scope and may need different target rules.
 
 If this area is later moved into `rawsql-ts`, the useful API shape would be a stable graph/model output that distinguishes visible data nodes from process nodes without requiring the web app to parse Mermaid text.

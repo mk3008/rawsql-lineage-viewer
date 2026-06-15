@@ -16,8 +16,3 @@ export interface GraphModel {
   nodes: GraphNode[];
   edges: GraphEdge[];
 }
-
-export type EdgeVisibility = {
-  dataFlow: boolean;
-  join: boolean;
-};

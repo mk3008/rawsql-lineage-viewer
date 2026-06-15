@@ -1,6 +1,5 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
 import { useEffect, useMemo } from 'react';
-import type { EdgeVisibility } from '../domain/graph';
 import type { LineageModel } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -9,26 +8,18 @@ const nodeTypes = {
   lineageNode: LineageNodeCard,
 };
 
-export function LineageGraph({ lineage, edgeVisibility }: { lineage: LineageModel; edgeVisibility: EdgeVisibility }) {
-  const graph = useMemo(() => buildGraphModel(lineage, { dataFlow: true, join: true }), [lineage]);
-  const visibleEdges = useMemo(
-    () =>
-      graph.edges.filter((edge) => {
-        const type = edge.data?.lineageEdge.type;
-        return (type === 'dataFlow' && edgeVisibility.dataFlow) || (type === 'join' && edgeVisibility.join) || (type !== 'dataFlow' && type !== 'join');
-      }),
-    [edgeVisibility, graph.edges],
-  );
+export function LineageGraph({ lineage }: { lineage: LineageModel }) {
+  const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(visibleEdges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
 
   useEffect(() => {
     setNodes(graph.nodes);
   }, [graph.nodes, setNodes]);
 
   useEffect(() => {
-    setEdges(visibleEdges);
-  }, [setEdges, visibleEdges]);
+    setEdges(graph.edges);
+  }, [graph.edges, setEdges]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph">
