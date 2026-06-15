@@ -14,6 +14,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
+import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { LineageNodeCard } from './LineageNodeCard';
 
 const nodeTypes = {
@@ -32,7 +33,11 @@ interface SelectedColumn {
 
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const previousLineageRef = useRef(lineage);
-  const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
+  const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
+  const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
+  const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
+  const viewLineage = collapsedLineage.lineage;
+  const graph = useMemo(() => buildGraphModel(viewLineage), [viewLineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
@@ -41,7 +46,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
   const [viewportZoom, setViewportZoom] = useState(1);
-  const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
+  const allColumnsHidden = hiddenColumnNodeIds.size === viewLineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
       const next = new Set(current);
@@ -55,13 +60,31 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   }, []);
   const toggleAllColumns = useCallback(() => {
     setHiddenColumnNodeIds((current) => {
-      if (current.size === lineage.nodes.length) {
+      if (current.size === viewLineage.nodes.length) {
         return new Set();
       }
 
-      return new Set(lineage.nodes.map((node) => node.id));
+      return new Set(viewLineage.nodes.map((node) => node.id));
     });
-  }, [lineage.nodes]);
+  }, [viewLineage.nodes]);
+  const collapseUpstream = useCallback((nodeId: string) => {
+    setCollapsedGroupRootIds((current) => new Set(current).add(nodeId));
+    setSelectedColumn(null);
+    setSelectedNodeCommentTargetId(null);
+    setActiveCommentTargetId(null);
+    setDismissedCommentTargetIds(new Set());
+  }, []);
+  const expandGroup = useCallback((nodeId: string) => {
+    setCollapsedGroupRootIds((current) => {
+      const next = new Set(current);
+      next.delete(nodeId);
+      return next;
+    });
+    setSelectedColumn(null);
+    setSelectedNodeCommentTargetId(null);
+    setActiveCommentTargetId(null);
+    setDismissedCommentTargetIds(new Set());
+  }, []);
   const selectNode = useCallback((nodeId: string) => {
     setSelectedColumn(null);
     setDismissedCommentTargetIds(new Set());
@@ -100,9 +123,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const columnHighlights = useMemo(
     () =>
       selectedColumn
-        ? resolveColumnHighlights(lineage.nodes, selectedColumn)
+        ? resolveColumnHighlights(viewLineage.nodes, selectedColumn)
         : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
-    [lineage.nodes, selectedColumn],
+    [selectedColumn, viewLineage.nodes],
   );
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
@@ -142,7 +165,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetIds) ? 1000 : node.zIndex,
         data: {
           ...node.data,
+          canCollapseUpstream: collapsibleGroups.has(node.id),
+          collapsedGroup: collapsedLineage.groups.get(node.id),
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
+          onCollapseUpstream: collapseUpstream,
+          onExpandGroup: expandGroup,
           onToggleColumns: toggleColumns,
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
@@ -160,6 +187,10 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       columnHighlights.highlightedEdgeIds,
       columnHighlights.highlightedColumnIds,
       columnHighlights.sourceColumnIds,
+      collapseUpstream,
+      collapsedLineage.groups,
+      collapsibleGroups,
+      expandGroup,
       graph.nodes,
       hiddenColumnNodeIds,
       selectNode,
@@ -239,6 +270,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(new Set());
+    setCollapsedGroupRootIds(new Set());
   }, [lineage]);
 
   return (

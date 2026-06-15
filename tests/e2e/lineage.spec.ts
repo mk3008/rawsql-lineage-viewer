@@ -261,6 +261,55 @@ test('can hide and show columns for all nodes', async ({ page }) => {
   await expect(outputNode.getByText('customer_name')).toBeVisible();
 });
 
+test('can collapse upstream helper CTEs into a CTE group and expand them again', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH order_base AS (
+      SELECT o.id, o.customer_id, o.total_amount
+      FROM orders o
+    ),
+    customer_order_summary AS (
+      SELECT c.id AS customer_id, COUNT(ob.id) AS order_count
+      FROM customers c
+      LEFT JOIN order_base ob ON ob.customer_id = c.id
+      GROUP BY c.id
+    ),
+    support_pressure AS (
+      SELECT st.customer_id, COUNT(st.id) AS open_ticket_count
+      FROM support_tickets st
+      GROUP BY st.customer_id
+    ),
+    ranked_customers AS (
+      SELECT cos.customer_id, cos.order_count, COALESCE(sp.open_ticket_count, 0) AS open_ticket_count
+      FROM customer_order_summary cos
+      LEFT JOIN support_pressure sp ON sp.customer_id = cos.customer_id
+    )
+    SELECT rc.customer_id, rc.order_count, rc.open_ticket_count
+    FROM ranked_customers rc
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
+  await expect(rankedCustomersNode).toBeVisible();
+  await rankedCustomersNode.getByRole('button', { name: 'Collapse upstream helpers for ranked_customers' }).click();
+
+  await expect(rankedCustomersNode).toContainText('Build ranked_customers');
+  await expect(rankedCustomersNode).toContainText('3 helper CTEs');
+  await expect(rankedCustomersNode).toContainText('3 source nodes');
+  await expect(page.getByTestId('rf__node-cte_order_base')).not.toBeAttached();
+  await expect(page.getByTestId('rf__node-cte_customer_order_summary')).not.toBeAttached();
+  await expect(page.getByTestId('rf__node-cte_support_pressure')).not.toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-cte_ranked_customers')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_customers-cte_ranked_customers')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_support_tickets-cte_ranked_customers')).toBeAttached();
+
+  await rankedCustomersNode.getByRole('button', { name: 'Expand Build ranked_customers' }).click();
+  await expect(page.getByTestId('rf__node-cte_order_base')).toBeVisible();
+  await expect(page.getByTestId('rf__node-cte_customer_order_summary')).toBeVisible();
+  await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
+});
+
 test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {
   await page.goto('/');
 

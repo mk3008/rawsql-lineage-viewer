@@ -1,10 +1,15 @@
 import type { Edge, Node } from '@xyflow/react';
 import type { LineageColumn, LineageEdge, LineageNode } from './lineage';
+import type { CollapsedLineageGroup } from '../graph/collapseGroups';
 
 export type GraphNodeData = {
   lineageNode: LineageNode;
   columnsVisible?: boolean;
+  collapsedGroup?: CollapsedLineageGroup;
+  canCollapseUpstream?: boolean;
   onToggleColumns?: (nodeId: string) => void;
+  onCollapseUpstream?: (nodeId: string) => void;
+  onExpandGroup?: (nodeId: string) => void;
   onNodeSelect?: (nodeId: string) => void;
   selectedColumnId?: string | null;
   selectedCommentTargetIds?: Set<string>;

@@ -13,6 +13,7 @@ This is a static TypeScript web app intended for GitHub Pages. SQL is parsed loc
 - Analyze SQL with `rawsql-ts`.
 - Convert parser output through an adapter into a stable lineage model.
 - Render the lineage graph with React Flow.
+- Collapse upstream helper CTEs into a representative CTE group.
 - Copy a hash-based share URL for SQL that is short enough to fit in the URL.
 
 Save/load, JSON import/export, SVG/PNG export, and upstream/downstream switching are intentionally left for later iterations. The internal model layers are separated so those capabilities can be added without binding the app to the raw parser AST.

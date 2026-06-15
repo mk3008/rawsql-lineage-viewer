@@ -455,6 +455,7 @@ textarea {
   font-size: 10px;
   font-weight: 850;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .lineage-node-actions {
@@ -711,6 +712,34 @@ textarea {
 .lineage-column-muted {
   color: #7c8799;
   cursor: default;
+}
+
+.lineage-group-summary {
+  display: grid;
+  gap: 5px;
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.lineage-group-summary span,
+.lineage-group-summary em {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lineage-group-summary strong {
+  color: #0f172a;
+  font-size: 13px;
+}
+
+.lineage-group-summary em {
+  justify-content: flex-start;
+  color: #64748b;
+  font-style: normal;
+  font-weight: 650;
 }
 
 .graph-info {

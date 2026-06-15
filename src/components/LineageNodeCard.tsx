@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, Copy, ExternalLink, Eye, EyeOff, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
@@ -39,7 +39,34 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           >
             {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
-          <span className="lineage-node-kind">{node.type}</span>
+          {data.collapsedGroup ? (
+            <button
+              aria-label={`Expand ${data.collapsedGroup.label}`}
+              className="node-icon-button nodrag"
+              title="Expand group"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onExpandGroup?.(node.id);
+              }}
+            >
+              <Maximize2 size={13} />
+            </button>
+          ) : data.canCollapseUpstream && node.type === 'cte' ? (
+            <button
+              aria-label={`Collapse upstream helpers for ${node.label}`}
+              className="node-icon-button nodrag"
+              title="Collapse upstream helpers"
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onCollapseUpstream?.(node.id);
+              }}
+            >
+              <Minimize2 size={13} />
+            </button>
+          ) : null}
+          <span className="lineage-node-kind">{data.collapsedGroup ? 'CTE group' : node.type}</span>
         </div>
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
@@ -56,7 +83,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       ) : null}
       {columnsVisible ? (
         <div className="lineage-node-body">
-          {node.columns.length > 0 ? (
+          {data.collapsedGroup ? (
+            <CollapsedGroupSummary group={data.collapsedGroup} />
+          ) : node.columns.length > 0 ? (
             node.columns.map((column) => (
               <LineageColumnRow column={column} data={data} key={column.id} nodeId={node.id} />
             ))
@@ -66,6 +95,17 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
         </div>
       ) : null}
       <Handle type="source" position={Position.Right} />
+    </div>
+  );
+}
+
+function CollapsedGroupSummary({ group }: { group: NonNullable<GraphNode['data']['collapsedGroup']> }) {
+  return (
+    <div className="lineage-group-summary">
+      <span><strong>{group.helperNodeIds.length}</strong> helper CTEs</span>
+      <span><strong>{group.sourceNodeIds.length}</strong> source nodes</span>
+      <span><strong>{group.outputColumnCount}</strong> output columns</span>
+      <em>Internal steps hidden</em>
     </div>
   );
 }
