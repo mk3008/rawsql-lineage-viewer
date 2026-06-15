@@ -7,17 +7,17 @@ import type { GraphNode } from '../domain/graph';
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const columnsVisible = data.columnsVisible ?? true;
-  const titleRef = useRef<HTMLButtonElement>(null);
+  const nodeRef = useRef<HTMLDivElement>(null);
 
   return (
     <div
+      ref={nodeRef}
       className={`lineage-node lineage-node-${node.type} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'}`}
       data-testid={`lineage-node-${node.type}`}
     >
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
-          ref={titleRef}
           className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
@@ -44,7 +44,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
         <CommentBubble
-          anchorRef={titleRef}
+          anchorRef={nodeRef}
           comments={node.comments}
           cteExecutableSql={node.cteExecutableSql}
           onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
@@ -142,7 +142,7 @@ function CommentBubble({
       const bubbleWidth = bubbleRect?.width ?? 320;
       const bubbleHeight = bubbleRect?.height ?? 120;
       const nextLeft = Math.min(anchorRect.right + 10, window.innerWidth - bubbleWidth - 12);
-      const preferredTop = variant === 'node' ? anchorRect.bottom + 8 : anchorRect.top - 4;
+      const preferredTop = variant === 'node' ? anchorRect.top : anchorRect.top - 4;
       const nextTop = Math.max(8, Math.min(preferredTop, window.innerHeight - bubbleHeight - 8));
 
       setPosition((current) =>

@@ -93,6 +93,9 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await expect(cteComment.locator('.lineage-sql-preview')).toHaveCount(0);
   await expect(cteComment).toHaveCSS('position', 'fixed');
   await expect(cteComment).toHaveCSS('z-index', '100000');
+  const recentOrdersBox = await recentOrdersNode.boundingBox();
+  const cteCommentBox = await cteComment.boundingBox();
+  expect(cteCommentBox?.x ?? 0).toBeGreaterThanOrEqual((recentOrdersBox?.x ?? 0) + (recentOrdersBox?.width ?? 0) + 6);
   const openInViewerLink = cteComment.getByRole('link', { name: 'Open in viewer' });
   await expect(openInViewerLink).toBeVisible();
   const openInViewerHref = await openInViewerLink.getAttribute('href');
