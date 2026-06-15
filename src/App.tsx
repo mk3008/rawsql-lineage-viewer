@@ -50,7 +50,7 @@ export function App() {
             <p>Paste SQL. See the lineage.</p>
           </div>
         </div>
-        <a className="github-link" href="https://github.com/" target="_blank" rel="noreferrer">
+        <a className="github-link" href="https://github.com/mk3008/rawsql-lineage-viewer" target="_blank" rel="noreferrer">
           <GitBranch size={17} />
           GitHub
         </a>
