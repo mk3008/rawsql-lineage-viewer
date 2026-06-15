@@ -22,7 +22,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
-          className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetId === nodeCommentTargetId(node.id) ? 'lineage-comment-selected' : ''}`}
+          className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
             data.onNodeSelect?.(node.id);
@@ -47,7 +47,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <span className="lineage-node-kind">{node.type}</span>
         </div>
       </div>
-      {data.selectedCommentTargetId === nodeCommentTargetId(node.id) && node.comments && node.comments.length > 0 ? (
+      {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && node.comments && node.comments.length > 0 ? (
         <CommentBubble comments={node.comments} variant="node" />
       ) : null}
       {columnsVisible ? (
@@ -55,7 +55,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           {node.columns.length > 0 ? (
             node.columns.map((column) => {
               const isSelected = data.selectedColumnId === column.id;
-              const isCommentSelected = data.selectedCommentTargetId === columnCommentTargetId(column.id);
+              const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
               const isSource = data.sourceColumnIds?.has(column.id) ?? false;
               const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
               return (

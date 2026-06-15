@@ -7,7 +7,7 @@ export type GraphNodeData = {
   onToggleColumns?: (nodeId: string) => void;
   onNodeSelect?: (nodeId: string) => void;
   selectedColumnId?: string | null;
-  selectedCommentTargetId?: string | null;
+  selectedCommentTargetIds?: Set<string>;
   highlightedColumnIds?: Set<string>;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;

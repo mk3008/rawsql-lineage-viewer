@@ -20,7 +20,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
-  const [selectedCommentTargetId, setSelectedCommentTargetId] = useState<string | null>(null);
+  const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -43,10 +43,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     });
   }, [lineage.nodes]);
   const selectNode = useCallback((nodeId: string) => {
-    setSelectedCommentTargetId((current) => (current === nodeCommentTargetId(nodeId) ? null : nodeCommentTargetId(nodeId)));
+    setSelectedColumn(null);
+    setSelectedNodeCommentTargetId((current) => (current === nodeCommentTargetId(nodeId) ? null : nodeCommentTargetId(nodeId)));
   }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
-    setSelectedCommentTargetId((current) => (current === columnCommentTargetId(column.id) ? null : columnCommentTargetId(column.id)));
+    setSelectedNodeCommentTargetId(null);
     setSelectedColumn((current) =>
       current?.columnId === column.id
         ? null
@@ -64,11 +65,22 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
     [lineage.nodes, selectedColumn],
   );
+  const selectedCommentTargetIds = useMemo(() => {
+    if (selectedColumn) {
+      return new Set([
+        columnCommentTargetId(selectedColumn.columnId),
+        ...[...columnHighlights.highlightedColumnIds].map(columnCommentTargetId),
+        ...[...columnHighlights.sourceColumnIds].map(columnCommentTargetId),
+      ]);
+    }
+
+    return selectedNodeCommentTargetId ? new Set([selectedNodeCommentTargetId]) : new Set<string>();
+  }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn, selectedNodeCommentTargetId]);
   const graphNodes = useMemo(
     () =>
       graph.nodes.map((node) => ({
         ...node,
-        zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetId) ? 1000 : node.zIndex,
+        zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetIds) ? 1000 : node.zIndex,
         data: {
           ...node.data,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
@@ -76,7 +88,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
-          selectedCommentTargetId,
+          selectedCommentTargetIds,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
         },
@@ -89,8 +101,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       hiddenColumnNodeIds,
       selectNode,
       selectColumn,
-      selectedCommentTargetId,
       selectedColumn?.columnId,
+      selectedCommentTargetIds,
       toggleColumns,
     ],
   );
@@ -156,7 +168,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
 
   useEffect(() => {
     setSelectedColumn(null);
-    setSelectedCommentTargetId(null);
+    setSelectedNodeCommentTargetId(null);
     setHiddenColumnNodeIds(new Set());
   }, [lineage]);
 
@@ -288,10 +300,10 @@ function edgeKey(sourceId: string, targetId: string) {
   return `${sourceId}-${targetId}`;
 }
 
-function nodeHasSelectedComment(node: LineageNode, selectedCommentTargetId: string | null) {
+function nodeHasSelectedComment(node: LineageNode, selectedCommentTargetIds: Set<string>) {
   return (
-    selectedCommentTargetId === nodeCommentTargetId(node.id) ||
-    node.columns.some((column) => selectedCommentTargetId === columnCommentTargetId(column.id))
+    selectedCommentTargetIds.has(nodeCommentTargetId(node.id)) ||
+    node.columns.some((column) => selectedCommentTargetIds.has(columnCommentTargetId(column.id)))
   );
 }
 
