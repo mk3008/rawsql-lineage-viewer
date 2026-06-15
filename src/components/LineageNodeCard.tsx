@@ -177,7 +177,7 @@ function CommentBubble({
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const bubbleRef = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; visible: boolean } | null>(null);
 
   useLayoutEffect(() => {
     let animationFrame = 0;
@@ -190,6 +190,12 @@ function CommentBubble({
       }
 
       const anchorRect = anchor.getBoundingClientRect();
+      if (!isAnchorVisible(anchorRect, anchor)) {
+        setPosition((current) => (current?.visible === false ? current : { left: 0, top: 0, visible: false }));
+        animationFrame = window.requestAnimationFrame(updatePosition);
+        return;
+      }
+
       const bubbleRect = bubbleRef.current?.getBoundingClientRect();
       const bubbleWidth = bubbleRect?.width ?? 320;
       const bubbleHeight = bubbleRect?.height ?? 120;
@@ -198,9 +204,9 @@ function CommentBubble({
       const nextTop = Math.max(8, Math.min(preferredTop, window.innerHeight - bubbleHeight - 8));
 
       setPosition((current) =>
-        current && Math.abs(current.left - nextLeft) < 0.5 && Math.abs(current.top - nextTop) < 0.5
+        current?.visible && Math.abs(current.left - nextLeft) < 0.5 && Math.abs(current.top - nextTop) < 0.5
           ? current
-          : { left: nextLeft, top: nextTop },
+          : { left: nextLeft, top: nextTop, visible: true },
       );
       animationFrame = window.requestAnimationFrame(updatePosition);
     };
@@ -225,11 +231,11 @@ function CommentBubble({
     }
   };
 
-  const bubbleStyle = {
-    ...(position ? { left: position.left, top: position.top } : {}),
+  const bubbleStyle: CSSProperties & { '--lineage-comment-scale': string } = {
+    ...(position?.visible ? { left: position.left, top: position.top } : { display: 'none', pointerEvents: 'none' }),
     '--lineage-comment-scale': String(viewportZoom),
     zIndex: isActive ? 100001 : 100000,
-  } as CSSProperties;
+  };
 
   return createPortal(
     <div
@@ -296,6 +302,32 @@ function CommentBubble({
     </div>,
     document.body,
   );
+}
+
+type RectLike = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>;
+
+function isAnchorVisible(anchorRect: RectLike, anchor: HTMLElement) {
+  const graphShellRect = anchor.closest('.graph-shell')?.getBoundingClientRect();
+  const viewportRect = {
+    bottom: window.innerHeight,
+    left: 0,
+    right: window.innerWidth,
+    top: 0,
+  };
+  const visibleRect = graphShellRect ? intersectRects(graphShellRect, viewportRect) : viewportRect;
+  return visibleRect ? rectsIntersect(anchorRect, visibleRect) : false;
+}
+
+function intersectRects(a: RectLike, b: RectLike): RectLike | null {
+  const left = Math.max(a.left, b.left);
+  const right = Math.min(a.right, b.right);
+  const top = Math.max(a.top, b.top);
+  const bottom = Math.min(a.bottom, b.bottom);
+  return right > left && bottom > top ? { bottom, left, right, top } : null;
+}
+
+function rectsIntersect(a: RectLike, b: RectLike) {
+  return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
 }
 
 function buildViewerSqlUrl(sql: string) {

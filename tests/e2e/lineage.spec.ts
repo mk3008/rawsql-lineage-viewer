@@ -158,6 +158,43 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await expect.poll(() => bubble.evaluate((element) => window.getComputedStyle(element).transform)).not.toBe(initialTransform);
 });
 
+test('hides column callouts when the anchor column is clipped outside the graph viewport', async ({ page }) => {
+  await page.goto('/');
+
+  const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
+  await expect(paymentSummaryNode).toBeVisible();
+  await paymentSummaryNode.getByRole('button', { name: 'paid_amount', exact: true }).click();
+
+  const bubble = page.getByTestId('lineage-comment').filter({ hasText: 'sum(p.amount)' });
+  await expect(bubble).toBeVisible();
+
+  const nodeBox = await paymentSummaryNode.boundingBox();
+  expect(nodeBox).not.toBeNull();
+  await page.mouse.move(nodeBox!.x + 28, nodeBox!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(nodeBox!.x - 900, nodeBox!.y + 20, { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const graph = document.querySelector('[data-testid="lineage-graph"]')?.getBoundingClientRect();
+        const node = document.querySelector('[data-testid="rf__node-cte_payment_summary"]');
+        const column = Array.from(node?.querySelectorAll('.lineage-column') ?? []).find(
+          (element) => element.textContent?.trim() === 'paid_amount',
+        );
+        if (!graph || !column) {
+          return false;
+        }
+
+        const rect = column.getBoundingClientRect();
+        return rect.right <= graph.left || rect.left >= graph.right || rect.bottom <= graph.top || rect.top >= graph.bottom;
+      }),
+    )
+    .toBe(true);
+  await expect(bubble).toBeHidden();
+});
+
 test('can toggle column and header callouts independently', async ({ page }) => {
   await page.goto('/');
 
