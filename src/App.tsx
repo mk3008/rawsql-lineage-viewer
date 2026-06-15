@@ -116,7 +116,6 @@ export function App() {
                 <span>Derived <strong>{graphStats?.derived}</strong></span>
                 <span>Output <strong>{graphStats?.outputs}</strong></span>
                 <span>DataFlow <strong>{graphStats?.dataFlows}</strong></span>
-                <span>Warnings <strong>{adapterResult.lineage.analysisWarnings.length}</strong></span>
               </div>
             </>
           ) : (

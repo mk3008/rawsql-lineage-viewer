@@ -31,6 +31,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
+  await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
 
 test('does not render join edges while keeping outer join context on data flows', async ({ page }) => {
