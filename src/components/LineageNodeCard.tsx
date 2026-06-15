@@ -22,7 +22,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
-          className={`lineage-node-title lineage-node-title-button nodrag ${data.selectedCommentTargetId === nodeCommentTargetId(node.id) ? 'lineage-comment-selected' : ''}`}
+          className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetId === nodeCommentTargetId(node.id) ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
             data.onNodeSelect?.(node.id);
@@ -47,7 +47,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <span className="lineage-node-kind">{node.type}</span>
         </div>
       </div>
-      {data.selectedCommentTargetId === nodeCommentTargetId(node.id) && node.comments && node.comments.length > 0 ? <CommentBlock comments={node.comments} /> : null}
+      {data.selectedCommentTargetId === nodeCommentTargetId(node.id) && node.comments && node.comments.length > 0 ? (
+        <CommentBubble comments={node.comments} variant="node" />
+      ) : null}
       {columnsVisible ? (
         <div className="lineage-node-body">
           {node.columns.length > 0 ? (
@@ -68,7 +70,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                   >
                     {column.name}
                   </button>
-                  {isCommentSelected && column.comments && column.comments.length > 0 ? <CommentBlock comments={column.comments} /> : null}
+                  {isCommentSelected && column.comments && column.comments.length > 0 ? <CommentBubble comments={column.comments} variant="column" /> : null}
                 </div>
               );
             })
@@ -82,9 +84,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   );
 }
 
-function CommentBlock({ comments }: { comments: string[] }) {
+function CommentBubble({ comments, variant }: { comments: string[]; variant: 'column' | 'node' }) {
   return (
-    <div className="lineage-comment" data-testid="lineage-comment">
+    <div className={`lineage-comment-bubble lineage-comment-bubble-${variant} nodrag`} data-testid="lineage-comment">
       {comments.map((comment) => (
         <div key={comment}>{comment}</div>
       ))}

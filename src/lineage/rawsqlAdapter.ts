@@ -49,7 +49,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       type: 'cte',
       label: cteName,
       columns: [],
-      comments: extractComments(cte, cte.aliasExpression, cte.aliasExpression?.table),
+      comments: extractCteComments(cte),
       materializationHint: normalizeMaterializationHint(cte.materialized),
     });
   }
@@ -442,6 +442,13 @@ function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['ite
   );
 }
 
+function extractCteComments(cte: CommonTable): string[] | undefined {
+  return mergeComments(
+    extractComments(cte, cte.aliasExpression, cte.aliasExpression?.table),
+    extractHeaderComments((cte as { query?: unknown }).query),
+  );
+}
+
 function extractComments(...values: unknown[]): string[] | undefined {
   const comments: string[] = [];
   for (const value of values) {
@@ -457,6 +464,18 @@ function extractLegacyComments(value: unknown): string[] {
   }
   const comments = (value as { comments?: unknown }).comments;
   return Array.isArray(comments) ? normalizeComments(comments) : [];
+}
+
+function extractHeaderComments(value: unknown): string[] | undefined {
+  if (!value || typeof value !== 'object' || !('headerComments' in value)) {
+    return undefined;
+  }
+  const comments = (value as { headerComments?: unknown }).headerComments;
+  if (!Array.isArray(comments)) {
+    return undefined;
+  }
+  const normalized = normalizeComments(comments);
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function extractPositionedComments(value: unknown, position?: 'before' | 'after'): string[] {

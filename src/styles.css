@@ -321,7 +321,7 @@ textarea {
   flex-direction: column;
   width: 220px;
   min-height: 0;
-  overflow: hidden;
+  overflow: visible;
   border: 1px solid;
   border-radius: 8px;
   background: #fff;
@@ -454,6 +454,7 @@ textarea {
 }
 
 .lineage-column-group {
+  position: relative;
   display: grid;
   gap: 4px;
 }
@@ -488,21 +489,54 @@ textarea {
   box-shadow: 0 0 0 2px rgb(37 99 235 / 18%);
 }
 
-.lineage-comment {
+.lineage-comment-bubble {
+  position: absolute;
+  z-index: 20;
+  width: max-content;
+  max-width: 260px;
   border: 1px solid #bfdbfe;
-  border-radius: 6px;
-  margin: 0 12px 10px;
-  padding: 7px 8px;
-  background: #eff6ff;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #fff;
+  box-shadow: 0 14px 30px rgb(15 23 42 / 16%);
   color: #1e3a8a;
   font-size: 12px;
   font-weight: 650;
   line-height: 1.45;
+  white-space: normal;
 }
 
-.lineage-column-group .lineage-comment {
-  margin: 0;
+.lineage-comment-bubble::before {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-bottom: 1px solid #bfdbfe;
+  border-left: 1px solid #bfdbfe;
+  background: #fff;
+  content: "";
+}
+
+.lineage-comment-bubble-node {
+  top: 44px;
+  left: calc(100% + 10px);
+}
+
+.lineage-comment-bubble-node::before {
+  top: 14px;
+  left: -6px;
+  transform: rotate(45deg);
+}
+
+.lineage-comment-bubble-column {
+  top: -4px;
+  left: calc(100% + 10px);
   font-size: 11px;
+}
+
+.lineage-comment-bubble-column::before {
+  top: 10px;
+  left: -6px;
+  transform: rotate(45deg);
 }
 
 .lineage-column-muted {

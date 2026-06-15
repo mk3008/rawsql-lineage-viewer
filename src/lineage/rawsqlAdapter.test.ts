@@ -180,6 +180,19 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('uses comments before the inner CTE select query as CTE comments', () => {
+    const { lineage } = analyzeSql(`
+      WITH recent_orders AS (
+        -- Inner select comment for the CTE.
+        SELECT id AS order_id
+        FROM orders
+      )
+      SELECT order_id FROM recent_orders
+    `);
+
+    expect(lineage.nodes.find((node) => node.id === 'cte_recent_orders')?.comments).toEqual(['Inner select comment for the CTE.']);
+  });
+
   it('routes join edges toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (
