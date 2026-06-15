@@ -457,13 +457,13 @@ textarea {
   overflow: hidden;
   border: 1px solid transparent;
   border-radius: 5px;
-  padding: 2px 4px;
+  padding: 3px 5px;
   background: transparent;
   color: #475569;
   cursor: pointer;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 13px;
+  line-height: 1.4;
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
