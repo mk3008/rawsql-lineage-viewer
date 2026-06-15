@@ -1,6 +1,7 @@
 import {
   BinarySelectQuery,
   CTECollector,
+  ColumnReference,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
@@ -104,6 +105,11 @@ interface CollectQueryEdgesOptions {
   derivedCounter: { value: number };
 }
 
+interface ResolvedSource {
+  node: LineageNode;
+  aliases: string[];
+}
+
 function collectQueryEdges(options: CollectQueryEdgesOptions): void {
   const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter } = options;
 
@@ -117,28 +123,42 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       return;
     }
 
+    const sources = [
+      resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter),
+    ];
     const joins = fromClause.joins ?? [];
-    const mainSource = resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter);
-    addLineageEdge(edges, {
-      source: mainSource.id,
-      target: targetId,
-      type: joins.length > 0 ? 'join' : 'dataFlow',
-      label: joins.length > 0 ? normalizeJoinLabel(joins[0]) : undefined,
-      joinType: joins.length > 0 ? normalizeJoinType(joins[0]) : undefined,
-      confidence: 'high',
-    });
+
+    for (const source of sources) {
+      addLineageEdge(edges, {
+        source: source.node.id,
+        target: targetId,
+        type: 'dataFlow',
+        confidence: 'high',
+      });
+    }
 
     for (const join of joins) {
-      const source = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+      const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+      const joinBaseSource = findJoinBaseSource(join, joinedSource, sources) ?? sources[sources.length - 1];
+      sources.push(joinedSource);
+
       addLineageEdge(edges, {
-        source: source.id,
+        source: joinedSource.node.id,
         target: targetId,
+        type: 'dataFlow',
+        confidence: 'high',
+      });
+
+      addLineageEdge(edges, {
+        source: joinBaseSource.node.id,
+        target: joinedSource.node.id,
         type: 'join',
         label: normalizeJoinLabel(join),
         joinType: normalizeJoinType(join),
         confidence: 'high',
       });
     }
+
     return;
   }
 
@@ -190,15 +210,23 @@ function resolveSourceExpression(
   edges: LineageEdge[],
   warnings: AnalysisWarning[],
   derivedCounter: { value: number },
-): LineageNode {
+): ResolvedSource {
   const datasource = source.datasource;
 
   if (datasource instanceof TableSource) {
     const sourceName = datasource.getSourceName();
+    const alias = source.getAliasName();
+    const aliases = alias ? [alias, sourceName] : [sourceName];
     if (cteNames.has(sourceName)) {
-      return nodes.get(toCteId(sourceName)) ?? createCteNode(sourceName, nodes);
+      return {
+        node: nodes.get(toCteId(sourceName)) ?? createCteNode(sourceName, nodes),
+        aliases,
+      };
     }
-    return createTableNode(sourceName, nodes);
+    return {
+      node: createTableNode(sourceName, nodes),
+      aliases,
+    };
   }
 
   if (datasource instanceof SubQuerySource) {
@@ -222,7 +250,10 @@ function resolveSourceExpression(
       warnings,
       derivedCounter,
     });
-    return node;
+    return {
+      node,
+      aliases: [alias],
+    };
   }
 
   if (datasource instanceof ParenSource) {
@@ -241,14 +272,63 @@ function resolveSourceExpression(
 
   if (datasource instanceof FunctionSource) {
     const name = datasource.name instanceof Object && 'name' in datasource.name ? datasource.name.name : String(datasource.name);
-    return createDerivedNode(`function_${sanitizeId(name)}`, name, nodes);
+    return {
+      node: createDerivedNode(`function_${sanitizeId(name)}`, name, nodes),
+      aliases: [source.getAliasName() ?? name],
+    };
   }
 
   warnings.push({
     code: 'unsupported-source-kind',
     message: `Unsupported source kind ${source.datasource.constructor.name}; created an unknown derived node.`,
   });
-  return createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes);
+  return {
+    node: createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes),
+    aliases: [source.getAliasName() ?? 'unknown source'],
+  };
+}
+
+function findJoinBaseSource(join: JoinClause, joinedSource: ResolvedSource, existingSources: ResolvedSource[]): ResolvedSource | null {
+  const conditionNamespaces = collectConditionNamespaces(join.condition);
+  if (conditionNamespaces.size === 0) {
+    return null;
+  }
+
+  const joinedAliases = new Set(joinedSource.aliases);
+  return existingSources.find((source) =>
+    source.aliases.some((alias) => conditionNamespaces.has(alias) && !joinedAliases.has(alias)),
+  ) ?? null;
+}
+
+function collectConditionNamespaces(value: unknown): Set<string> {
+  const namespaces = new Set<string>();
+  const visited = new Set<unknown>();
+
+  const visit = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || visited.has(current)) {
+      return;
+    }
+    visited.add(current);
+
+    if (current instanceof ColumnReference) {
+      const namespace = current.getNamespace();
+      if (namespace) {
+        namespaces.add(namespace);
+      }
+      return;
+    }
+
+    for (const nested of Object.values(current)) {
+      if (Array.isArray(nested)) {
+        nested.forEach(visit);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(value);
+  return namespaces;
 }
 
 function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {

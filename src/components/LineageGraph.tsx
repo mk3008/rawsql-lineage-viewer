@@ -1,5 +1,6 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider } from '@xyflow/react';
 import { useMemo } from 'react';
+import type { EdgeVisibility } from '../domain/graph';
 import type { LineageModel } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -8,8 +9,8 @@ const nodeTypes = {
   lineageNode: LineageNodeCard,
 };
 
-export function LineageGraph({ lineage }: { lineage: LineageModel }) {
-  const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
+export function LineageGraph({ lineage, edgeVisibility }: { lineage: LineageModel; edgeVisibility: EdgeVisibility }) {
+  const graph = useMemo(() => buildGraphModel(lineage, edgeVisibility), [edgeVisibility, lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph">
