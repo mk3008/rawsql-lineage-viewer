@@ -192,32 +192,15 @@ textarea {
   grid-template-rows: auto minmax(360px, 1fr) auto;
   min-width: 0;
   min-height: 0;
-  padding: 18px 20px 16px;
-  gap: 12px;
+  padding: 12px 20px 16px;
+  gap: 10px;
 }
 
 .canvas-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 42px;
-}
-
-.toolbar-label {
-  margin-right: 8px;
-  color: #536178;
-  font-size: 12px;
-  font-weight: 750;
-}
-
-.segmented-button {
-  height: 34px;
-  padding: 0 14px;
-  color: #1e3a8a;
-  background: #dbeafe;
-  font-size: 12px;
-  font-weight: 800;
+  justify-content: flex-end;
+  min-height: 24px;
 }
 
 .legend {
@@ -561,7 +544,14 @@ textarea {
   margin-bottom: 0;
 }
 
-.lineage-copy-button {
+.lineage-comment-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.lineage-copy-button,
+.lineage-open-link {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -574,9 +564,11 @@ textarea {
   font-size: 11px;
   font-weight: 800;
   cursor: pointer;
+  text-decoration: none;
 }
 
-.lineage-copy-button:hover {
+.lineage-copy-button:hover,
+.lineage-open-link:hover {
   background: #dbeafe;
 }
 
@@ -726,8 +718,7 @@ textarea {
   }
 
   .canvas-toolbar {
-    align-items: flex-start;
-    flex-direction: column;
+    justify-content: flex-start;
   }
 
   .legend {

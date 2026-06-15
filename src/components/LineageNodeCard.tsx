@@ -1,18 +1,10 @@
 import { useState, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, Copy, Database, Eye, EyeOff, FileJson2, GitBranch, Table2, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, Eye, EyeOff, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
-
-const iconByType = {
-  table: Table2,
-  cte: GitBranch,
-  derived: FileJson2,
-  output: Database,
-};
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
-  const Icon = iconByType[node.type];
   const columnsVisible = data.columnsVisible ?? true;
 
   return (
@@ -30,7 +22,6 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           }}
           type="button"
         >
-          <Icon size={15} aria-hidden="true" />
           {node.label}
         </button>
         <div className="lineage-node-actions">
@@ -162,10 +153,22 @@ function CommentBubble({
         <div className="lineage-comment-section">
           <div className="lineage-comment-heading">
             <div className="lineage-comment-label">CTE SQL</div>
-            <button className="lineage-copy-button nodrag" type="button" onClick={copyCteSql}>
-              {copyState === 'copied' ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
-              {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
-            </button>
+            <div className="lineage-comment-actions">
+              <a
+                className="lineage-open-link nodrag"
+                href={buildViewerSqlUrl(cteExecutableSql)}
+                target="_blank"
+                rel="noreferrer"
+                onClick={(event) => event.stopPropagation()}
+              >
+                <ExternalLink size={12} aria-hidden="true" />
+                Open in viewer
+              </a>
+              <button className="lineage-copy-button nodrag" type="button" onClick={copyCteSql}>
+                {copyState === 'copied' ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+                {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
+              </button>
+            </div>
           </div>
           <pre className="lineage-sql-preview">
             <code>{cteExecutableSql}</code>
@@ -174,6 +177,12 @@ function CommentBubble({
       ) : null}
     </div>
   );
+}
+
+function buildViewerSqlUrl(sql: string) {
+  const url = new URL(window.location.href);
+  url.searchParams.set('sql', sql);
+  return url.toString();
 }
 
 async function copyText(text: string) {

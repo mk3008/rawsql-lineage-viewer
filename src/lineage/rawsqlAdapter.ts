@@ -3,11 +3,11 @@ import {
   CTECollector,
   CTEQueryDecomposer,
   ColumnReference,
-  Formatter,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
   SimpleSelectQuery,
+  SqlFormatter,
   SubQuerySource,
   TableSource,
 } from 'rawsql-ts';
@@ -20,7 +20,48 @@ export interface ParserAdapterResult {
 }
 
 const parserVersion = 'rawsql-ts';
-const expressionFormatter = new Formatter();
+const rawsqlDemoFormatterOptions = {
+  indentSize: 4,
+  indentChar: 'space',
+  newline: 'lf',
+  keywordCase: 'lower',
+  commaBreak: 'before',
+  cteCommaBreak: 'after',
+  valuesCommaBreak: 'before',
+  andBreak: 'before',
+  orBreak: 'before',
+  joinOnBreak: 'before',
+  joinConditionContinuationIndent: true,
+  exportComment: 'full',
+  commentStyle: 'smart',
+  withClauseStyle: 'standard',
+  parenthesesOneLine: true,
+  indentNestedParentheses: true,
+  betweenOneLine: true,
+  inOneLine: true,
+  valuesOneLine: true,
+  joinOneLine: true,
+  caseOneLine: true,
+  subqueryOneLine: true,
+  insertColumnsOneLine: true,
+  whenOneLine: true,
+  oneLineMaxLength: 100,
+  joinConditionOrderByDeclaration: true,
+  orderByDefaultDirectionStyle: 'omit',
+  columnAliasStyle: 'explicit',
+  constraintStyle: 'postgres',
+  identifierEscape: 'none',
+  identifierEscapeTarget: 'all',
+  parameterSymbol: ':',
+  parameterStyle: 'named',
+  sourceAliasStyle: 'explicit',
+  castStyle: 'standard',
+} as const;
+const expressionFormatterOptions = {
+  ...rawsqlDemoFormatterOptions,
+  sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
+};
+const expressionFormatter = new SqlFormatter(expressionFormatterOptions as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 export function analyzeSql(sql: string): ParserAdapterResult {
   const warnings: AnalysisWarning[] = [];
@@ -494,7 +535,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
 
 function formatExpressionSql(value: unknown): string | undefined {
   try {
-    const formatted = expressionFormatter.format(value as Parameters<Formatter['format']>[0]).trim();
+    const formatted = expressionFormatter.format(value as Parameters<SqlFormatter['format']>[0]).formattedSql.trim();
     return formatted.length > 0 ? formatted : undefined;
   } catch {
     return undefined;

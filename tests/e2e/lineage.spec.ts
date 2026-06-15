@@ -27,6 +27,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ot' })).toBeVisible();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ps' })).toBeVisible();
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
+  await expect(page.getByText('Flow direction')).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Downstream' })).not.toBeVisible();
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
@@ -89,6 +91,11 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('CTE SQL');
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('from "orders" as "o"');
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toHaveCSS('position', 'absolute');
+  const openInViewerLink = recentOrdersNode.getByRole('link', { name: 'Open in viewer' });
+  await expect(openInViewerLink).toBeVisible();
+  const openInViewerHref = await openInViewerLink.getAttribute('href');
+  expect(openInViewerHref).toContain('?sql=');
+  expect(new URL(openInViewerHref ?? '').searchParams.get('sql')).toContain('from "orders" as "o"');
   await recentOrdersNode.getByRole('button', { name: 'Copy SQL' }).click();
   await expect(recentOrdersNode.getByRole('button', { name: 'Copied' })).toBeVisible();
   await expect
@@ -99,7 +106,16 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
 
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
-  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: '"oi"."quantity" * "oi"."unit_price"' })).toBeVisible();
+  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
+});
+
+test('opens SQL from the sql query parameter on first load', async ({ page }) => {
+  const sql = 'select c.customer_id from customers c';
+  await page.goto(`/?sql=${encodeURIComponent(sql)}`);
+
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue(sql);
+  await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
+  await expect(page.getByTestId('rf__node-table_customers')).toBeVisible();
 });
 
 test('can hide and show columns for all nodes', async ({ page }) => {
@@ -151,7 +167,7 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).not.toHaveClass(/animated/);
-  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce("ot"."total_amount", 0)');
+  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce(ot.total_amount, 0)');
   await expect(orderTotalsNode.getByTestId('lineage-comment')).toContainText('Total ordered amount per customer.');
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
   await outputNode.getByRole('button', { name: 'Close comment' }).click();
@@ -180,8 +196,8 @@ test('highlights downstream output lineage when a source column is selected', as
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
-  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce("ot"."total_amount", 0)');
-  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: '"oi"."quantity" * "oi"."unit_price"' })).toBeVisible();
+  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce(ot.total_amount, 0)');
+  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
 });
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {

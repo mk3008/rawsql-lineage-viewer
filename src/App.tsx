@@ -5,9 +5,10 @@ import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
 
 export function App() {
-  const [sql, setSql] = useState(salesSummarySql);
+  const initialSql = useMemo(readInitialSqlFromUrl, []);
+  const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
-  const [lastAnalyzedSql, setLastAnalyzedSql] = useState(salesSummarySql);
+  const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
 
   const analysis = useMemo(() => {
     try {
@@ -93,10 +94,6 @@ export function App() {
 
         <section className="canvas-area">
           <div className="canvas-toolbar">
-            <div>
-              <span className="toolbar-label">Flow direction</span>
-              <button className="segmented-button active" type="button">Downstream</button>
-            </div>
             <div className="legend">
               <span><i className="legend-dot table" />Table</span>
               <span><i className="legend-dot cte" />CTE</span>
@@ -129,4 +126,13 @@ export function App() {
       </main>
     </div>
   );
+}
+
+function readInitialSqlFromUrl() {
+  if (typeof window === 'undefined') {
+    return salesSummarySql;
+  }
+
+  const sharedSql = new URLSearchParams(window.location.search).get('sql');
+  return sharedSql?.trim() ? sharedSql : salesSummarySql;
 }
