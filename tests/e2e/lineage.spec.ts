@@ -90,19 +90,21 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   const cteComment = page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' });
   await expect(cteComment).toContainText('Recent order line items used as the base sales fact.');
   await expect(cteComment).toContainText('CTE SQL');
-  await expect(cteComment).toContainText('from orders as o');
+  await expect(cteComment).toContainText('-- Recent order line items used as the base sales fact.');
+  await expect(cteComment).toContainText('-- Extended line amount.');
+  await expect(cteComment).toContainText('orders as o');
   await expect(cteComment).toHaveCSS('position', 'fixed');
   await expect(cteComment).toHaveCSS('z-index', '100000');
   const openInViewerLink = cteComment.getByRole('link', { name: 'Open in viewer' });
   await expect(openInViewerLink).toBeVisible();
   const openInViewerHref = await openInViewerLink.getAttribute('href');
   expect(openInViewerHref).toContain('?sql=');
-  expect(new URL(openInViewerHref ?? '').searchParams.get('sql')).toContain('from orders as o');
+  expect(new URL(openInViewerHref ?? '').searchParams.get('sql')).toMatch(/from\s+orders as o/);
   await cteComment.getByRole('button', { name: 'Copy SQL' }).click();
   await expect(cteComment.getByRole('button', { name: 'Copied' })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? ''))
-    .toContain('from orders as o');
+    .toMatch(/from\s+orders as o/);
   await cteComment.getByRole('button', { name: 'Close comment' }).click();
   await expect(cteComment).toHaveCount(0);
 
@@ -118,7 +120,7 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
 
   const expression = page.locator('.lineage-expression').filter({ hasText: 'case' });
-  await expect(expression).toHaveCSS('white-space', 'pre-wrap');
+  await expect(expression).toHaveCSS('white-space', 'pre');
   await expect(expression).toContainText("case\n    when ps.last_paid_at is null then\n        'unknown'");
 });
 

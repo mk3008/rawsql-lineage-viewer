@@ -197,10 +197,15 @@ describe('rawsqlAdapter', () => {
     const orderTotalsSql = nodeById.get('cte_order_totals')?.cteExecutableSql?.toLowerCase();
     const paymentSummarySql = nodeById.get('cte_payment_summary')?.cteExecutableSql?.toLowerCase();
 
-    expect(recentOrdersSql).toContain('from orders as o');
-    expect(orderTotalsSql).toContain('with recent_orders as');
+    expect(recentOrdersSql).toContain('-- recent order line items used as the base sales fact.');
+    expect(recentOrdersSql).toContain('-- extended line amount.');
+    expect(recentOrdersSql).toMatch(/from\s+orders as o/);
+    expect(orderTotalsSql).toMatch(/with\s+recent_orders as/);
+    expect(orderTotalsSql).toContain('-- aggregates order metrics by customer.');
+    expect(orderTotalsSql).toContain('-- total ordered amount per customer.');
     expect(orderTotalsSql).toContain('sum(amount) as total_amount');
-    expect(paymentSummarySql).toContain('from payments as p');
+    expect(paymentSummarySql).toContain('-- captures succeeded payment totals by customer.');
+    expect(paymentSummarySql).toMatch(/from\s+payments as p/);
   });
 
   it('uses comments before the inner CTE select query as CTE comments', () => {

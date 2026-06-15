@@ -66,7 +66,7 @@ const cteExecutableSqlFormatter = new SqlFormatter({
   ...expressionFormatterOptions,
   identifierEscape: 'quote',
   identifierEscapeTarget: 'minimal',
-  withClauseStyle: 'full-oneline',
+  withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 export function analyzeSql(sql: string): ParserAdapterResult {
@@ -92,7 +92,10 @@ export function analyzeSql(sql: string): ParserAdapterResult {
   const ctes = new CTECollector().collect(query);
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
   const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
-  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings);
+  const cteSqlCommentsByName = new Map(
+    ctes.map((cte) => [cte.getSourceAliasName(), mergeComments(extractCteComments(cte), extractQueryColumnComments(cte.query))]),
+  );
+  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings, cteSqlCommentsByName);
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -266,7 +269,12 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
   return id;
 }
 
-function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: AnalysisWarning[]): Map<string, string> {
+function collectCteExecutableSql(
+  query: unknown,
+  ctes: CommonTable[],
+  warnings: AnalysisWarning[],
+  cteSqlCommentsByName: Map<string, string[] | undefined>,
+): Map<string, string> {
   const sqlByName = new Map<string, string>();
   if (ctes.length === 0) {
     return sqlByName;
@@ -285,7 +293,7 @@ function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: 
     const cteName = cte.getSourceAliasName();
     try {
       const result = decomposer.extractCTE(query, cteName);
-      sqlByName.set(cteName, formatCteExecutableSql(result.executableSql));
+      sqlByName.set(cteName, formatCteExecutableSql(result.executableSql, collectExecutableSqlComments(cteName, result.executableSql, ctes, cteSqlCommentsByName)));
       for (const warning of result.warnings) {
         warnings.push({
           code: 'cte-executable-sql-warning',
@@ -303,13 +311,38 @@ function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: 
   return sqlByName;
 }
 
-function formatCteExecutableSql(sql: string): string {
+function collectExecutableSqlComments(
+  cteName: string,
+  sql: string,
+  ctes: CommonTable[],
+  cteSqlCommentsByName: Map<string, string[] | undefined>,
+): string[] | undefined {
+  const comments: string[] = [];
+  const lowerSql = sql.toLowerCase();
+  for (const cte of ctes) {
+    const candidateName = cte.getSourceAliasName();
+    if (candidateName !== cteName && !lowerSql.includes(candidateName.toLowerCase())) {
+      continue;
+    }
+    comments.push(...(cteSqlCommentsByName.get(candidateName) ?? []));
+  }
+  return comments.length > 0 ? dedupeComments(comments) : undefined;
+}
+
+function formatCteExecutableSql(sql: string, comments?: string[]): string {
   const trimmedSql = sql.trim();
   try {
-    return cteExecutableSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim().replace(/\s+/g, ' ');
+    return prependSqlComments(cteExecutableSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim(), comments);
   } catch {
-    return trimmedSql;
+    return prependSqlComments(trimmedSql, comments);
   }
+}
+
+function prependSqlComments(sql: string, comments?: string[]): string {
+  if (!comments || comments.length === 0) {
+    return sql;
+  }
+  return `${comments.map((comment) => `-- ${comment.replace(/\r?\n/g, ' ')}`).join('\n')}\n${sql}`;
 }
 
 function resolveSourceExpression(
@@ -564,6 +597,14 @@ function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['ite
     extractComments(item, item.value, item.identifier, (item as { aliasPositionedComments?: unknown }).aliasPositionedComments),
     extractPositionedComments(nextItem, 'before'),
   );
+}
+
+function extractQueryColumnComments(query: unknown): string[] | undefined {
+  if (!(query instanceof SimpleSelectQuery)) {
+    return undefined;
+  }
+  const comments = query.selectClause.items.flatMap((_, index) => extractSelectItemComments(query.selectClause.items, index) ?? []);
+  return comments.length > 0 ? dedupeComments(comments) : undefined;
 }
 
 function extractCteComments(cte: CommonTable): string[] | undefined {
