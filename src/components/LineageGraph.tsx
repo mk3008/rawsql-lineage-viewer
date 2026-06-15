@@ -94,7 +94,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         const baseStyle = edge.style ?? {};
         return {
           ...edge,
-          animated: true,
+          animated: false,
           style: {
             ...baseStyle,
             stroke: '#2563eb',
