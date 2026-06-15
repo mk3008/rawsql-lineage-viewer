@@ -92,7 +92,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await expect(cteComment).toContainText('CTE SQL');
   await expect(cteComment.locator('.lineage-sql-preview')).toHaveCount(0);
   await expect(cteComment).toHaveCSS('position', 'fixed');
-  await expect(cteComment).toHaveCSS('z-index', '100000');
+  await expect(cteComment).toHaveCSS('z-index', '100001');
   const recentOrdersBox = await recentOrdersNode.boundingBox();
   const cteCommentBox = await cteComment.boundingBox();
   expect(cteCommentBox?.x ?? 0).toBeGreaterThanOrEqual((recentOrdersBox?.x ?? 0) + (recentOrdersBox?.width ?? 0) + 6);
@@ -217,9 +217,15 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputComment).toContainText('coalesce(ot.total_amount, 0)');
   await expect(orderTotalsComment).toContainText('Total ordered amount per customer.');
   await expect(recentOrdersComment).toContainText('Extended line amount.');
+  await expect(outputComment).toHaveCSS('z-index', '100001');
+  await recentOrdersComment.click();
+  await expect(recentOrdersComment).toHaveCSS('z-index', '100001');
+  await expect(outputComment).toHaveCSS('z-index', '100000');
   await outputComment.getByRole('button', { name: 'Close comment' }).click();
   await expect(outputComment).toHaveCount(0);
   await expect(orderTotalsComment).toContainText('Total ordered amount per customer.');
+  await orderTotalsComment.getByRole('button', { name: 'Close comment' }).click();
+  await recentOrdersComment.getByRole('button', { name: 'Close comment' }).click();
 
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);

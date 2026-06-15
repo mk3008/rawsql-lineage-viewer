@@ -36,6 +36,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
+  const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
@@ -61,23 +62,37 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const selectNode = useCallback((nodeId: string) => {
     setSelectedColumn(null);
     setDismissedCommentTargetIds(new Set());
-    setSelectedNodeCommentTargetId((current) => (current === nodeCommentTargetId(nodeId) ? null : nodeCommentTargetId(nodeId)));
+    const targetId = nodeCommentTargetId(nodeId);
+    setSelectedNodeCommentTargetId((current) => {
+      const next = current === targetId ? null : targetId;
+      setActiveCommentTargetId(next);
+      return next;
+    });
   }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     setSelectedNodeCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
-    setSelectedColumn((current) =>
-      current?.columnId === column.id
-        ? null
-        : {
-            columnId: column.id,
-            columnName: column.name,
-            nodeId,
-          },
-    );
+    const targetId = columnCommentTargetId(column.id);
+    setSelectedColumn((current) => {
+      if (current?.columnId === column.id) {
+        setActiveCommentTargetId(null);
+        return null;
+      }
+
+      setActiveCommentTargetId(targetId);
+      return {
+        columnId: column.id,
+        columnName: column.name,
+        nodeId,
+      };
+    });
   }, []);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
+    setActiveCommentTargetId((current) => (current === targetId ? null : current));
+  }, []);
+  const focusComment = useCallback((targetId: string) => {
+    setActiveCommentTargetId(targetId);
   }, []);
   const columnHighlights = useMemo(
     () =>
@@ -124,9 +139,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
           selectedCommentTargetIds,
+          activeCommentTargetId,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
+          onCommentFocus: focusComment,
         },
       })),
     [
@@ -138,6 +155,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       selectNode,
       selectColumn,
       closeComment,
+      focusComment,
+      activeCommentTargetId,
       selectedColumn?.columnId,
       selectedCommentTargetIds,
       toggleColumns,
@@ -206,6 +225,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   useEffect(() => {
     setSelectedColumn(null);
     setSelectedNodeCommentTargetId(null);
+    setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(new Set());
   }, [lineage]);

@@ -47,7 +47,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           anchorRef={nodeRef}
           comments={node.comments}
           cteExecutableSql={node.cteExecutableSql}
+          isActive={data.activeCommentTargetId === nodeCommentTargetId(node.id)}
           onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
+          onFocus={() => data.onCommentFocus?.(nodeCommentTargetId(node.id))}
           variant="node"
         />
       ) : null}
@@ -100,7 +102,9 @@ function LineageColumnRow({
           anchorRef={columnRef}
           comments={column.comments}
           expressionSql={column.expressionSql}
+          isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
+          onFocus={() => data.onCommentFocus?.(columnCommentTargetId(column.id))}
           variant="column"
         />
       ) : null}
@@ -113,14 +117,18 @@ function CommentBubble({
   comments,
   expressionSql,
   cteExecutableSql,
+  isActive,
   onClose,
+  onFocus,
   variant,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
   comments?: string[];
   expressionSql?: string;
   cteExecutableSql?: string;
+  isActive?: boolean;
   onClose?: () => void;
+  onFocus?: () => void;
   variant: 'column' | 'node';
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -178,8 +186,15 @@ function CommentBubble({
       ref={bubbleRef}
       className={`lineage-comment-bubble lineage-comment-bubble-${variant} ${cteExecutableSql ? 'lineage-comment-bubble-has-sql' : ''} nodrag`}
       data-testid="lineage-comment"
-      style={position ? { left: position.left, top: position.top } : undefined}
-      onClick={(event) => event.stopPropagation()}
+      style={position ? { left: position.left, top: position.top, zIndex: isActive ? 100001 : 100000 } : { zIndex: isActive ? 100001 : 100000 }}
+      onMouseDown={(event) => {
+        event.stopPropagation();
+        onFocus?.();
+      }}
+      onClick={(event) => {
+        event.stopPropagation();
+        onFocus?.();
+      }}
     >
       <button
         aria-label="Close comment"

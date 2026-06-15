@@ -486,13 +486,8 @@ textarea {
   font-size: 12px;
   font-weight: 650;
   line-height: 1.45;
-  pointer-events: none;
-  white-space: normal;
-}
-
-.lineage-comment-bubble button,
-.lineage-comment-bubble a {
   pointer-events: auto;
+  white-space: normal;
 }
 
 .lineage-comment-close {
