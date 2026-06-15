@@ -1,6 +1,7 @@
 import {
   BinarySelectQuery,
   CTECollector,
+  ColumnReference,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
@@ -113,6 +114,8 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
   const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter } = options;
 
   if (query instanceof SimpleSelectQuery) {
+    setNodeColumns(nodes, targetId, collectOutputColumns(query));
+
     const fromClause = query.fromClause;
     if (!fromClause) {
       warnings.push({
@@ -158,6 +161,8 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         confidence: 'high',
       });
     }
+
+    setReferencedSourceColumns(query, sources, nodes);
 
     return;
   }
@@ -286,6 +291,106 @@ function resolveSourceExpression(
     node: createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes),
     aliases: [source.getAliasName() ?? 'unknown source'],
   };
+}
+
+function collectOutputColumns(query: SimpleSelectQuery): string[] {
+  return query.selectClause.items.map((item, index) => {
+    if (item.identifier) {
+      return item.identifier.name;
+    }
+    if (item.value instanceof ColumnReference) {
+      return item.value.column.name;
+    }
+    return `expr_${index + 1}`;
+  });
+}
+
+function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
+  const sourceByAlias = new Map<string, ResolvedSource>();
+  for (const source of sources) {
+    for (const alias of source.aliases) {
+      sourceByAlias.set(alias, source);
+    }
+  }
+
+  const columnsByNode = new Map<string, string[]>();
+  for (const reference of collectQueryColumnReferences(query)) {
+    const columnName = reference.column.name;
+    if (columnName === '*') {
+      continue;
+    }
+
+    const namespace = reference.getNamespace();
+    const source = namespace ? sourceByAlias.get(namespace) : sources.length === 1 ? sources[0] : null;
+    if (!source) {
+      continue;
+    }
+
+    columnsByNode.set(source.node.id, [...(columnsByNode.get(source.node.id) ?? []), columnName]);
+  }
+
+  for (const [nodeId, columns] of columnsByNode) {
+    setNodeColumns(nodes, nodeId, columns);
+  }
+}
+
+function collectQueryColumnReferences(query: SimpleSelectQuery): ColumnReference[] {
+  const roots: unknown[] = [
+    ...query.selectClause.items.map((item) => item.value),
+    query.whereClause?.condition,
+    ...(query.groupByClause?.grouping ?? []),
+    query.havingClause?.condition,
+    ...(query.orderByClause?.order ?? []),
+    ...(query.fromClause?.joins ?? []).map((join) => join.condition),
+  ];
+  return collectColumnReferences(roots);
+}
+
+function collectColumnReferences(value: unknown): ColumnReference[] {
+  const references: ColumnReference[] = [];
+  const visited = new Set<unknown>();
+
+  const visit = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || visited.has(current)) {
+      return;
+    }
+    visited.add(current);
+
+    if (current instanceof ColumnReference) {
+      references.push(current);
+      return;
+    }
+
+    for (const nested of Object.values(current)) {
+      if (Array.isArray(nested)) {
+        nested.forEach(visit);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(value);
+  return references;
+}
+
+function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columnNames: string[]): void {
+  const node = nodes.get(nodeId);
+  if (!node) {
+    return;
+  }
+  const seen = new Set(node.columns.map((column) => column.name));
+  const nextColumns = [...node.columns];
+  for (const name of columnNames) {
+    if (!seen.has(name)) {
+      seen.add(name);
+      nextColumns.push({
+        id: `${nodeId}.${sanitizeId(name)}`,
+        name,
+      });
+    }
+  }
+  node.columns = nextColumns;
 }
 
 function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {

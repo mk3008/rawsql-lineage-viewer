@@ -125,6 +125,33 @@ describe('rawsqlAdapter', () => {
     expect(joinEdges.find((edge) => edge.id === 'cte_order_totals-main_output-LEFT_JOIN')?.joinType).toBe('left');
   });
 
+  it('populates output and referenced source columns', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const columnsByNodeId = new Map(lineage.nodes.map((node) => [node.id, node.columns.map((column) => column.name)]));
+
+    expect(columnsByNodeId.get('cte_recent_orders')).toEqual([
+      'order_id',
+      'customer_id',
+      'order_date',
+      'product_id',
+      'quantity',
+      'unit_price',
+      'amount',
+    ]);
+    expect(columnsByNodeId.get('table_orders')).toEqual(['id', 'customer_id', 'order_date']);
+    expect(columnsByNodeId.get('table_order_items')).toEqual(['product_id', 'quantity', 'unit_price', 'order_id']);
+    expect(columnsByNodeId.get('table_payments')).toEqual(['customer_id', 'amount', 'paid_at', 'status']);
+    expect(columnsByNodeId.get('main_output')).toEqual([
+      'customer_id',
+      'customer_name',
+      'email',
+      'order_count',
+      'total_amount',
+      'paid_amount',
+      'payment_status',
+    ]);
+  });
+
   it('routes join edges toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (

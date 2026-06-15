@@ -1,5 +1,5 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Database, FileJson2, GitBranch, Table2 } from 'lucide-react';
+import { Database, Eye, EyeOff, FileJson2, GitBranch, Table2 } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 
 const iconByType = {
@@ -12,6 +12,7 @@ const iconByType = {
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const Icon = iconByType[node.type];
+  const columnsVisible = data.columnsVisible ?? true;
 
   return (
     <div className={`lineage-node lineage-node-${node.type}`} data-testid={`lineage-node-${node.type}`}>
@@ -21,19 +22,34 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <Icon size={15} aria-hidden="true" />
           {node.label}
         </span>
-        <span className="lineage-node-kind">{node.type}</span>
+        <div className="lineage-node-actions">
+          <button
+            aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
+            className="node-icon-button nodrag"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              data.onToggleColumns?.(node.id);
+            }}
+          >
+            {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+          </button>
+          <span className="lineage-node-kind">{node.type}</span>
+        </div>
       </div>
-      <div className="lineage-node-body">
-        {node.columns.length > 0 ? (
-          node.columns.map((column) => (
-            <div className="lineage-column" key={column.id}>
-              {column.name}
-            </div>
-          ))
-        ) : (
-          <div className="lineage-column lineage-column-muted">columns unresolved</div>
-        )}
-      </div>
+      {columnsVisible ? (
+        <div className="lineage-node-body">
+          {node.columns.length > 0 ? (
+            node.columns.map((column) => (
+              <div className="lineage-column" key={column.id}>
+                {column.name}
+              </div>
+            ))
+          ) : (
+            <div className="lineage-column lineage-column-muted">columns unresolved</div>
+          )}
+        </div>
+      ) : null}
       <Handle type="source" position={Position.Right} />
     </div>
   );

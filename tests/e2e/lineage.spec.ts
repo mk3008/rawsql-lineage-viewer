@@ -43,6 +43,26 @@ test('does not render join edges while keeping outer join context on data flows'
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
 });
 
+test('shows referenced columns and can hide columns per node', async ({ page }) => {
+  await page.goto('/');
+
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  const orderItemsNode = page.getByTestId('rf__node-table_order_items');
+  const outputNode = page.getByTestId('rf__node-main_output');
+
+  await expect(ordersNode.getByText('order_date')).toBeVisible();
+  await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
+  await expect(outputNode.getByText('customer_name')).toBeVisible();
+
+  await page.locator('button[aria-label="Hide columns for orders"]').click();
+
+  await expect(ordersNode.getByText('order_date')).not.toBeVisible();
+  await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
+
+  await page.locator('button[aria-label="Show columns for orders"]').click();
+  await expect(ordersNode.getByText('order_date')).toBeVisible();
+});
+
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
   await page.goto('/');
 

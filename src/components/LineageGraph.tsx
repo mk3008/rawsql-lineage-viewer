@@ -1,5 +1,5 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
-import { useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { LineageModel } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -10,12 +10,36 @@ const nodeTypes = {
 
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
-  const [nodes, setNodes, onNodesChange] = useNodesState(graph.nodes);
+  const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
+  const toggleColumns = useCallback((nodeId: string) => {
+    setHiddenColumnNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
+  const graphNodes = useMemo(
+    () =>
+      graph.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          columnsVisible: !hiddenColumnNodeIds.has(node.id),
+          onToggleColumns: toggleColumns,
+        },
+      })),
+    [graph.nodes, hiddenColumnNodeIds, toggleColumns],
+  );
+  const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
 
   useEffect(() => {
-    setNodes(graph.nodes);
-  }, [graph.nodes, setNodes]);
+    setNodes(graphNodes);
+  }, [graphNodes, setNodes]);
 
   useEffect(() => {
     setEdges(graph.edges);

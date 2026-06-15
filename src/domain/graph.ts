@@ -3,6 +3,8 @@ import type { LineageEdge, LineageNode } from './lineage';
 
 export type GraphNodeData = {
   lineageNode: LineageNode;
+  columnsVisible?: boolean;
+  onToggleColumns?: (nodeId: string) => void;
 };
 
 export type GraphEdgeData = {

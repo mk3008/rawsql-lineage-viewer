@@ -351,10 +351,35 @@ textarea {
   text-transform: uppercase;
 }
 
+.lineage-node-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.node-icon-button {
+  display: inline-grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border: 1px solid rgb(15 23 42 / 12%);
+  border-radius: 6px;
+  background: rgb(255 255 255 / 62%);
+  color: #334155;
+  cursor: pointer;
+}
+
+.node-icon-button:hover {
+  background: #fff;
+}
+
 .lineage-node-body {
   display: grid;
   gap: 5px;
+  max-height: 170px;
   padding: 10px 12px 12px;
+  overflow: auto;
 }
 
 .lineage-column {
