@@ -1,5 +1,5 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -15,6 +15,7 @@ interface SelectedColumn {
 }
 
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
+  const previousLineageRef = useRef(lineage);
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
@@ -64,8 +65,30 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
 
   useEffect(() => {
-    setNodes(graphNodes);
-  }, [graphNodes, setNodes]);
+    if (previousLineageRef.current !== lineage) {
+      previousLineageRef.current = lineage;
+      setNodes(graphNodes);
+      return;
+    }
+
+    setNodes((currentNodes) => {
+      const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+      return graphNodes.map((node) => {
+        const current = currentById.get(node.id);
+        if (!current) {
+          return node;
+        }
+
+        return {
+          ...node,
+          dragging: current.dragging,
+          measured: current.measured,
+          position: current.position,
+          selected: current.selected,
+        };
+      });
+    });
+  }, [graphNodes, lineage, setNodes]);
 
   useEffect(() => {
     setEdges(graph.edges);

@@ -116,6 +116,25 @@ test('can drag lineage nodes to separate overlapping lines', async ({ page }) =>
   await expect(node).not.toHaveAttribute('style', beforeTransform ?? '');
 });
 
+test('keeps dragged node positions when selecting a column', async ({ page }) => {
+  await page.goto('/');
+
+  const node = page.getByTestId('rf__node-table_orders');
+  await expect(node).toBeVisible();
+  const before = await node.boundingBox();
+  expect(before).not.toBeNull();
+
+  await page.mouse.move(before!.x + 28, before!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(before!.x + 118, before!.y + 90, { steps: 8 });
+  await page.mouse.up();
+
+  const draggedTransform = await node.getAttribute('style');
+  await node.getByRole('button', { name: 'order_date', exact: true }).click();
+
+  await expect(node).toHaveAttribute('style', draggedTransform ?? '');
+});
+
 test('updates the lineage graph after editing SQL', async ({ page }) => {
   await page.goto('/');
 
