@@ -227,9 +227,6 @@ function CommentBubble({
               </button>
             </div>
           </div>
-          <pre className="lineage-sql-preview">
-            <code>{cteExecutableSql}</code>
-          </pre>
         </div>
       ) : null}
     </div>,

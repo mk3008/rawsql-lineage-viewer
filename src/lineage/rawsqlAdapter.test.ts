@@ -190,6 +190,23 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('records title comments for output and derived nodes', () => {
+    const { lineage } = analyzeSql(`
+      -- Final output comment.
+      SELECT src.id AS user_id -- Output id comment.
+      FROM (
+        -- Derived source comment.
+        SELECT id -- Derived id comment.
+        FROM users
+      ) src
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const derivedNode = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'src');
+
+    expect(outputNode?.comments).toEqual(expect.arrayContaining(['Final output comment.', 'Output id comment.']));
+    expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
+  });
+
   it('records executable SQL for CTEs with required dependencies', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));

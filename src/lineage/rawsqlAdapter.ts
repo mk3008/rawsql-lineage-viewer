@@ -87,6 +87,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
     type: 'output',
     label: 'Final Result',
     columns: [],
+    comments: extractQueryNodeComments(query),
   });
 
   const ctes = new CTECollector().collect(query);
@@ -264,6 +265,7 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
     type: 'derived',
     label: `${operator} ${side}`,
     columns: [],
+    comments: extractQueryNodeComments(query),
   });
   collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
   return id;
@@ -382,6 +384,7 @@ function resolveSourceExpression(
       type: 'derived',
       label: alias,
       columns: [],
+      comments: extractQueryNodeComments(datasource.query),
     };
     nodes.set(id, node);
     collectQueryEdges({
@@ -605,6 +608,10 @@ function extractQueryColumnComments(query: unknown): string[] | undefined {
   }
   const comments = query.selectClause.items.flatMap((_, index) => extractSelectItemComments(query.selectClause.items, index) ?? []);
   return comments.length > 0 ? dedupeComments(comments) : undefined;
+}
+
+function extractQueryNodeComments(query: unknown): string[] | undefined {
+  return mergeComments(mergeComments(extractComments(query), extractHeaderComments(query)), extractQueryColumnComments(query));
 }
 
 function extractCteComments(cte: CommonTable): string[] | undefined {

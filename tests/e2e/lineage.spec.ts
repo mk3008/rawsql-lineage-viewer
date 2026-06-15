@@ -90,9 +90,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   const cteComment = page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' });
   await expect(cteComment).toContainText('Recent order line items used as the base sales fact.');
   await expect(cteComment).toContainText('CTE SQL');
-  await expect(cteComment).toContainText('-- Recent order line items used as the base sales fact.');
-  await expect(cteComment).toContainText('-- Extended line amount.');
-  await expect(cteComment).toContainText('orders as o');
+  await expect(cteComment.locator('.lineage-sql-preview')).toHaveCount(0);
   await expect(cteComment).toHaveCSS('position', 'fixed');
   await expect(cteComment).toHaveCSS('z-index', '100000');
   const openInViewerLink = cteComment.getByRole('link', { name: 'Open in viewer' });
@@ -111,6 +109,34 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Extended line amount.' })).toContainText('Extended line amount.');
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
+});
+
+test('shows title comments for output and derived nodes', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    -- Final output comment.
+    SELECT src.id AS user_id -- Output id comment.
+    FROM (
+      -- Derived source comment.
+      SELECT id -- Derived id comment.
+      FROM users
+    ) src
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'Final Result', exact: true }).click();
+  const outputComment = page.getByTestId('lineage-comment').filter({ hasText: 'Final output comment.' });
+  await expect(outputComment).toContainText('Final output comment.');
+  await expect(outputComment).toContainText('Output id comment.');
+  await outputComment.getByRole('button', { name: 'Close comment' }).click();
+
+  const derivedNode = page.getByTestId('lineage-node-derived');
+  await derivedNode.getByRole('button', { name: 'src', exact: true }).click();
+  const derivedComment = page.getByTestId('lineage-comment').filter({ hasText: 'Derived source comment.' });
+  await expect(derivedComment).toContainText('Derived source comment.');
+  await expect(derivedComment).toContainText('Derived id comment.');
 });
 
 test('preserves formatted expression line breaks', async ({ page }) => {
