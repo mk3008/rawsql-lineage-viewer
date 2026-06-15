@@ -38,6 +38,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
+  const [showColumnCallouts, setShowColumnCallouts] = useState(true);
+  const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -103,6 +105,10 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   );
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
+      if (!showColumnCallouts) {
+        return new Set<string>();
+      }
+
       const targetIds = new Set([
         columnCommentTargetId(selectedColumn.columnId),
         ...[...columnHighlights.highlightedColumnIds].map(columnCommentTargetId),
@@ -114,7 +120,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return targetIds;
     }
 
-    if (selectedNodeCommentTargetId && !dismissedCommentTargetIds.has(selectedNodeCommentTargetId)) {
+    if (showHeaderCallouts && selectedNodeCommentTargetId && !dismissedCommentTargetIds.has(selectedNodeCommentTargetId)) {
       return new Set([selectedNodeCommentTargetId]);
     }
 
@@ -125,6 +131,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     dismissedCommentTargetIds,
     selectedColumn,
     selectedNodeCommentTargetId,
+    showColumnCallouts,
+    showHeaderCallouts,
   ]);
   const graphNodes = useMemo(
     () =>
@@ -232,10 +240,20 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
 
   return (
     <div className="graph-shell" data-testid="lineage-graph">
-      <button className="graph-column-toggle nodrag" type="button" onClick={toggleAllColumns}>
-        {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
-        {allColumnsHidden ? 'Show all columns' : 'Hide all columns'}
-      </button>
+      <div className="graph-display-controls nodrag" aria-label="Graph display options">
+        <button className="graph-column-toggle" type="button" onClick={toggleAllColumns}>
+          {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+          {allColumnsHidden ? 'Show all columns' : 'Hide all columns'}
+        </button>
+        <label className="graph-callout-toggle">
+          <input type="checkbox" checked={showColumnCallouts} onChange={(event) => setShowColumnCallouts(event.target.checked)} />
+          Column callouts
+        </label>
+        <label className="graph-callout-toggle">
+          <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
+          Header callouts
+        </label>
+      </div>
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}

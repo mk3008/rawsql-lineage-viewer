@@ -320,11 +320,19 @@ textarea {
   background: #fbfdff;
 }
 
-.graph-column-toggle {
+.graph-display-controls {
   position: absolute;
   z-index: 8;
   top: 12px;
   left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.graph-column-toggle,
+.graph-callout-toggle {
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -335,15 +343,30 @@ textarea {
   background: rgb(255 255 255 / 92%);
   box-shadow: 0 10px 24px rgb(15 23 42 / 10%);
   color: #0f172a;
-  cursor: pointer;
   font-size: 12px;
   font-weight: 750;
+}
+
+.graph-column-toggle {
+  cursor: pointer;
 }
 
 .graph-column-toggle:hover {
   border-color: #bfdbfe;
   background: #fff;
   color: #1d4ed8;
+}
+
+.graph-callout-toggle {
+  cursor: pointer;
+  user-select: none;
+}
+
+.graph-callout-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: #2563eb;
 }
 
 .lineage-node {

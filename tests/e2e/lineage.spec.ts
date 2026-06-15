@@ -153,6 +153,29 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await expect(expression).toContainText("case\n    when ps.last_paid_at is null then\n        'unknown'");
 });
 
+test('can toggle column and header callouts independently', async ({ page }) => {
+  await page.goto('/');
+
+  const columnCallouts = page.getByRole('checkbox', { name: 'Column callouts' });
+  const headerCallouts = page.getByRole('checkbox', { name: 'Header callouts' });
+  await expect(columnCallouts).toBeChecked();
+  await expect(headerCallouts).toBeChecked();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await columnCallouts.uncheck();
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'coalesce(ot.total_amount, 0)' })).toHaveCount(0);
+
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  await headerCallouts.uncheck();
+  await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' })).toHaveCount(0);
+
+  await headerCallouts.check();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' })).toBeVisible();
+});
+
 test('opens SQL from the sql query parameter on first load', async ({ page }) => {
   const sql = 'select c.customer_id from customers c';
   await page.goto(`/?sql=${encodeURIComponent(sql)}`);
