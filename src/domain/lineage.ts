@@ -37,7 +37,7 @@ export interface LineageModel {
   edges: LineageEdge[];
   analysisWarnings: AnalysisWarning[];
   raw: {
-    mermaid: string;
+    adapter: 'rawsql-ts-ast';
   };
 }
 

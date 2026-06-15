@@ -1,6 +1,15 @@
-import { QueryFlowDiagramGenerator, SelectQueryParser } from 'rawsql-ts';
-import type { AnalysisWarning, LineageModel } from '../domain/lineage';
-import { parseMermaidFlow } from './mermaidFlowParser';
+import {
+  BinarySelectQuery,
+  CTECollector,
+  FunctionSource,
+  ParenSource,
+  SelectQueryParser,
+  SimpleSelectQuery,
+  SubQuerySource,
+  TableSource,
+} from 'rawsql-ts';
+import type { CommonTable, JoinClause, SourceExpression } from 'rawsql-ts';
+import type { AnalysisWarning, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -11,30 +20,339 @@ const parserVersion = 'rawsql-ts';
 
 export function analyzeSql(sql: string): ParserAdapterResult {
   const warnings: AnalysisWarning[] = [];
+  const nodes = new Map<string, LineageNode>();
+  const edges: LineageEdge[] = [];
+  const derivedCounter = { value: 0 };
 
+  let query;
   try {
-    SelectQueryParser.parse(sql);
+    query = SelectQueryParser.parse(sql);
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
 
-  const mermaid = new QueryFlowDiagramGenerator().generateMermaidFlow(sql, {
-    direction: 'LR',
+  nodes.set('main_output', {
+    id: 'main_output',
+    type: 'output',
+    label: 'Final Result',
+    columns: [],
   });
-  const lineage = parseMermaidFlow(mermaid, warnings);
 
-  if (lineage.nodes.every((node) => node.type !== 'output')) {
-    warnings.push({
-      code: 'output-not-found',
-      message: 'The parser did not expose an output node for this query.',
+  const ctes = new CTECollector().collect(query);
+  const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
+
+  for (const cte of ctes) {
+    const cteName = cte.getSourceAliasName();
+    nodes.set(toCteId(cteName), {
+      id: toCteId(cteName),
+      type: 'cte',
+      label: cteName,
+      columns: [],
+      materializationHint: normalizeMaterializationHint(cte.materialized),
     });
   }
 
-  return {
-    lineage: {
-      ...lineage,
-      analysisWarnings: warnings,
+  for (const cte of ctes) {
+    collectQueryEdges({
+      query: cte.query,
+      targetId: toCteId(cte.getSourceAliasName()),
+      targetLabel: cte.getSourceAliasName(),
+      cteNames,
+      nodes,
+      edges,
+      warnings,
+      derivedCounter,
+    });
+  }
+
+  collectQueryEdges({
+    query,
+    targetId: 'main_output',
+    targetLabel: 'Final Result',
+    cteNames,
+    nodes,
+    edges,
+    warnings,
+    derivedCounter,
+  });
+
+  const lineage: LineageModel = {
+    kind: 'sql-lineage-model',
+    modelVersion: 1,
+    nodes: [...nodes.values()],
+    edges: dedupeEdges(edges),
+    analysisWarnings: warnings,
+    raw: {
+      adapter: 'rawsql-ts-ast',
     },
+  };
+
+  return {
+    lineage,
     parserVersion,
   };
+}
+
+interface CollectQueryEdgesOptions {
+  query: unknown;
+  targetId: string;
+  targetLabel: string;
+  cteNames: Set<string>;
+  nodes: Map<string, LineageNode>;
+  edges: LineageEdge[];
+  warnings: AnalysisWarning[];
+  derivedCounter: { value: number };
+}
+
+function collectQueryEdges(options: CollectQueryEdgesOptions): void {
+  const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter } = options;
+
+  if (query instanceof SimpleSelectQuery) {
+    const fromClause = query.fromClause;
+    if (!fromClause) {
+      warnings.push({
+        code: 'select-without-source',
+        message: `${targetLabel} has no FROM source, so no upstream lineage edge was created.`,
+      });
+      return;
+    }
+
+    const joins = fromClause.joins ?? [];
+    const mainSource = resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter);
+    addLineageEdge(edges, {
+      source: mainSource.id,
+      target: targetId,
+      type: joins.length > 0 ? 'join' : 'dataFlow',
+      label: joins.length > 0 ? normalizeJoinLabel(joins[0]) : undefined,
+      joinType: joins.length > 0 ? normalizeJoinType(joins[0]) : undefined,
+      confidence: 'high',
+    });
+
+    for (const join of joins) {
+      const source = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+      addLineageEdge(edges, {
+        source: source.id,
+        target: targetId,
+        type: 'join',
+        label: normalizeJoinLabel(join),
+        joinType: normalizeJoinType(join),
+        confidence: 'high',
+      });
+    }
+    return;
+  }
+
+  if (query instanceof BinarySelectQuery) {
+    const operator = query.operator.value.toUpperCase();
+    const leftId = collectBinaryPart(query.left, 'left', operator, options);
+    const rightId = collectBinaryPart(query.right, 'right', operator, options);
+    addLineageEdge(edges, {
+      source: leftId,
+      target: targetId,
+      type: 'dataFlow',
+      label: operator,
+      confidence: 'medium',
+    });
+    addLineageEdge(edges, {
+      source: rightId,
+      target: targetId,
+      type: 'dataFlow',
+      label: operator,
+      confidence: 'medium',
+    });
+    return;
+  }
+
+  warnings.push({
+    code: 'unsupported-query-kind',
+    message: `${targetLabel} uses a query kind that the MVP lineage adapter does not support yet.`,
+  });
+}
+
+function collectBinaryPart(query: unknown, side: string, operator: string, options: CollectQueryEdgesOptions): string {
+  const { nodes, derivedCounter } = options;
+  derivedCounter.value += 1;
+  const id = `derived_${operator.toLowerCase().replace(/\s+/g, '_')}_${side}_${derivedCounter.value}`;
+  nodes.set(id, {
+    id,
+    type: 'derived',
+    label: `${operator} ${side}`,
+    columns: [],
+  });
+  collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
+  return id;
+}
+
+function resolveSourceExpression(
+  source: SourceExpression,
+  cteNames: Set<string>,
+  nodes: Map<string, LineageNode>,
+  edges: LineageEdge[],
+  warnings: AnalysisWarning[],
+  derivedCounter: { value: number },
+): LineageNode {
+  const datasource = source.datasource;
+
+  if (datasource instanceof TableSource) {
+    const sourceName = datasource.getSourceName();
+    if (cteNames.has(sourceName)) {
+      return nodes.get(toCteId(sourceName)) ?? createCteNode(sourceName, nodes);
+    }
+    return createTableNode(sourceName, nodes);
+  }
+
+  if (datasource instanceof SubQuerySource) {
+    derivedCounter.value += 1;
+    const alias = source.getAliasName() ?? `subquery_${derivedCounter.value}`;
+    const id = `derived_${sanitizeId(alias)}_${derivedCounter.value}`;
+    const node: LineageNode = {
+      id,
+      type: 'derived',
+      label: alias,
+      columns: [],
+    };
+    nodes.set(id, node);
+    collectQueryEdges({
+      query: datasource.query,
+      targetId: id,
+      targetLabel: alias,
+      cteNames,
+      nodes,
+      edges,
+      warnings,
+      derivedCounter,
+    });
+    return node;
+  }
+
+  if (datasource instanceof ParenSource) {
+    return resolveSourceExpression(
+      {
+        datasource: datasource.source,
+        aliasExpression: source.aliasExpression,
+      } as SourceExpression,
+      cteNames,
+      nodes,
+      edges,
+      warnings,
+      derivedCounter,
+    );
+  }
+
+  if (datasource instanceof FunctionSource) {
+    const name = datasource.name instanceof Object && 'name' in datasource.name ? datasource.name.name : String(datasource.name);
+    return createDerivedNode(`function_${sanitizeId(name)}`, name, nodes);
+  }
+
+  warnings.push({
+    code: 'unsupported-source-kind',
+    message: `Unsupported source kind ${source.datasource.constructor.name}; created an unknown derived node.`,
+  });
+  return createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes);
+}
+
+function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {
+  const id = toTableId(tableName);
+  const existing = nodes.get(id);
+  if (existing) {
+    return existing;
+  }
+  const node: LineageNode = {
+    id,
+    type: 'table',
+    label: tableName,
+    columns: [],
+  };
+  nodes.set(id, node);
+  return node;
+}
+
+function createCteNode(cteName: string, nodes: Map<string, LineageNode>): LineageNode {
+  const node: LineageNode = {
+    id: toCteId(cteName),
+    type: 'cte',
+    label: cteName,
+    columns: [],
+    materializationHint: 'none',
+  };
+  nodes.set(node.id, node);
+  return node;
+}
+
+function createDerivedNode(id: string, label: string, nodes: Map<string, LineageNode>): LineageNode {
+  const existing = nodes.get(id);
+  if (existing) {
+    return existing;
+  }
+  const node: LineageNode = {
+    id,
+    type: 'derived',
+    label,
+    columns: [],
+  };
+  nodes.set(id, node);
+  return node;
+}
+
+function addLineageEdge(edges: LineageEdge[], edge: Omit<LineageEdge, 'id'>): void {
+  edges.push({
+    ...edge,
+    id: `${edge.source}-${edge.target}${edge.type === 'join' ? `-${sanitizeId(edge.label ?? 'join')}` : ''}`,
+  });
+}
+
+function normalizeJoinLabel(join: JoinClause): string {
+  const value = join.joinType.value.trim();
+  return value.length > 0 ? value.toUpperCase() : 'JOIN';
+}
+
+function normalizeJoinType(join: JoinClause): LineageEdge['joinType'] {
+  const normalized = join.joinType.value.toLowerCase();
+  if (normalized.includes('left')) {
+    return 'left';
+  }
+  if (normalized.includes('right')) {
+    return 'right';
+  }
+  if (normalized.includes('full')) {
+    return 'full';
+  }
+  if (normalized.includes('join')) {
+    return 'inner';
+  }
+  return 'unknown';
+}
+
+function normalizeMaterializationHint(materialized: CommonTable['materialized']): LineageNode['materializationHint'] {
+  if (materialized === true) {
+    return 'MATERIALIZED';
+  }
+  if (materialized === false) {
+    return 'NOT MATERIALIZED';
+  }
+  return 'none';
+}
+
+function toTableId(tableName: string): string {
+  return `table_${sanitizeId(tableName)}`;
+}
+
+function toCteId(cteName: string): string {
+  return `cte_${sanitizeId(cteName)}`;
+}
+
+function sanitizeId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'unnamed';
+}
+
+function dedupeEdges(edges: LineageEdge[]): LineageEdge[] {
+  const seen = new Set<string>();
+  return edges.filter((edge) => {
+    const key = `${edge.source}|${edge.target}|${edge.type}|${edge.label ?? ''}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }

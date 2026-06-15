@@ -11,6 +11,11 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-table_order_items')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_recent_orders')).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_customers-main_output-LEFT_JOIN')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output-LEFT_JOIN')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-cte_recent_orders-JOIN')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders-JOIN')).toBeAttached();
   await expect(page.getByTestId('graph-info')).toContainText('Edges');
 });
 
