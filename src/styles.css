@@ -443,6 +443,14 @@ textarea {
   font-weight: 750;
 }
 
+.react-flow__node {
+  cursor: grab;
+}
+
+.react-flow__node.dragging {
+  cursor: grabbing;
+}
+
 @media (max-width: 860px) {
   .app-shell {
     grid-template-rows: auto 1fr;

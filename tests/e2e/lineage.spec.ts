@@ -54,6 +54,25 @@ test('can toggle data flow and join edges independently', async ({ page }) => {
   await expect(joinEdge).toBeAttached();
 });
 
+test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
+  await page.goto('/');
+
+  const node = page.getByTestId('rf__node-table_orders');
+  await expect(node).toBeVisible();
+  const before = await node.boundingBox();
+  expect(before).not.toBeNull();
+
+  await page.mouse.move(before!.x + before!.width / 2, before!.y + before!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(before!.x + before!.width / 2 + 90, before!.y + before!.height / 2 + 70, { steps: 8 });
+  await page.mouse.up();
+
+  const after = await node.boundingBox();
+  expect(after).not.toBeNull();
+  expect(after!.x).toBeGreaterThan(before!.x + 40);
+  expect(after!.y).toBeGreaterThan(before!.y + 30);
+});
+
 test('updates the lineage graph after editing SQL', async ({ page }) => {
   await page.goto('/');
 

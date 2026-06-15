@@ -49,4 +49,16 @@ describe('buildGraphModel', () => {
     });
     expect(innerDataFlow?.style?.strokeDasharray).toBeUndefined();
   });
+
+  it('uses curved edges and roomy vertical spacing to reduce visual overlap', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const graph = buildGraphModel(lineage, { dataFlow: true, join: true });
+
+    const orders = graph.nodes.find((node) => node.id === 'table_orders');
+    const orderItems = graph.nodes.find((node) => node.id === 'table_order_items');
+
+    expect(graph.edges.every((edge) => edge.type === 'default')).toBe(true);
+    expect(orders?.position.x).toBe(orderItems?.position.x);
+    expect(Math.abs((orders?.position.y ?? 0) - (orderItems?.position.y ?? 0))).toBeGreaterThanOrEqual(230);
+  });
 });

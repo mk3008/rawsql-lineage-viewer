@@ -6,6 +6,11 @@ const nodeSize = {
   height: 120,
 };
 
+const layoutSpacing = {
+  x: 360,
+  y: 230,
+};
+
 export function buildGraphModel(lineage: LineageModel, edgeVisibility: EdgeVisibility): GraphModel {
   const positioned = layoutNodes(lineage.nodes, lineage.edges);
   const visibleEdges = lineage.edges.filter((edge) => {
@@ -34,24 +39,56 @@ export function buildGraphModel(lineage: LineageModel, edgeVisibility: EdgeVisib
 function layoutNodes(nodes: LineageNode[], edges: LineageEdge[]): Array<{ id: string; lineageNode: LineageNode; position: { x: number; y: number } }> {
   const depthByNode = calculateDepths(nodes, edges);
   const groups = new Map<number, LineageNode[]>();
+  const orderByNode = new Map<string, number>();
+  const positioned: Array<{ id: string; lineageNode: LineageNode; position: { x: number; y: number } }> = [];
 
   for (const node of nodes) {
     const depth = depthByNode.get(node.id) ?? 0;
     groups.set(depth, [...(groups.get(depth) ?? []), node]);
   }
 
-  return [...groups.entries()].flatMap(([depth, group]) =>
-    group
-      .sort((a, b) => a.label.localeCompare(b.label))
-      .map((node, index) => ({
+  for (const [depth, group] of [...groups.entries()].sort(([a], [b]) => a - b)) {
+    const sorted = [...group].sort((a, b) => {
+      const upstreamDelta = upstreamOrder(a.id, edges, orderByNode) - upstreamOrder(b.id, edges, orderByNode);
+      if (upstreamDelta !== 0) {
+        return upstreamDelta;
+      }
+      return nodeTypeRank(a) - nodeTypeRank(b) || a.label.localeCompare(b.label);
+    });
+    const offset = Math.max(0, 2 - sorted.length) * 90 + (depth % 2) * 34;
+
+    sorted.forEach((node, index) => {
+      orderByNode.set(node.id, index);
+      positioned.push({
         id: node.id,
         lineageNode: node,
         position: {
-          x: depth * 300,
-          y: index * 170 + Math.max(0, 2 - group.length) * 80,
+          x: depth * layoutSpacing.x,
+          y: index * layoutSpacing.y + offset,
         },
-      })),
-  );
+      });
+    });
+  }
+
+  return positioned;
+}
+
+function upstreamOrder(nodeId: string, edges: LineageEdge[], orderByNode: Map<string, number>): number {
+  const upstream = edges
+    .filter((edge) => edge.target === nodeId)
+    .map((edge) => orderByNode.get(edge.source))
+    .filter((order): order is number => order !== undefined);
+  if (upstream.length === 0) {
+    return Number.POSITIVE_INFINITY;
+  }
+  return upstream.reduce((sum, order) => sum + order, 0) / upstream.length;
+}
+
+function nodeTypeRank(node: LineageNode): number {
+  if (node.type === 'table') return 0;
+  if (node.type === 'cte') return 1;
+  if (node.type === 'derived') return 2;
+  return 3;
 }
 
 function calculateDepths(nodes: LineageNode[], edges: LineageEdge[]): Map<string, number> {
@@ -83,7 +120,7 @@ function toGraphEdge(edge: LineageEdge): GraphEdge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'smoothstep',
+    type: 'default',
     animated: false,
     label: edge.label,
     data: {
