@@ -83,6 +83,22 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
 });
 
+test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  const orderItemsNode = page.getByTestId('rf__node-table_order_items');
+
+  await orderItemsNode.getByRole('button', { name: 'quantity', exact: true }).click();
+
+  await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(orderTotalsNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+});
+
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
   await page.goto('/');
 

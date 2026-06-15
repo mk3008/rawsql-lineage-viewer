@@ -114,18 +114,29 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
 
 function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedColumn): { highlightedColumnIds: Set<string>; sourceColumnIds: Set<string> } {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const downstreamByColumnKey = new Map<string, Array<{ columnName: string; nodeId: string }>>();
   const highlightedColumnIds = new Set<string>();
   const sourceColumnIds = new Set<string>();
-  const visited = new Set<string>();
+  const visitedUpstream = new Set<string>();
+  const visitedDownstream = new Set<string>();
 
-  const visit = (nodeId: string, columnName: string): boolean => {
+  for (const node of nodes) {
+    for (const column of node.columns) {
+      for (const upstream of column.upstream ?? []) {
+        const key = columnKey(upstream.nodeId, upstream.columnName);
+        downstreamByColumnKey.set(key, [...(downstreamByColumnKey.get(key) ?? []), { columnName: column.name, nodeId: node.id }]);
+      }
+    }
+  }
+
+  const visitUpstream = (nodeId: string, columnName: string): boolean => {
     const node = nodesById.get(nodeId);
     const column = node?.columns.find((item) => item.name === columnName);
-    if (!column || visited.has(column.id)) {
+    if (!column || visitedUpstream.has(column.id)) {
       return false;
     }
 
-    visited.add(column.id);
+    visitedUpstream.add(column.id);
     if (column.id !== selectedColumn.columnId) {
       highlightedColumnIds.add(column.id);
     }
@@ -138,7 +149,7 @@ function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedC
 
     let resolvedAny = false;
     for (const ref of upstream) {
-      resolvedAny = visit(ref.nodeId, ref.columnName) || resolvedAny;
+      resolvedAny = visitUpstream(ref.nodeId, ref.columnName) || resolvedAny;
     }
 
     if (!resolvedAny) {
@@ -147,7 +158,34 @@ function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedC
     return true;
   };
 
-  visit(selectedColumn.nodeId, selectedColumn.columnName);
+  const visitDownstream = (nodeId: string, columnName: string) => {
+    const node = nodesById.get(nodeId);
+    const column = node?.columns.find((item) => item.name === columnName);
+    if (!column || visitedDownstream.has(column.id)) {
+      return;
+    }
+
+    visitedDownstream.add(column.id);
+    const downstream = downstreamByColumnKey.get(columnKey(nodeId, columnName)) ?? [];
+    for (const ref of downstream) {
+      const downstreamNode = nodesById.get(ref.nodeId);
+      const downstreamColumn = downstreamNode?.columns.find((item) => item.name === ref.columnName);
+      if (!downstreamColumn) {
+        continue;
+      }
+
+      highlightedColumnIds.add(downstreamColumn.id);
+      visitDownstream(ref.nodeId, ref.columnName);
+    }
+  };
+
+  visitUpstream(selectedColumn.nodeId, selectedColumn.columnName);
+  visitDownstream(selectedColumn.nodeId, selectedColumn.columnName);
+  highlightedColumnIds.delete(selectedColumn.columnId);
   sourceColumnIds.delete(selectedColumn.columnId);
   return { highlightedColumnIds, sourceColumnIds };
+}
+
+function columnKey(nodeId: string, columnName: string) {
+  return `${nodeId}:${columnName}`;
 }

@@ -45,17 +45,17 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
               const isSource = data.sourceColumnIds?.has(column.id) ?? false;
               const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
               return (
-              <button
-                className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} nodrag`}
-                key={column.id}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  data.onColumnSelect?.(node.id, column);
-                }}
-                type="button"
-              >
-                {column.name}
-              </button>
+                <button
+                  className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} nodrag`}
+                  key={column.id}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    data.onColumnSelect?.(node.id, column);
+                  }}
+                  type="button"
+                >
+                  {column.name}
+                </button>
               );
             })
           ) : (
