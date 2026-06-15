@@ -62,6 +62,12 @@ const expressionFormatterOptions = {
   sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
 };
 const expressionFormatter = new SqlFormatter(expressionFormatterOptions as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
+const cteExecutableSqlFormatter = new SqlFormatter({
+  ...expressionFormatterOptions,
+  identifierEscape: 'quote',
+  identifierEscapeTarget: 'minimal',
+  withClauseStyle: 'full-oneline',
+} as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 export function analyzeSql(sql: string): ParserAdapterResult {
   const warnings: AnalysisWarning[] = [];
@@ -279,7 +285,7 @@ function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: 
     const cteName = cte.getSourceAliasName();
     try {
       const result = decomposer.extractCTE(query, cteName);
-      sqlByName.set(cteName, result.executableSql.trim());
+      sqlByName.set(cteName, formatCteExecutableSql(result.executableSql));
       for (const warning of result.warnings) {
         warnings.push({
           code: 'cte-executable-sql-warning',
@@ -295,6 +301,15 @@ function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: 
   }
 
   return sqlByName;
+}
+
+function formatCteExecutableSql(sql: string): string {
+  const trimmedSql = sql.trim();
+  try {
+    return cteExecutableSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim().replace(/\s+/g, ' ');
+  } catch {
+    return trimmedSql;
+  }
 }
 
 function resolveSourceExpression(

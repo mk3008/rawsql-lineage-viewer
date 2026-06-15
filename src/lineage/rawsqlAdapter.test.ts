@@ -181,6 +181,9 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.get('cte_recent_orders')?.columns.find((column) => column.name === 'amount')?.expressionSql).toBe(
       'oi.quantity * oi.unit_price',
     );
+    expect(nodeById.get('main_output')?.columns.find((column) => column.name === 'payment_status')?.expressionSql).toContain(
+      "\n    when ps.last_paid_at is null then\n        'unknown'",
+    );
     expect(nodeById.get('cte_order_totals')?.comments).toEqual(['Aggregates order metrics by customer.']);
     expect(nodeById.get('cte_order_totals')?.columns.find((column) => column.name === 'total_amount')?.comments).toEqual([
       'Total ordered amount per customer.',
@@ -194,10 +197,10 @@ describe('rawsqlAdapter', () => {
     const orderTotalsSql = nodeById.get('cte_order_totals')?.cteExecutableSql?.toLowerCase();
     const paymentSummarySql = nodeById.get('cte_payment_summary')?.cteExecutableSql?.toLowerCase();
 
-    expect(recentOrdersSql).toContain('from "orders" as "o"');
+    expect(recentOrdersSql).toContain('from orders as o');
     expect(orderTotalsSql).toContain('with recent_orders as');
-    expect(orderTotalsSql).toContain('sum("amount") as "total_amount"');
-    expect(paymentSummarySql).toContain('from "payments" as "p"');
+    expect(orderTotalsSql).toContain('sum(amount) as total_amount');
+    expect(paymentSummarySql).toContain('from payments as p');
   });
 
   it('uses comments before the inner CTE select query as CTE comments', () => {
