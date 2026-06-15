@@ -306,6 +306,10 @@ textarea {
 
 .legend-line.join {
   border-color: #2563eb;
+}
+
+.legend-line.outer {
+  border-color: #64748b;
   border-top-style: dashed;
 }
 

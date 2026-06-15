@@ -108,6 +108,7 @@ export function App() {
               <span><i className="legend-dot output" />Output</span>
               <span><i className="legend-line data" />Data flow</span>
               <span><i className="legend-line join" />Join</span>
+              <span><i className="legend-line outer" />Outer join</span>
             </div>
           </div>
           <div className="edge-filter" aria-label="Edge visibility">

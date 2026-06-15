@@ -78,7 +78,7 @@ function calculateDepths(nodes: LineageNode[], edges: LineageEdge[]): Map<string
 
 function toGraphEdge(edge: LineageEdge): GraphEdge {
   const isJoin = edge.type === 'join';
-  const isOuterJoin = isJoin && edge.joinType !== 'inner';
+  const isOuterJoinContext = edge.joinType !== undefined && edge.joinType !== 'inner';
   return {
     id: edge.id,
     source: edge.source,
@@ -92,7 +92,7 @@ function toGraphEdge(edge: LineageEdge): GraphEdge {
     style: {
       stroke: isJoin ? '#2563eb' : '#059669',
       strokeWidth: 2,
-      strokeDasharray: isOuterJoin ? '8 5' : undefined,
+      strokeDasharray: isOuterJoinContext ? '8 5' : undefined,
     },
     markerEnd: {
       type: 'arrowclosed',

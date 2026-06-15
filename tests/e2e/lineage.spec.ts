@@ -22,8 +22,10 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
 
   const innerJoinStyle = await page.getByTestId('rf__edge-table_orders-table_order_items-JOIN').locator('.react-flow__edge-path').first().getAttribute('style');
   const outerJoinStyle = await page.getByTestId('rf__edge-table_customers-cte_order_totals-LEFT_JOIN').locator('.react-flow__edge-path').first().getAttribute('style');
+  const outerDataFlowStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
   expect(innerJoinStyle).not.toContain('stroke-dasharray');
   expect(outerJoinStyle).toContain('stroke-dasharray');
+  expect(outerDataFlowStyle).toContain('stroke-dasharray');
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('JOIN');
 });
@@ -32,14 +34,19 @@ test('can toggle data flow and join edges independently', async ({ page }) => {
   await page.goto('/');
 
   const dataFlowEdge = page.getByTestId('rf__edge-table_customers-main_output');
+  const outerDataFlowEdge = page.getByTestId('rf__edge-cte_order_totals-main_output');
   const joinEdge = page.getByTestId('rf__edge-table_customers-cte_order_totals-LEFT_JOIN');
 
   await expect(dataFlowEdge).toBeAttached();
+  await expect(outerDataFlowEdge).toBeAttached();
   await expect(joinEdge).toBeAttached();
 
   await page.getByRole('checkbox', { name: 'JOIN' }).uncheck();
   await expect(dataFlowEdge).toBeAttached();
+  await expect(outerDataFlowEdge).toBeAttached();
   await expect(joinEdge).not.toBeAttached();
+  const outerDataFlowStyle = await outerDataFlowEdge.locator('.react-flow__edge-path').first().getAttribute('style');
+  expect(outerDataFlowStyle).toContain('stroke-dasharray');
 
   await page.getByRole('checkbox', { name: 'JOIN' }).check();
   await page.getByRole('checkbox', { name: 'DataFlow' }).uncheck();

@@ -146,6 +146,8 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         source: joinedSource.node.id,
         target: targetId,
         type: 'dataFlow',
+        label: normalizeJoinLabel(join),
+        joinType: normalizeJoinType(join),
         confidence: 'high',
       });
 

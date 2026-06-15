@@ -50,6 +50,19 @@ describe('rawsqlAdapter', () => {
 
     expect(dataFlowEdges).toHaveLength(7);
     expect(joinEdges).toHaveLength(3);
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')).toMatchObject({
+      label: 'JOIN',
+      joinType: 'inner',
+    });
+    expect(dataFlowEdges.find((edge) => edge.id === 'cte_order_totals-main_output')).toMatchObject({
+      label: 'LEFT JOIN',
+      joinType: 'left',
+    });
+    expect(dataFlowEdges.find((edge) => edge.id === 'cte_payment_summary-main_output')).toMatchObject({
+      label: 'LEFT JOIN',
+      joinType: 'left',
+    });
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinType).toBeUndefined();
     expect(joinEdges.find((edge) => edge.id === 'table_orders-table_order_items-JOIN')?.joinType).toBe('inner');
     expect(joinEdges.find((edge) => edge.id === 'table_customers-cte_order_totals-LEFT_JOIN')?.joinType).toBe('left');
   });
