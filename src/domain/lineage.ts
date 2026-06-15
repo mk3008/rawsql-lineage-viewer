@@ -1,0 +1,55 @@
+export type LineageNodeType = 'table' | 'cte' | 'derived' | 'output';
+
+export type LineageEdgeType = 'dataFlow' | 'join' | 'expression' | 'unknown';
+
+export interface LineageColumn {
+  id: string;
+  name: string;
+}
+
+export interface LineageNode {
+  id: string;
+  type: LineageNodeType;
+  label: string;
+  columns: LineageColumn[];
+  materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
+}
+
+export interface LineageEdge {
+  id: string;
+  source: string;
+  target: string;
+  type: LineageEdgeType;
+  label?: string;
+  joinType?: 'inner' | 'left' | 'right' | 'full' | 'unknown';
+  confidence?: 'high' | 'medium' | 'low';
+}
+
+export interface AnalysisWarning {
+  code: string;
+  message: string;
+}
+
+export interface LineageModel {
+  kind: 'sql-lineage-model';
+  modelVersion: 1;
+  nodes: LineageNode[];
+  edges: LineageEdge[];
+  analysisWarnings: AnalysisWarning[];
+  raw: {
+    mermaid: string;
+  };
+}
+
+export interface WorkspaceModel {
+  kind: 'sql-lineage-workspace';
+  schemaVersion: 1;
+  modelVersion: 1;
+  parserVersion: string;
+  name: string;
+  sql: string;
+  lineage: LineageModel;
+  view: {
+    flowDirection: 'downstream';
+  };
+}
