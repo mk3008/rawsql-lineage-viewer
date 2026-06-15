@@ -40,11 +40,24 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       {columnsVisible ? (
         <div className="lineage-node-body">
           {node.columns.length > 0 ? (
-            node.columns.map((column) => (
-              <div className="lineage-column" key={column.id}>
+            node.columns.map((column) => {
+              const isSelected = data.selectedColumnId === column.id;
+              const isSource = data.sourceColumnIds?.has(column.id) ?? false;
+              const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
+              return (
+              <button
+                className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} nodrag`}
+                key={column.id}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onColumnSelect?.(node.id, column);
+                }}
+                type="button"
+              >
                 {column.name}
-              </div>
-            ))
+              </button>
+              );
+            })
           ) : (
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}

@@ -10,7 +10,7 @@ import {
   TableSource,
 } from 'rawsql-ts';
 import type { CommonTable, JoinClause, SourceExpression } from 'rawsql-ts';
-import type { AnalysisWarning, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
+import type { AnalysisWarning, LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -114,10 +114,9 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
   const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter } = options;
 
   if (query instanceof SimpleSelectQuery) {
-    setNodeColumns(nodes, targetId, collectOutputColumns(query));
-
     const fromClause = query.fromClause;
     if (!fromClause) {
+      setNodeColumns(nodes, targetId, collectOutputColumns(query, []));
       warnings.push({
         code: 'select-without-source',
         message: `${targetLabel} has no FROM source, so no upstream lineage edge was created.`,
@@ -162,6 +161,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       });
     }
 
+    setNodeColumns(nodes, targetId, collectOutputColumns(query, sources));
     setReferencedSourceColumns(query, sources, nodes);
 
     return;
@@ -293,8 +293,10 @@ function resolveSourceExpression(
   };
 }
 
-function collectOutputColumns(query: SimpleSelectQuery): string[] {
+function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[]): LineageColumn[] {
   return query.selectClause.items.map((item, index) => {
+    const upstream = resolveColumnReferences(item.value, sources);
+    const name = (() => {
     if (item.identifier) {
       return item.identifier.name;
     }
@@ -302,10 +304,27 @@ function collectOutputColumns(query: SimpleSelectQuery): string[] {
       return item.value.column.name;
     }
     return `expr_${index + 1}`;
+    })();
+    return {
+      id: '',
+      name,
+      upstream,
+    };
   });
 }
 
 function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
+  const columnsByNode = new Map<string, string[]>();
+  for (const reference of resolveColumnReferences(collectQueryColumnReferences(query), sources)) {
+    columnsByNode.set(reference.nodeId, [...(columnsByNode.get(reference.nodeId) ?? []), reference.columnName]);
+  }
+
+  for (const [nodeId, columns] of columnsByNode) {
+    setNodeColumns(nodes, nodeId, columns);
+  }
+}
+
+function resolveColumnReferences(value: unknown, sources: ResolvedSource[]): LineageColumnRef[] {
   const sourceByAlias = new Map<string, ResolvedSource>();
   for (const source of sources) {
     for (const alias of source.aliases) {
@@ -313,8 +332,9 @@ function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedS
     }
   }
 
-  const columnsByNode = new Map<string, string[]>();
-  for (const reference of collectQueryColumnReferences(query)) {
+  const refs: LineageColumnRef[] = [];
+  const seen = new Set<string>();
+  for (const reference of Array.isArray(value) ? collectColumnReferences(value) : collectColumnReferences(value)) {
     const columnName = reference.column.name;
     if (columnName === '*') {
       continue;
@@ -326,12 +346,16 @@ function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedS
       continue;
     }
 
-    columnsByNode.set(source.node.id, [...(columnsByNode.get(source.node.id) ?? []), columnName]);
+    const key = `${source.node.id}.${columnName}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push({
+        nodeId: source.node.id,
+        columnName,
+      });
+    }
   }
-
-  for (const [nodeId, columns] of columnsByNode) {
-    setNodeColumns(nodes, nodeId, columns);
-  }
+  return refs;
 }
 
 function collectQueryColumnReferences(query: SimpleSelectQuery): ColumnReference[] {
@@ -374,23 +398,44 @@ function collectColumnReferences(value: unknown): ColumnReference[] {
   return references;
 }
 
-function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columnNames: string[]): void {
+function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns: Array<string | LineageColumn>): void {
   const node = nodes.get(nodeId);
   if (!node) {
     return;
   }
   const seen = new Set(node.columns.map((column) => column.name));
   const nextColumns = [...node.columns];
-  for (const name of columnNames) {
+  for (const column of columns) {
+    const name = typeof column === 'string' ? column : column.name;
+    const upstream = typeof column === 'string' ? undefined : column.upstream;
     if (!seen.has(name)) {
       seen.add(name);
       nextColumns.push({
         id: `${nodeId}.${sanitizeId(name)}`,
         name,
+        upstream,
       });
+    } else if (upstream && upstream.length > 0) {
+      const existing = nextColumns.find((item) => item.name === name);
+      if (existing) {
+        existing.upstream = mergeColumnRefs(existing.upstream ?? [], upstream);
+      }
     }
   }
   node.columns = nextColumns;
+}
+
+function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {
+  const merged: LineageColumnRef[] = [];
+  const seen = new Set<string>();
+  for (const ref of [...left, ...right]) {
+    const key = `${ref.nodeId}.${ref.columnName}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(ref);
+    }
+  }
+  return merged;
 }
 
 function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {

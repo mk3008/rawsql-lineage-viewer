@@ -1,6 +1,6 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { LineageModel } from '../domain/lineage';
+import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
 import { LineageNodeCard } from './LineageNodeCard';
 
@@ -8,9 +8,16 @@ const nodeTypes = {
   lineageNode: LineageNodeCard,
 };
 
+interface SelectedColumn {
+  columnId: string;
+  columnName: string;
+  nodeId: string;
+}
+
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
+  const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
       const next = new Set(current);
@@ -22,6 +29,21 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return next;
     });
   }, []);
+  const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
+    setSelectedColumn((current) =>
+      current?.columnId === column.id
+        ? null
+        : {
+            columnId: column.id,
+            columnName: column.name,
+            nodeId,
+          },
+    );
+  }, []);
+  const columnHighlights = useMemo(
+    () => (selectedColumn ? resolveColumnHighlights(lineage.nodes, selectedColumn) : { highlightedColumnIds: new Set<string>(), sourceColumnIds: new Set<string>() }),
+    [lineage.nodes, selectedColumn],
+  );
   const graphNodes = useMemo(
     () =>
       graph.nodes.map((node) => ({
@@ -30,9 +52,13 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           ...node.data,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
           onToggleColumns: toggleColumns,
+          onColumnSelect: selectColumn,
+          selectedColumnId: selectedColumn?.columnId ?? null,
+          highlightedColumnIds: columnHighlights.highlightedColumnIds,
+          sourceColumnIds: columnHighlights.sourceColumnIds,
         },
       })),
-    [graph.nodes, hiddenColumnNodeIds, toggleColumns],
+    [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, graph.nodes, hiddenColumnNodeIds, selectColumn, selectedColumn?.columnId, toggleColumns],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
@@ -44,6 +70,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   useEffect(() => {
     setEdges(graph.edges);
   }, [graph.edges, setEdges]);
+
+  useEffect(() => {
+    setSelectedColumn(null);
+    setHiddenColumnNodeIds(new Set());
+  }, [lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph">
@@ -79,4 +110,44 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       </ReactFlowProvider>
     </div>
   );
+}
+
+function resolveColumnHighlights(nodes: LineageNode[], selectedColumn: SelectedColumn): { highlightedColumnIds: Set<string>; sourceColumnIds: Set<string> } {
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const highlightedColumnIds = new Set<string>();
+  const sourceColumnIds = new Set<string>();
+  const visited = new Set<string>();
+
+  const visit = (nodeId: string, columnName: string): boolean => {
+    const node = nodesById.get(nodeId);
+    const column = node?.columns.find((item) => item.name === columnName);
+    if (!column || visited.has(column.id)) {
+      return false;
+    }
+
+    visited.add(column.id);
+    if (column.id !== selectedColumn.columnId) {
+      highlightedColumnIds.add(column.id);
+    }
+
+    const upstream = column.upstream ?? [];
+    if (upstream.length === 0) {
+      sourceColumnIds.add(column.id);
+      return true;
+    }
+
+    let resolvedAny = false;
+    for (const ref of upstream) {
+      resolvedAny = visit(ref.nodeId, ref.columnName) || resolvedAny;
+    }
+
+    if (!resolvedAny) {
+      sourceColumnIds.add(column.id);
+    }
+    return true;
+  };
+
+  visit(selectedColumn.nodeId, selectedColumn.columnName);
+  sourceColumnIds.delete(selectedColumn.columnId);
+  return { highlightedColumnIds, sourceColumnIds };
 }

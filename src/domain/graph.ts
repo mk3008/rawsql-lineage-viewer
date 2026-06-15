@@ -1,10 +1,14 @@
 import type { Edge, Node } from '@xyflow/react';
-import type { LineageEdge, LineageNode } from './lineage';
+import type { LineageColumn, LineageEdge, LineageNode } from './lineage';
 
 export type GraphNodeData = {
   lineageNode: LineageNode;
   columnsVisible?: boolean;
   onToggleColumns?: (nodeId: string) => void;
+  selectedColumnId?: string | null;
+  highlightedColumnIds?: Set<string>;
+  sourceColumnIds?: Set<string>;
+  onColumnSelect?: (nodeId: string, column: LineageColumn) => void;
 };
 
 export type GraphEdgeData = {

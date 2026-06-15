@@ -63,6 +63,26 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
   await expect(ordersNode.getByText('order_date')).toBeVisible();
 });
 
+test('highlights upstream lineage when an output column is selected', async ({ page }) => {
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  const orderItemsNode = page.getByTestId('rf__node-table_order_items');
+
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+
+  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(orderTotalsNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toHaveClass(/lineage-column-source/);
+  await expect(orderItemsNode.getByRole('button', { name: 'unit_price', exact: true })).toHaveClass(/lineage-column-source/);
+
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
+});
+
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
   await page.goto('/');
 
@@ -72,9 +92,9 @@ test('can drag lineage nodes to separate overlapping lines', async ({ page }) =>
   const beforeTransform = await node.getAttribute('style');
   expect(before).not.toBeNull();
 
-  await page.mouse.move(before!.x + before!.width / 2, before!.y + before!.height / 2);
+  await page.mouse.move(before!.x + 28, before!.y + 20);
   await page.mouse.down();
-  await page.mouse.move(before!.x + before!.width / 2 + 90, before!.y + before!.height / 2 + 70, { steps: 8 });
+  await page.mouse.move(before!.x + 118, before!.y + 90, { steps: 8 });
   await page.mouse.up();
 
   await expect(node).not.toHaveAttribute('style', beforeTransform ?? '');

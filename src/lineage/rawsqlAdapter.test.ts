@@ -152,6 +152,22 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('records upstream column lineage for output columns through CTEs', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('main_output')?.columns.find((column) => column.name === 'total_amount')?.upstream).toEqual([
+      { nodeId: 'cte_order_totals', columnName: 'total_amount' },
+    ]);
+    expect(nodeById.get('cte_order_totals')?.columns.find((column) => column.name === 'total_amount')?.upstream).toEqual([
+      { nodeId: 'cte_recent_orders', columnName: 'amount' },
+    ]);
+    expect(nodeById.get('cte_recent_orders')?.columns.find((column) => column.name === 'amount')?.upstream).toEqual([
+      { nodeId: 'table_order_items', columnName: 'quantity' },
+      { nodeId: 'table_order_items', columnName: 'unit_price' },
+    ]);
+  });
+
   it('routes join edges toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (

@@ -2,9 +2,15 @@ export type LineageNodeType = 'table' | 'cte' | 'derived' | 'output';
 
 export type LineageEdgeType = 'dataFlow' | 'join' | 'expression' | 'unknown';
 
+export interface LineageColumnRef {
+  nodeId: string;
+  columnName: string;
+}
+
 export interface LineageColumn {
   id: string;
   name: string;
+  upstream?: LineageColumnRef[];
 }
 
 export interface LineageNode {

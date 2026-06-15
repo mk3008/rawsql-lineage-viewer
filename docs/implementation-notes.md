@@ -33,5 +33,6 @@ Column lists are populated from the AST as best-effort lineage metadata:
 - CTE, derived, and output nodes use SELECT item aliases when available, direct column names when possible, and `expr_n` for unresolved expressions.
 - Source table and CTE nodes receive referenced column names from SELECT, JOIN conditions, WHERE, GROUP BY, HAVING, and ORDER BY.
 - Unqualified source columns are assigned only when the current query has exactly one source. Ambiguous unqualified columns are intentionally left unresolved until schema-aware resolution exists.
+- Column-level lineage is stored on each column as upstream `{ nodeId, columnName }` references. The UI resolves those references recursively when a column is selected, highlighting intermediate CTE columns and final source columns.
 
 If this area is later moved into `rawsql-ts`, the useful API shape would be a stable graph/model output that distinguishes visible data nodes from process nodes without requiring the web app to parse Mermaid text.
