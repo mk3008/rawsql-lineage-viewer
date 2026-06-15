@@ -52,11 +52,11 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
             >
               <Maximize2 size={13} />
             </button>
-          ) : data.canCollapseUpstream && node.type === 'cte' ? (
+          ) : data.canCollapseUpstream ? (
             <button
-              aria-label={`Collapse upstream helpers for ${node.label}`}
+              aria-label={`Collapse inner query for ${node.label}`}
               className="node-icon-button nodrag"
-              title="Collapse upstream helpers"
+              title="Collapse inner query"
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
@@ -66,7 +66,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
               <Minimize2 size={13} />
             </button>
           ) : null}
-          <span className="lineage-node-kind">{data.collapsedGroup ? 'CTE group' : node.type}</span>
+          <span className="lineage-node-kind">{data.collapsedGroup ? 'Query group' : node.type}</span>
         </div>
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
@@ -102,7 +102,8 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
 function CollapsedGroupSummary({ group }: { group: NonNullable<GraphNode['data']['collapsedGroup']> }) {
   return (
     <div className="lineage-group-summary">
-      <span><strong>{group.helperNodeIds.length}</strong> helper CTEs</span>
+      {group.helperCounts.ctes > 0 ? <span><strong>{group.helperCounts.ctes}</strong> CTEs hidden</span> : null}
+      {group.helperCounts.derived > 0 ? <span><strong>{group.helperCounts.derived}</strong> derived hidden</span> : null}
       <span><strong>{group.sourceNodeIds.length}</strong> source nodes</span>
       <span><strong>{group.outputColumnCount}</strong> output columns</span>
       <em>Internal steps hidden</em>

@@ -5,6 +5,10 @@ export interface CollapsedLineageGroup {
   label: string;
   rootNodeId: string;
   helperNodeIds: string[];
+  helperCounts: {
+    ctes: number;
+    derived: number;
+  };
   sourceNodeIds: string[];
   outputColumnCount: number;
 }
@@ -17,7 +21,7 @@ export interface CollapsedLineageResult {
 export function collectCollapsibleUpstreamGroups(lineage: LineageModel): Map<string, CollapsedLineageGroup> {
   const result = new Map<string, CollapsedLineageGroup>();
   for (const node of lineage.nodes) {
-    if (node.type !== 'cte') {
+    if (!isQueryBlockNodeType(node.type)) {
       continue;
     }
 
@@ -82,7 +86,7 @@ export function collapseLineageGroups(lineage: LineageModel, rootNodeIds: Set<st
 function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: string): CollapsedLineageGroup | null {
   const nodesById = new Map(lineage.nodes.map((node) => [node.id, node]));
   const root = nodesById.get(rootNodeId);
-  if (!root || root.type !== 'cte') {
+  if (!root || !isQueryBlockNodeType(root.type)) {
     return null;
   }
 
@@ -97,7 +101,7 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
     for (const targetNodeId of [rootNodeId, ...helperNodeIds]) {
       for (const edge of incomingByTarget.get(targetNodeId) ?? []) {
         const sourceNode = nodesById.get(edge.source);
-        if (!sourceNode || sourceNode.type !== 'cte' || sourceNode.id === rootNodeId || helperNodeIds.has(sourceNode.id)) {
+        if (!sourceNode || !isCollapsibleHelperNodeType(sourceNode.type) || sourceNode.id === rootNodeId || helperNodeIds.has(sourceNode.id)) {
           continue;
         }
 
@@ -125,14 +129,27 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
     }
   }
 
+  const helperNodes = [...helperNodeIds].map((helperNodeId) => nodesById.get(helperNodeId));
   return {
     id: `group_${rootNodeId}`,
     label: `Build ${root.label}`,
     rootNodeId,
     helperNodeIds: [...helperNodeIds],
+    helperCounts: {
+      ctes: helperNodes.filter((node) => node?.type === 'cte').length,
+      derived: helperNodes.filter((node) => node?.type === 'derived').length,
+    },
     sourceNodeIds: [...sourceNodeIds],
     outputColumnCount: root.columns.length,
   };
+}
+
+function isQueryBlockNodeType(type: string) {
+  return type === 'cte' || type === 'derived';
+}
+
+function isCollapsibleHelperNodeType(type: string) {
+  return type === 'cte' || type === 'derived';
 }
 
 function collapseEdge(edge: LineageEdge, hiddenNodeIds: Set<string>, rootByHiddenNodeId: Map<string, string>): LineageEdge[] {

@@ -334,10 +334,10 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
 
   const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
   await expect(rankedCustomersNode).toBeVisible();
-  await rankedCustomersNode.getByRole('button', { name: 'Collapse upstream helpers for ranked_customers' }).click();
+  await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
 
   await expect(rankedCustomersNode).toContainText('Build ranked_customers');
-  await expect(rankedCustomersNode).toContainText('3 helper CTEs');
+  await expect(rankedCustomersNode).toContainText('3 CTEs hidden');
   await expect(rankedCustomersNode).toContainText('3 source nodes');
   await expect(page.getByTestId('rf__node-cte_order_base')).not.toBeAttached();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).not.toBeAttached();
@@ -350,6 +350,39 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__node-cte_order_base')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
+});
+
+test('can collapse nested derived subquery internals and expand them again', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT q.customer_id, q.total_amount
+    FROM (
+      SELECT q.customer_id, q.total_amount
+      FROM (
+        SELECT o.customer_id, SUM(o.amount) AS total_amount
+        FROM orders o
+        GROUP BY o.customer_id
+      ) q
+    ) q
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const derivedNodes = page.getByTestId('lineage-node-derived');
+  await expect(derivedNodes).toHaveCount(2);
+  const outerDerivedNode = page.getByTestId('rf__node-derived_q_1');
+  await expect(outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' })).toBeVisible();
+
+  await outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' }).click();
+
+  await expect(outerDerivedNode).toContainText('Build q');
+  await expect(outerDerivedNode).toContainText('1 derived hidden');
+  await expect(derivedNodes).toHaveCount(1);
+  await expect(page.getByTestId('rf__edge-table_orders-derived_q_1')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-derived_q_1-main_output')).toBeAttached();
+
+  await outerDerivedNode.getByRole('button', { name: 'Expand Build q' }).click();
+  await expect(derivedNodes).toHaveCount(2);
 });
 
 test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {

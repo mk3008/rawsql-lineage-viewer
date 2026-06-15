@@ -25,6 +25,32 @@ ranked_customers as (
 select rc.customer_id, rc.order_count, rc.open_ticket_count
 from ranked_customers rc`;
 
+const nestedDerivedSql = `select q.customer_id, q.total_amount
+from (
+  select q.customer_id, q.total_amount
+  from (
+    select o.customer_id, sum(o.amount) total_amount
+    from orders o
+    group by o.customer_id
+  ) q
+) q`;
+
+const sharedDetailSql = `with detail as (
+  select q.customer_id, q.amount
+  from (
+    select o.customer_id, o.amount
+    from orders o
+  ) q
+),
+tax_summary as (
+  select d.customer_id, sum(d.amount) tax_amount
+  from detail d
+  group by d.customer_id
+)
+select d.customer_id, d.amount, ts.tax_amount
+from detail d
+left join tax_summary ts on ts.customer_id = d.customer_id`;
+
 describe('collapseGroups', () => {
   it('collects upstream helper CTEs for a CTE representative', () => {
     const { lineage } = analyzeSql(rankedCustomersSql);
@@ -34,6 +60,10 @@ describe('collapseGroups', () => {
       label: 'Build ranked_customers',
       rootNodeId: 'cte_ranked_customers',
       helperNodeIds: expect.arrayContaining(['cte_order_base', 'cte_customer_order_summary', 'cte_support_pressure']),
+      helperCounts: {
+        ctes: 3,
+        derived: 0,
+      },
       sourceNodeIds: expect.arrayContaining(['table_orders', 'table_customers', 'table_support_tickets']),
       outputColumnCount: 3,
     });
@@ -57,5 +87,55 @@ describe('collapseGroups', () => {
       ]),
     );
     expect(collapsed.lineage.edges.some((edge) => edge.source === 'cte_customer_order_summary' || edge.target === 'cte_customer_order_summary')).toBe(false);
+  });
+
+  it('collects nested FROM subqueries as collapsible derived query block internals', () => {
+    const { lineage } = analyzeSql(nestedDerivedSql);
+    const groups = collectCollapsibleUpstreamGroups(lineage);
+    const derivedNodes = lineage.nodes.filter((node) => node.type === 'derived' && node.label === 'q');
+    const outerDerived = derivedNodes.find((node) => lineage.edges.some((edge) => edge.source === node.id && edge.target === 'main_output'));
+
+    expect(derivedNodes).toHaveLength(2);
+    expect(new Set(derivedNodes.map((node) => node.id)).size).toBe(2);
+    expect(outerDerived).toBeDefined();
+    expect(groups.get(outerDerived!.id)).toMatchObject({
+      rootNodeId: outerDerived!.id,
+      helperCounts: {
+        ctes: 0,
+        derived: 1,
+      },
+      sourceNodeIds: ['table_orders'],
+      outputColumnCount: 2,
+    });
+  });
+
+  it('collapses nested derived helpers while preserving external data flows', () => {
+    const { lineage } = analyzeSql(nestedDerivedSql);
+    const outerDerived = lineage.nodes.find(
+      (node) => node.type === 'derived' && lineage.edges.some((edge) => edge.source === node.id && edge.target === 'main_output'),
+    );
+    expect(outerDerived).toBeDefined();
+
+    const collapsed = collapseLineageGroups(lineage, new Set([outerDerived!.id]));
+
+    expect(collapsed.groups.get(outerDerived!.id)?.helperCounts.derived).toBe(1);
+    expect(collapsed.lineage.nodes.filter((node) => node.type === 'derived')).toHaveLength(1);
+    expect(collapsed.lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'table_orders', target: outerDerived!.id }),
+        expect.objectContaining({ source: outerDerived!.id, target: 'main_output' }),
+      ]),
+    );
+  });
+
+  it('does not collapse shared CTEs into a downstream query block', () => {
+    const { lineage } = analyzeSql(sharedDetailSql);
+    const groups = collectCollapsibleUpstreamGroups(lineage);
+
+    expect(groups.get('cte_tax_summary')).toBeUndefined();
+    expect(groups.get('cte_detail')?.helperCounts).toMatchObject({
+      ctes: 0,
+      derived: 1,
+    });
   });
 });

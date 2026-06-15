@@ -202,6 +202,30 @@ describe('rawsqlAdapter', () => {
     expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
   });
 
+  it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {
+    const { lineage } = analyzeSql(`
+      SELECT q.customer_id, q.total_amount
+      FROM (
+        SELECT q.customer_id, q.total_amount
+        FROM (
+          SELECT o.customer_id, SUM(o.amount) AS total_amount
+          FROM orders o
+          GROUP BY o.customer_id
+        ) q
+      ) q
+    `);
+    const derivedNodes = lineage.nodes.filter((node) => node.type === 'derived' && node.label === 'q');
+
+    expect(derivedNodes).toHaveLength(2);
+    expect(new Set(derivedNodes.map((node) => node.id)).size).toBe(2);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'table_orders', target: expect.stringMatching(/^derived_q_/) }),
+        expect.objectContaining({ source: expect.stringMatching(/^derived_q_/), target: 'main_output' }),
+      ]),
+    );
+  });
+
   it('records executable SQL for CTEs with required dependencies', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
