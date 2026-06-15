@@ -217,7 +217,6 @@ function CommentBubble({
       ) : null}
       {expressionSql ? (
         <div className="lineage-comment-section">
-          <div className="lineage-comment-label">Expression</div>
           <code className="lineage-expression">{expressionSql}</code>
         </div>
       ) : null}
