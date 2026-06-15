@@ -149,8 +149,16 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
 
   const expression = page.locator('.lineage-expression').filter({ hasText: 'case' });
+  const referenceColumn = outputNode.getByRole('button', { name: 'customer_id', exact: true });
   await expect(expression).toHaveCSS('white-space', 'pre');
+  await expect(expression).toHaveCSS('font-size', await referenceColumn.evaluate((element) => window.getComputedStyle(element).fontSize));
+  await expect(expression).toHaveCSS('font-weight', await referenceColumn.evaluate((element) => window.getComputedStyle(element).fontWeight));
   await expect(expression).toContainText("case\n    when ps.last_paid_at is null then\n        'unknown'");
+
+  const bubble = page.getByTestId('lineage-comment').filter({ hasText: 'case' });
+  const initialTransform = await bubble.evaluate((element) => window.getComputedStyle(element).transform);
+  await page.locator('.react-flow__controls-zoomin').click();
+  await expect.poll(() => bubble.evaluate((element) => window.getComputedStyle(element).transform)).not.toBe(initialTransform);
 });
 
 test('can toggle column and header callouts independently', async ({ page }) => {

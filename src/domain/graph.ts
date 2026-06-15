@@ -9,6 +9,7 @@ export type GraphNodeData = {
   selectedColumnId?: string | null;
   selectedCommentTargetIds?: Set<string>;
   activeCommentTargetId?: string | null;
+  viewportZoom?: number;
   highlightedColumnIds?: Set<string>;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;

@@ -40,6 +40,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
+  const [viewportZoom, setViewportZoom] = useState(1);
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -148,6 +149,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           selectedColumnId: selectedColumn?.columnId ?? null,
           selectedCommentTargetIds,
           activeCommentTargetId,
+          viewportZoom,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
@@ -165,6 +167,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       closeComment,
       focusComment,
       activeCommentTargetId,
+      viewportZoom,
       selectedColumn?.columnId,
       selectedCommentTargetIds,
       toggleColumns,
@@ -262,6 +265,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
+          onInit={(instance) => setViewportZoom(instance.getZoom())}
+          onMove={(_, viewport) => setViewportZoom(viewport.zoom)}
           nodesDraggable
           nodesConnectable={false}
           fitView

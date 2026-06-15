@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, Copy, ExternalLink, Eye, EyeOff, X } from 'lucide-react';
@@ -50,6 +50,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           isActive={data.activeCommentTargetId === nodeCommentTargetId(node.id)}
           onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
           onFocus={() => data.onCommentFocus?.(nodeCommentTargetId(node.id))}
+          viewportZoom={data.viewportZoom ?? 1}
           variant="node"
         />
       ) : null}
@@ -105,6 +106,7 @@ function LineageColumnRow({
           isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
           onFocus={() => data.onCommentFocus?.(columnCommentTargetId(column.id))}
+          viewportZoom={data.viewportZoom ?? 1}
           variant="column"
         />
       ) : null}
@@ -120,6 +122,7 @@ function CommentBubble({
   isActive,
   onClose,
   onFocus,
+  viewportZoom,
   variant,
 }: {
   anchorRef: RefObject<HTMLElement | null>;
@@ -129,6 +132,7 @@ function CommentBubble({
   isActive?: boolean;
   onClose?: () => void;
   onFocus?: () => void;
+  viewportZoom: number;
   variant: 'column' | 'node';
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -181,12 +185,18 @@ function CommentBubble({
     }
   };
 
+  const bubbleStyle = {
+    ...(position ? { left: position.left, top: position.top } : {}),
+    '--lineage-comment-scale': String(viewportZoom),
+    zIndex: isActive ? 100001 : 100000,
+  } as CSSProperties;
+
   return createPortal(
     <div
       ref={bubbleRef}
       className={`lineage-comment-bubble lineage-comment-bubble-${variant} ${cteExecutableSql ? 'lineage-comment-bubble-has-sql' : ''} nodrag`}
       data-testid="lineage-comment"
-      style={position ? { left: position.left, top: position.top, zIndex: isActive ? 100001 : 100000 } : { zIndex: isActive ? 100001 : 100000 }}
+      style={bubbleStyle}
       onMouseDown={(event) => {
         event.stopPropagation();
         onFocus?.();
