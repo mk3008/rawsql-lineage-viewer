@@ -379,6 +379,19 @@ textarea {
   white-space: nowrap;
 }
 
+.lineage-node-title-button {
+  border: 1px solid transparent;
+  border-radius: 5px;
+  padding: 2px 3px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.lineage-node-title-button:hover {
+  background: rgb(37 99 235 / 8%);
+  color: #1e3a8a;
+}
+
 .lineage-node-kind {
   flex: 0 0 auto;
   border-radius: 999px;
@@ -440,6 +453,11 @@ textarea {
   white-space: nowrap;
 }
 
+.lineage-column-group {
+  display: grid;
+  gap: 4px;
+}
+
 .lineage-column:hover {
   background: rgb(37 99 235 / 8%);
   color: #1e3a8a;
@@ -464,6 +482,27 @@ textarea {
   background: #ecfdf5;
   color: #047857;
   font-weight: 800;
+}
+
+.lineage-comment-selected {
+  box-shadow: 0 0 0 2px rgb(37 99 235 / 18%);
+}
+
+.lineage-comment {
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  margin: 0 12px 10px;
+  padding: 7px 8px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.lineage-column-group .lineage-comment {
+  margin: 0;
+  font-size: 11px;
 }
 
 .lineage-column-muted {

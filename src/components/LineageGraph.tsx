@@ -20,6 +20,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
+  const [selectedCommentTargetId, setSelectedCommentTargetId] = useState<string | null>(null);
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -41,7 +42,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return new Set(lineage.nodes.map((node) => node.id));
     });
   }, [lineage.nodes]);
+  const selectNode = useCallback((nodeId: string) => {
+    setSelectedCommentTargetId((current) => (current === nodeCommentTargetId(nodeId) ? null : nodeCommentTargetId(nodeId)));
+  }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
+    setSelectedCommentTargetId((current) => (current === columnCommentTargetId(column.id) ? null : columnCommentTargetId(column.id)));
     setSelectedColumn((current) =>
       current?.columnId === column.id
         ? null
@@ -63,12 +68,15 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     () =>
       graph.nodes.map((node) => ({
         ...node,
+        zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetId) ? 1000 : node.zIndex,
         data: {
           ...node.data,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
           onToggleColumns: toggleColumns,
+          onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
+          selectedCommentTargetId,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
         },
@@ -79,7 +87,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       columnHighlights.sourceColumnIds,
       graph.nodes,
       hiddenColumnNodeIds,
+      selectNode,
       selectColumn,
+      selectedCommentTargetId,
       selectedColumn?.columnId,
       toggleColumns,
     ],
@@ -146,6 +156,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
 
   useEffect(() => {
     setSelectedColumn(null);
+    setSelectedCommentTargetId(null);
     setHiddenColumnNodeIds(new Set());
   }, [lineage]);
 
@@ -275,4 +286,19 @@ function columnKey(nodeId: string, columnName: string) {
 
 function edgeKey(sourceId: string, targetId: string) {
   return `${sourceId}-${targetId}`;
+}
+
+function nodeHasSelectedComment(node: LineageNode, selectedCommentTargetId: string | null) {
+  return (
+    selectedCommentTargetId === nodeCommentTargetId(node.id) ||
+    node.columns.some((column) => selectedCommentTargetId === columnCommentTargetId(column.id))
+  );
+}
+
+export function nodeCommentTargetId(nodeId: string) {
+  return `node:${nodeId}`;
+}
+
+export function columnCommentTargetId(columnId: string) {
+  return `column:${columnId}`;
 }

@@ -1,4 +1,6 @@
-export const salesSummarySql = `WITH recent_orders AS (
+export const salesSummarySql = `WITH
+-- Recent order line items used as the base sales fact.
+recent_orders AS (
   SELECT
     o.id AS order_id,
     o.customer_id,
@@ -6,20 +8,22 @@ export const salesSummarySql = `WITH recent_orders AS (
     oi.product_id,
     oi.quantity,
     oi.unit_price,
-    oi.quantity * oi.unit_price AS amount
+    oi.quantity * oi.unit_price AS amount -- Extended line amount.
   FROM orders o
   JOIN order_items oi ON oi.order_id = o.id
   WHERE o.order_date >= :from_date
     AND o.order_date < :to_date
 ),
+-- Aggregates order metrics by customer.
 order_totals AS (
   SELECT
     customer_id,
     COUNT(*) AS order_count,
-    SUM(amount) AS total_amount
+    SUM(amount) AS total_amount -- Total ordered amount per customer.
   FROM recent_orders
   GROUP BY customer_id
 ),
+-- Captures succeeded payment totals by customer.
 payment_summary AS (
   SELECT
     p.customer_id,

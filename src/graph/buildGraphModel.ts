@@ -8,7 +8,7 @@ const nodeSize = {
 
 const layoutSpacing = {
   x: 360,
-  y: 230,
+  y: 300,
 };
 
 export function buildGraphModel(lineage: LineageModel): GraphModel {

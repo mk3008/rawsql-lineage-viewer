@@ -5,7 +5,9 @@ export type GraphNodeData = {
   lineageNode: LineageNode;
   columnsVisible?: boolean;
   onToggleColumns?: (nodeId: string) => void;
+  onNodeSelect?: (nodeId: string) => void;
   selectedColumnId?: string | null;
+  selectedCommentTargetId?: string | null;
   highlightedColumnIds?: Set<string>;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;

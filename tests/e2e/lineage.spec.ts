@@ -4,7 +4,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await page.goto('/');
 
   await expect(page.getByRole('heading', { name: 'SQL Lineage Viewer' })).toBeVisible();
-  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue(/WITH recent_orders AS/);
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue(/recent_orders AS/);
   await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_orders')).toBeVisible();
@@ -64,6 +64,17 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
 
   await page.locator('button[aria-label="Show columns for orders"]').click();
   await expect(ordersNode.getByText('order_date')).toBeVisible();
+});
+
+test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
+  await page.goto('/');
+
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Recent order line items used as the base sales fact.');
+
+  await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
 });
 
 test('can hide and show columns for all nodes', async ({ page }) => {
@@ -169,10 +180,10 @@ test('keeps dragged node positions when selecting a column', async ({ page }) =>
   await page.mouse.move(before!.x + 118, before!.y + 90, { steps: 8 });
   await page.mouse.up();
 
-  const draggedTransform = await node.getAttribute('style');
+  const draggedTransform = await node.evaluate((element) => window.getComputedStyle(element).transform);
   await node.getByRole('button', { name: 'order_date', exact: true }).click();
 
-  await expect(node).toHaveAttribute('style', draggedTransform ?? '');
+  await expect(node).toHaveCSS('transform', draggedTransform);
 });
 
 test('updates the lineage graph after editing SQL', async ({ page }) => {

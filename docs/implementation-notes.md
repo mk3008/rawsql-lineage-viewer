@@ -34,5 +34,6 @@ Column lists are populated from the AST as best-effort lineage metadata:
 - Source table and CTE nodes receive referenced column names from SELECT, JOIN conditions, WHERE, GROUP BY, HAVING, and ORDER BY.
 - Unqualified source columns are assigned only when the current query has exactly one source. Ambiguous unqualified columns are intentionally left unresolved until schema-aware resolution exists.
 - Column-level lineage is stored on each column as upstream `{ nodeId, columnName }` references. The UI resolves those references recursively when a column is selected, and it also builds a reverse index at render time so source columns can highlight downstream CTE and output columns without duplicating downstream links in the saved model.
+- Comments are copied from `rawsql-ts` `comments`, `positionedComments`, and select-item `aliasPositionedComments`. Inline comments after a SELECT item can appear on the next item as a `before` positioned comment, so the adapter treats the next item's `before` comments as comments for the previous output column.
 
 If this area is later moved into `rawsql-ts`, the useful API shape would be a stable graph/model output that distinguishes visible data nodes from process nodes without requiring the web app to parse Mermaid text.

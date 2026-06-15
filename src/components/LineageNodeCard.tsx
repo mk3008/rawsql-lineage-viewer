@@ -21,10 +21,17 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
     >
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
-        <span className="lineage-node-title">
+        <button
+          className={`lineage-node-title lineage-node-title-button nodrag ${data.selectedCommentTargetId === nodeCommentTargetId(node.id) ? 'lineage-comment-selected' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            data.onNodeSelect?.(node.id);
+          }}
+          type="button"
+        >
           <Icon size={15} aria-hidden="true" />
           {node.label}
-        </span>
+        </button>
         <div className="lineage-node-actions">
           <button
             aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
@@ -40,25 +47,29 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <span className="lineage-node-kind">{node.type}</span>
         </div>
       </div>
+      {data.selectedCommentTargetId === nodeCommentTargetId(node.id) && node.comments && node.comments.length > 0 ? <CommentBlock comments={node.comments} /> : null}
       {columnsVisible ? (
         <div className="lineage-node-body">
           {node.columns.length > 0 ? (
             node.columns.map((column) => {
               const isSelected = data.selectedColumnId === column.id;
+              const isCommentSelected = data.selectedCommentTargetId === columnCommentTargetId(column.id);
               const isSource = data.sourceColumnIds?.has(column.id) ?? false;
               const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
               return (
-                <button
-                  className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} nodrag`}
-                  key={column.id}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    data.onColumnSelect?.(node.id, column);
-                  }}
-                  type="button"
-                >
-                  {column.name}
-                </button>
+                <div className="lineage-column-group" key={column.id}>
+                  <button
+                    className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      data.onColumnSelect?.(node.id, column);
+                    }}
+                    type="button"
+                  >
+                    {column.name}
+                  </button>
+                  {isCommentSelected && column.comments && column.comments.length > 0 ? <CommentBlock comments={column.comments} /> : null}
+                </div>
               );
             })
           ) : (
@@ -69,4 +80,22 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       <Handle type="source" position={Position.Right} />
     </div>
   );
+}
+
+function CommentBlock({ comments }: { comments: string[] }) {
+  return (
+    <div className="lineage-comment" data-testid="lineage-comment">
+      {comments.map((comment) => (
+        <div key={comment}>{comment}</div>
+      ))}
+    </div>
+  );
+}
+
+function nodeCommentTargetId(nodeId: string) {
+  return `node:${nodeId}`;
+}
+
+function columnCommentTargetId(columnId: string) {
+  return `column:${columnId}`;
 }

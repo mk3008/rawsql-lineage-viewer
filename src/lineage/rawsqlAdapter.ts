@@ -49,6 +49,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       type: 'cte',
       label: cteName,
       columns: [],
+      comments: extractComments(cte, cte.aliasExpression, cte.aliasExpression?.table),
       materializationHint: normalizeMaterializationHint(cte.materialized),
     });
   }
@@ -296,6 +297,7 @@ function resolveSourceExpression(
 function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[]): LineageColumn[] {
   return query.selectClause.items.map((item, index) => {
     const upstream = resolveColumnReferences(item.value, sources);
+    const comments = extractSelectItemComments(query.selectClause.items, index);
     const name = (() => {
     if (item.identifier) {
       return item.identifier.name;
@@ -308,6 +310,7 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
     return {
       id: '',
       name,
+      comments,
       upstream,
     };
   });
@@ -407,22 +410,91 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
   const nextColumns = [...node.columns];
   for (const column of columns) {
     const name = typeof column === 'string' ? column : column.name;
+    const comments = typeof column === 'string' ? undefined : column.comments;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     if (!seen.has(name)) {
       seen.add(name);
       nextColumns.push({
         id: `${nodeId}.${sanitizeId(name)}`,
         name,
+        comments,
         upstream,
       });
-    } else if (upstream && upstream.length > 0) {
+    } else {
       const existing = nextColumns.find((item) => item.name === name);
-      if (existing) {
+      if (existing && upstream && upstream.length > 0) {
         existing.upstream = mergeColumnRefs(existing.upstream ?? [], upstream);
+      }
+      if (existing && comments && comments.length > 0) {
+        existing.comments = mergeComments(existing.comments, comments);
       }
     }
   }
   node.columns = nextColumns;
+}
+
+function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['items'], index: number): string[] | undefined {
+  const item = items[index];
+  const nextItem = items[index + 1];
+  return mergeComments(
+    extractComments(item, item.value, item.identifier, (item as { aliasPositionedComments?: unknown }).aliasPositionedComments),
+    extractPositionedComments(nextItem, 'before'),
+  );
+}
+
+function extractComments(...values: unknown[]): string[] | undefined {
+  const comments: string[] = [];
+  for (const value of values) {
+    comments.push(...extractLegacyComments(value));
+    comments.push(...extractPositionedComments(value));
+  }
+  return comments.length > 0 ? dedupeComments(comments) : undefined;
+}
+
+function extractLegacyComments(value: unknown): string[] {
+  if (!value || typeof value !== 'object' || !('comments' in value)) {
+    return [];
+  }
+  const comments = (value as { comments?: unknown }).comments;
+  return Array.isArray(comments) ? normalizeComments(comments) : [];
+}
+
+function extractPositionedComments(value: unknown, position?: 'before' | 'after'): string[] {
+  if (!value || typeof value !== 'object') {
+    return [];
+  }
+  const positionedComments = Array.isArray(value)
+    ? value
+    : 'positionedComments' in value
+      ? (value as { positionedComments?: unknown }).positionedComments
+      : undefined;
+  if (!Array.isArray(positionedComments)) {
+    return [];
+  }
+
+  return positionedComments.flatMap((item) => {
+    if (!item || typeof item !== 'object') {
+      return [];
+    }
+    const positioned = item as { comments?: unknown; position?: unknown };
+    if (position && positioned.position !== position) {
+      return [];
+    }
+    return Array.isArray(positioned.comments) ? normalizeComments(positioned.comments) : [];
+  });
+}
+
+function mergeComments(left?: string[], right?: string[]): string[] | undefined {
+  const comments = dedupeComments([...(left ?? []), ...(right ?? [])]);
+  return comments.length > 0 ? comments : undefined;
+}
+
+function normalizeComments(comments: unknown[]): string[] {
+  return comments.map((comment) => String(comment).trim()).filter((comment) => comment.length > 0);
+}
+
+function dedupeComments(comments: string[]): string[] {
+  return [...new Set(comments)];
 }
 
 function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {

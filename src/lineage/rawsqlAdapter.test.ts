@@ -168,6 +168,18 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('records comments for CTEs and output columns', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('cte_recent_orders')?.comments).toEqual(['Recent order line items used as the base sales fact.']);
+    expect(nodeById.get('cte_recent_orders')?.columns.find((column) => column.name === 'amount')?.comments).toEqual(['Extended line amount.']);
+    expect(nodeById.get('cte_order_totals')?.comments).toEqual(['Aggregates order metrics by customer.']);
+    expect(nodeById.get('cte_order_totals')?.columns.find((column) => column.name === 'total_amount')?.comments).toEqual([
+      'Total ordered amount per customer.',
+    ]);
+  });
+
   it('routes join edges toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (

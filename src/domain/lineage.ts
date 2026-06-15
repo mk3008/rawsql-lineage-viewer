@@ -10,6 +10,7 @@ export interface LineageColumnRef {
 export interface LineageColumn {
   id: string;
   name: string;
+  comments?: string[];
   upstream?: LineageColumnRef[];
 }
 
@@ -18,6 +19,7 @@ export interface LineageNode {
   type: LineageNodeType;
   label: string;
   columns: LineageColumn[];
+  comments?: string[];
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
 }
 
