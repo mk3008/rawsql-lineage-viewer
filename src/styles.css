@@ -281,6 +281,7 @@ textarea {
 }
 
 .graph-shell {
+  position: relative;
   min-height: 360px;
   overflow: hidden;
   border: 1px solid #dfe6f1;
@@ -288,14 +289,51 @@ textarea {
   background: #fbfdff;
 }
 
+.graph-column-toggle {
+  position: absolute;
+  z-index: 8;
+  top: 12px;
+  left: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 34px;
+  border: 1px solid #d8e2ef;
+  border-radius: 7px;
+  padding: 0 10px;
+  background: rgb(255 255 255 / 92%);
+  box-shadow: 0 10px 24px rgb(15 23 42 / 10%);
+  color: #0f172a;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.graph-column-toggle:hover {
+  border-color: #bfdbfe;
+  background: #fff;
+  color: #1d4ed8;
+}
+
 .lineage-node {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   width: 220px;
-  min-height: 104px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid;
   border-radius: 8px;
   background: #fff;
   box-shadow: 0 10px 26px rgb(15 23 42 / 10%);
+}
+
+.lineage-node-expanded {
+  min-height: 118px;
+}
+
+.lineage-node-collapsed {
+  height: auto;
 }
 
 .lineage-node-table {
@@ -320,6 +358,7 @@ textarea {
 
 .lineage-node-header {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
@@ -376,10 +415,40 @@ textarea {
 
 .lineage-node-body {
   display: grid;
+  flex: 1 1 auto;
   gap: 5px;
+  min-height: 0;
   max-height: 170px;
-  padding: 10px 12px 12px;
+  padding: 10px 12px 18px;
   overflow: auto;
+}
+
+.lineage-node-resized .lineage-node-body {
+  max-height: none;
+}
+
+.lineage-node-resize {
+  position: absolute;
+  right: 6px;
+  bottom: 5px;
+  width: 24px;
+  height: 14px;
+  cursor: ns-resize;
+}
+
+.lineage-node-resize::before {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 8px;
+  border-right: 2px solid rgb(71 85 105 / 48%);
+  border-bottom: 2px solid rgb(71 85 105 / 48%);
+  content: "";
+}
+
+.lineage-node-resize:hover::before {
+  border-color: #2563eb;
 }
 
 .lineage-column {

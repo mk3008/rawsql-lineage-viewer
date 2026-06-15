@@ -54,13 +54,55 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
   await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
   await expect(outputNode.getByText('customer_name')).toBeVisible();
 
+  const expandedBox = await ordersNode.boundingBox();
   await page.locator('button[aria-label="Hide columns for orders"]').click();
+  const collapsedBox = await ordersNode.boundingBox();
 
   await expect(ordersNode.getByText('order_date')).not.toBeVisible();
   await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
+  expect(collapsedBox?.height).toBeLessThan((expandedBox?.height ?? 0) - 20);
 
   await page.locator('button[aria-label="Show columns for orders"]').click();
   await expect(ordersNode.getByText('order_date')).toBeVisible();
+});
+
+test('can hide and show columns for all nodes', async ({ page }) => {
+  await page.goto('/');
+
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  const outputNode = page.getByTestId('rf__node-main_output');
+
+  await page.getByRole('button', { name: 'Hide all columns' }).click();
+
+  await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
+  await expect(ordersNode.getByText('order_date')).not.toBeVisible();
+  await expect(outputNode.getByText('customer_name')).not.toBeVisible();
+
+  await page.getByRole('button', { name: 'Show all columns' }).click();
+
+  await expect(page.getByRole('button', { name: 'Hide all columns' })).toBeVisible();
+  await expect(ordersNode.getByText('order_date')).toBeVisible();
+  await expect(outputNode.getByText('customer_name')).toBeVisible();
+});
+
+test('can resize a node height to reveal more columns', async ({ page }) => {
+  await page.goto('/');
+
+  const node = page.getByTestId('rf__node-cte_recent_orders');
+  await expect(node).toBeVisible();
+  const before = await node.boundingBox();
+  const resizeGrip = page.locator('[aria-label="Resize recent_orders height"]');
+  const gripBox = await resizeGrip.boundingBox();
+  expect(before).not.toBeNull();
+  expect(gripBox).not.toBeNull();
+
+  await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(gripBox!.x + gripBox!.width / 2, gripBox!.y + gripBox!.height / 2 + 160, { steps: 8 });
+  await page.mouse.up();
+
+  const after = await node.boundingBox();
+  expect(after?.height).toBeGreaterThan((before?.height ?? 0) + 40);
 });
 
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {

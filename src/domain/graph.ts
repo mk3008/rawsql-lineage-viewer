@@ -4,7 +4,9 @@ import type { LineageColumn, LineageEdge, LineageNode } from './lineage';
 export type GraphNodeData = {
   lineageNode: LineageNode;
   columnsVisible?: boolean;
+  nodeHeight?: number;
   onToggleColumns?: (nodeId: string) => void;
+  onNodeResize?: (nodeId: string, height: number) => void;
   selectedColumnId?: string | null;
   highlightedColumnIds?: Set<string>;
   sourceColumnIds?: Set<string>;

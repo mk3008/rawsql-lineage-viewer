@@ -1,4 +1,5 @@
 import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel } from '../graph/buildGraphModel';
@@ -18,7 +19,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const previousLineageRef = useRef(lineage);
   const graph = useMemo(() => buildGraphModel(lineage), [lineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
+  const [nodeHeights, setNodeHeights] = useState<Map<string, number>>(() => new Map());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
+  const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
       const next = new Set(current);
@@ -27,6 +30,22 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       } else {
         next.add(nodeId);
       }
+      return next;
+    });
+  }, []);
+  const toggleAllColumns = useCallback(() => {
+    setHiddenColumnNodeIds((current) => {
+      if (current.size === lineage.nodes.length) {
+        return new Set();
+      }
+
+      return new Set(lineage.nodes.map((node) => node.id));
+    });
+  }, [lineage.nodes]);
+  const resizeNode = useCallback((nodeId: string, height: number) => {
+    setNodeHeights((current) => {
+      const next = new Map(current);
+      next.set(nodeId, height);
       return next;
     });
   }, []);
@@ -52,14 +71,26 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         data: {
           ...node.data,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
+          nodeHeight: nodeHeights.get(node.id),
           onToggleColumns: toggleColumns,
+          onNodeResize: resizeNode,
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
         },
       })),
-    [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, graph.nodes, hiddenColumnNodeIds, selectColumn, selectedColumn?.columnId, toggleColumns],
+    [
+      columnHighlights.highlightedColumnIds,
+      columnHighlights.sourceColumnIds,
+      graph.nodes,
+      hiddenColumnNodeIds,
+      nodeHeights,
+      resizeNode,
+      selectColumn,
+      selectedColumn?.columnId,
+      toggleColumns,
+    ],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graph.edges);
@@ -97,10 +128,15 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   useEffect(() => {
     setSelectedColumn(null);
     setHiddenColumnNodeIds(new Set());
+    setNodeHeights(new Map());
   }, [lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph">
+      <button className="graph-column-toggle nodrag" type="button" onClick={toggleAllColumns}>
+        {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
+        {allColumnsHidden ? 'Show all columns' : 'Hide all columns'}
+      </button>
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}
