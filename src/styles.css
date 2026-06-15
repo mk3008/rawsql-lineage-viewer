@@ -493,7 +493,7 @@ textarea {
   position: absolute;
   z-index: 20;
   width: max-content;
-  max-width: 260px;
+  max-width: 320px;
   border: 1px solid #bfdbfe;
   border-radius: 8px;
   padding: 8px 10px;
@@ -504,6 +504,32 @@ textarea {
   font-weight: 650;
   line-height: 1.45;
   white-space: normal;
+}
+
+.lineage-comment-section + .lineage-comment-section {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid #dbeafe;
+}
+
+.lineage-comment-label {
+  margin-bottom: 3px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.lineage-expression {
+  display: block;
+  overflow-wrap: anywhere;
+  border-radius: 5px;
+  padding: 5px 6px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .lineage-comment-bubble::before {

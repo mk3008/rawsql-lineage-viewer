@@ -11,6 +11,7 @@ export interface LineageColumn {
   id: string;
   name: string;
   comments?: string[];
+  expressionSql?: string;
   upstream?: LineageColumnRef[];
 }
 

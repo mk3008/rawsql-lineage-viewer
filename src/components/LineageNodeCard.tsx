@@ -70,7 +70,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                   >
                     {column.name}
                   </button>
-                  {isCommentSelected && column.comments && column.comments.length > 0 ? <CommentBubble comments={column.comments} variant="column" /> : null}
+                  {isCommentSelected && (column.comments?.length || column.expressionSql) ? (
+                    <CommentBubble comments={column.comments} expressionSql={column.expressionSql} variant="column" />
+                  ) : null}
                 </div>
               );
             })
@@ -84,12 +86,23 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   );
 }
 
-function CommentBubble({ comments, variant }: { comments: string[]; variant: 'column' | 'node' }) {
+function CommentBubble({ comments, expressionSql, variant }: { comments?: string[]; expressionSql?: string; variant: 'column' | 'node' }) {
   return (
     <div className={`lineage-comment-bubble lineage-comment-bubble-${variant} nodrag`} data-testid="lineage-comment">
-      {comments.map((comment) => (
-        <div key={comment}>{comment}</div>
-      ))}
+      {comments && comments.length > 0 ? (
+        <div className="lineage-comment-section">
+          <div className="lineage-comment-label">Comment</div>
+          {comments.map((comment) => (
+            <div key={comment}>{comment}</div>
+          ))}
+        </div>
+      ) : null}
+      {expressionSql ? (
+        <div className="lineage-comment-section">
+          <div className="lineage-comment-label">Expression</div>
+          <code className="lineage-expression">{expressionSql}</code>
+        </div>
+      ) : null}
     </div>
   );
 }

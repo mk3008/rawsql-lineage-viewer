@@ -2,6 +2,7 @@ import {
   BinarySelectQuery,
   CTECollector,
   ColumnReference,
+  Formatter,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
@@ -18,6 +19,7 @@ export interface ParserAdapterResult {
 }
 
 const parserVersion = 'rawsql-ts';
+const expressionFormatter = new Formatter();
 
 export function analyzeSql(sql: string): ParserAdapterResult {
   const warnings: AnalysisWarning[] = [];
@@ -311,6 +313,7 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       id: '',
       name,
       comments,
+      expressionSql: formatExpressionSql(item.value),
       upstream,
     };
   });
@@ -411,6 +414,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
   for (const column of columns) {
     const name = typeof column === 'string' ? column : column.name;
     const comments = typeof column === 'string' ? undefined : column.comments;
+    const expressionSql = typeof column === 'string' ? undefined : column.expressionSql;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     if (!seen.has(name)) {
       seen.add(name);
@@ -418,6 +422,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         id: `${nodeId}.${sanitizeId(name)}`,
         name,
         comments,
+        expressionSql,
         upstream,
       });
     } else {
@@ -428,9 +433,21 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
       if (existing && comments && comments.length > 0) {
         existing.comments = mergeComments(existing.comments, comments);
       }
+      if (existing && expressionSql) {
+        existing.expressionSql = expressionSql;
+      }
     }
   }
   node.columns = nextColumns;
+}
+
+function formatExpressionSql(value: unknown): string | undefined {
+  try {
+    const formatted = expressionFormatter.format(value as Parameters<Formatter['format']>[0]).trim();
+    return formatted.length > 0 ? formatted : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['items'], index: number): string[] | undefined {

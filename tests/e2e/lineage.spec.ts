@@ -76,6 +76,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
 
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('"oi"."quantity" * "oi"."unit_price"');
 });
 
 test('can hide and show columns for all nodes', async ({ page }) => {
