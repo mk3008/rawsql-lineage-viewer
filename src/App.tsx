@@ -1,14 +1,17 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Code2, GitBranch, Menu, Play, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Code2, GitBranch, Menu, Play, Share2, X } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
+
+const maxShareUrlLength = 8000;
 
 export function App() {
   const initialSql = useMemo(readInitialSqlFromUrl, []);
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
+  const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
 
   const analysis = useMemo(() => {
     try {
@@ -27,6 +30,14 @@ export function App() {
 
   const error = analysis.error;
   const adapterResult = analysis.result;
+  const shareMessage =
+    shareStatus === 'copied'
+      ? 'Share URL copied'
+      : shareStatus === 'too-long'
+        ? 'SQL is too long for a share URL'
+        : shareStatus === 'failed'
+          ? 'Could not copy share URL'
+          : null;
 
   const graphStats = adapterResult
     ? {
@@ -50,10 +61,21 @@ export function App() {
             <p>Paste SQL. See the lineage.</p>
           </div>
         </div>
-        <a className="github-link" href="https://github.com/mk3008/rawsql-lineage-viewer" target="_blank" rel="noreferrer">
-          <GitBranch size={17} />
-          GitHub
-        </a>
+        <div className="header-actions">
+          {shareMessage ? (
+            <span className={`share-status share-status-${shareStatus}`} role="status">
+              {shareMessage}
+            </span>
+          ) : null}
+          <button className="share-button" type="button" onClick={() => void copyShareUrl(sql, setShareStatus)}>
+            <Share2 size={16} />
+            Share
+          </button>
+          <a className="github-link" href="https://github.com/mk3008/rawsql-lineage-viewer" target="_blank" rel="noreferrer">
+            <GitBranch size={17} />
+            GitHub
+          </a>
+        </div>
       </header>
 
       <main className={`workspace ${isPanelOpen ? '' : 'workspace-panel-collapsed'}`}>
@@ -63,7 +85,14 @@ export function App() {
               <Code2 size={16} />
               SQL
             </span>
-            <button className="text-button" type="button" onClick={() => setSql(salesSummarySql)}>
+            <button
+              className="text-button"
+              type="button"
+              onClick={() => {
+                setSql(salesSummarySql);
+                setShareStatus('idle');
+              }}
+            >
               Load example
             </button>
           </div>
@@ -72,7 +101,10 @@ export function App() {
             className="sql-editor"
             value={sql}
             spellCheck={false}
-            onChange={(event) => setSql(event.target.value)}
+            onChange={(event) => {
+              setSql(event.target.value);
+              setShareStatus('idle');
+            }}
           />
           <div className="panel-actions">
             <button
@@ -135,4 +167,56 @@ function readInitialSqlFromUrl() {
 
   const sharedSql = new URLSearchParams(window.location.search).get('sql');
   return sharedSql?.trim() ? sharedSql : salesSummarySql;
+}
+
+async function copyShareUrl(sql: string, setShareStatus: (status: 'idle' | 'copied' | 'too-long' | 'failed') => void) {
+  const shareUrl = buildShareUrl(sql);
+  if (shareUrl.length > maxShareUrlLength) {
+    setShareStatus('too-long');
+    return;
+  }
+
+  try {
+    await copyText(shareUrl);
+    setShareStatus('copied');
+  } catch {
+    setShareStatus('failed');
+  }
+}
+
+function buildShareUrl(sql: string) {
+  if (typeof window === 'undefined') {
+    return '';
+  }
+
+  const url = new URL(window.location.href);
+  url.search = '';
+  url.hash = '';
+  url.searchParams.set('sql', sql);
+  return url.toString();
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for browsers or embedded views that expose Clipboard API but deny writes.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.append(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+
+  if (!copied) {
+    throw new Error('Copy command failed.');
+  }
 }

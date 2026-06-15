@@ -162,6 +162,48 @@ test('opens SQL from the sql query parameter on first load', async ({ page }) =>
   await expect(page.getByTestId('rf__node-table_customers')).toBeVisible();
 });
 
+test('copies a share URL for the current SQL', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          (window as Window & { __copiedText?: string }).__copiedText = text;
+        },
+      },
+    });
+  });
+  await page.goto('/');
+
+  const sql = 'select u.id from users u';
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(sql);
+  await page.getByRole('button', { name: 'Share' }).click();
+
+  await expect(page.getByRole('status')).toContainText('Share URL copied');
+  const copiedUrl = await page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? '');
+  const parsedUrl = new URL(copiedUrl);
+  expect(parsedUrl.pathname).toBe('/');
+  expect(parsedUrl.searchParams.get('sql')).toBe(sql);
+});
+
+test('does not copy a share URL when the SQL is too long', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          (window as Window & { __copiedText?: string }).__copiedText = text;
+        },
+      },
+    });
+  });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`select '${'x'.repeat(9000)}' as very_long_sql`);
+  await page.getByRole('button', { name: 'Share' }).click();
+
+  await expect(page.getByRole('status')).toContainText('SQL is too long for a share URL');
+  await expect.poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? '')).toBe('');
+});
+
 test('can hide and show columns for all nodes', async ({ page }) => {
   await page.goto('/');
 

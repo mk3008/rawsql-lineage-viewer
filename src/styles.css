@@ -42,13 +42,21 @@ textarea {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
+}
+
+.brand > div {
+  min-width: 0;
 }
 
 .brand h1 {
+  overflow: hidden;
   margin: 0;
   font-size: 18px;
   font-weight: 750;
   line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand p {
@@ -61,6 +69,7 @@ textarea {
 .text-button,
 .primary-button,
 .segmented-button,
+.share-button,
 .github-link {
   display: inline-flex;
   align-items: center;
@@ -86,6 +95,45 @@ textarea {
   background: rgb(255 255 255 / 8%);
   font-size: 13px;
   font-weight: 650;
+}
+
+.header-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.share-button {
+  height: 36px;
+  padding: 0 12px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.share-button:hover {
+  background: #dbeafe;
+}
+
+.share-status {
+  max-width: 230px;
+  overflow: hidden;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-status-copied {
+  color: #bbf7d0;
+}
+
+.share-status-too-long,
+.share-status-failed {
+  color: #fed7aa;
 }
 
 .workspace {
@@ -697,8 +745,28 @@ textarea {
   }
 
   .app-header {
+    flex-wrap: wrap;
+    gap: 10px;
     min-height: 64px;
     padding: 10px 14px;
+  }
+
+  .brand {
+    flex: 1 1 190px;
+  }
+
+  .header-actions {
+    flex: 0 0 auto;
+    gap: 8px;
+  }
+
+  .share-status {
+    display: none;
+  }
+
+  .share-button,
+  .github-link {
+    padding: 0 10px;
   }
 
   .workspace,
