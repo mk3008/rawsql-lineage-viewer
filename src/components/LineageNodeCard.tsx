@@ -1,4 +1,5 @@
-import { useState, type MouseEvent } from 'react';
+import { useLayoutEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, Copy, ExternalLink, Eye, EyeOff, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
@@ -6,6 +7,7 @@ import type { GraphNode } from '../domain/graph';
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const columnsVisible = data.columnsVisible ?? true;
+  const titleRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -15,6 +17,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
+          ref={titleRef}
           className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
@@ -41,6 +44,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
         <CommentBubble
+          anchorRef={titleRef}
           comments={node.comments}
           cteExecutableSql={node.cteExecutableSql}
           onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
@@ -50,34 +54,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       {columnsVisible ? (
         <div className="lineage-node-body">
           {node.columns.length > 0 ? (
-            node.columns.map((column) => {
-              const isSelected = data.selectedColumnId === column.id;
-              const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
-              const isSource = data.sourceColumnIds?.has(column.id) ?? false;
-              const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
-              return (
-                <div className="lineage-column-group" key={column.id}>
-                  <button
-                    className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      data.onColumnSelect?.(node.id, column);
-                    }}
-                    type="button"
-                  >
-                    {column.name}
-                  </button>
-                  {isCommentSelected && (column.comments?.length || column.expressionSql) ? (
-                    <CommentBubble
-                      comments={column.comments}
-                      expressionSql={column.expressionSql}
-                      onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
-                      variant="column"
-                    />
-                  ) : null}
-                </div>
-              );
-            })
+            node.columns.map((column) => (
+              <LineageColumnRow column={column} data={data} key={column.id} nodeId={node.id} />
+            ))
           ) : (
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}
@@ -88,13 +67,56 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   );
 }
 
+function LineageColumnRow({
+  column,
+  data,
+  nodeId,
+}: {
+  column: GraphNode['data']['lineageNode']['columns'][number];
+  data: GraphNode['data'];
+  nodeId: string;
+}) {
+  const columnRef = useRef<HTMLButtonElement>(null);
+  const isSelected = data.selectedColumnId === column.id;
+  const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
+  const isSource = data.sourceColumnIds?.has(column.id) ?? false;
+  const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
+
+  return (
+    <div className="lineage-column-group">
+      <button
+        ref={columnRef}
+        className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+        onClick={(event) => {
+          event.stopPropagation();
+          data.onColumnSelect?.(nodeId, column);
+        }}
+        type="button"
+      >
+        {column.name}
+      </button>
+      {isCommentSelected && (column.comments?.length || column.expressionSql) ? (
+        <CommentBubble
+          anchorRef={columnRef}
+          comments={column.comments}
+          expressionSql={column.expressionSql}
+          onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
+          variant="column"
+        />
+      ) : null}
+    </div>
+  );
+}
+
 function CommentBubble({
+  anchorRef,
   comments,
   expressionSql,
   cteExecutableSql,
   onClose,
   variant,
 }: {
+  anchorRef: RefObject<HTMLElement | null>;
   comments?: string[];
   expressionSql?: string;
   cteExecutableSql?: string;
@@ -102,6 +124,38 @@ function CommentBubble({
   variant: 'column' | 'node';
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const bubbleRef = useRef<HTMLDivElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    let animationFrame = 0;
+
+    const updatePosition = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) {
+        animationFrame = window.requestAnimationFrame(updatePosition);
+        return;
+      }
+
+      const anchorRect = anchor.getBoundingClientRect();
+      const bubbleRect = bubbleRef.current?.getBoundingClientRect();
+      const bubbleWidth = bubbleRect?.width ?? 320;
+      const bubbleHeight = bubbleRect?.height ?? 120;
+      const nextLeft = Math.min(anchorRect.right + 10, window.innerWidth - bubbleWidth - 12);
+      const preferredTop = variant === 'node' ? anchorRect.bottom + 8 : anchorRect.top - 4;
+      const nextTop = Math.max(8, Math.min(preferredTop, window.innerHeight - bubbleHeight - 8));
+
+      setPosition((current) =>
+        current && Math.abs(current.left - nextLeft) < 0.5 && Math.abs(current.top - nextTop) < 0.5
+          ? current
+          : { left: nextLeft, top: nextTop },
+      );
+      animationFrame = window.requestAnimationFrame(updatePosition);
+    };
+
+    updatePosition();
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [anchorRef, variant]);
 
   const copyCteSql = async (event: MouseEvent<HTMLButtonElement>) => {
     event.stopPropagation();
@@ -119,10 +173,13 @@ function CommentBubble({
     }
   };
 
-  return (
+  return createPortal(
     <div
+      ref={bubbleRef}
       className={`lineage-comment-bubble lineage-comment-bubble-${variant} ${cteExecutableSql ? 'lineage-comment-bubble-has-sql' : ''} nodrag`}
       data-testid="lineage-comment"
+      style={position ? { left: position.left, top: position.top } : undefined}
+      onClick={(event) => event.stopPropagation()}
     >
       <button
         aria-label="Close comment"
@@ -175,7 +232,8 @@ function CommentBubble({
           </pre>
         </div>
       ) : null}
-    </div>
+    </div>,
+    document.body,
   );
 }
 

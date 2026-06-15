@@ -87,26 +87,28 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Recent order line items used as the base sales fact.');
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('CTE SQL');
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('from orders as o');
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toHaveCSS('position', 'absolute');
-  const openInViewerLink = recentOrdersNode.getByRole('link', { name: 'Open in viewer' });
+  const cteComment = page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' });
+  await expect(cteComment).toContainText('Recent order line items used as the base sales fact.');
+  await expect(cteComment).toContainText('CTE SQL');
+  await expect(cteComment).toContainText('from orders as o');
+  await expect(cteComment).toHaveCSS('position', 'fixed');
+  await expect(cteComment).toHaveCSS('z-index', '100000');
+  const openInViewerLink = cteComment.getByRole('link', { name: 'Open in viewer' });
   await expect(openInViewerLink).toBeVisible();
   const openInViewerHref = await openInViewerLink.getAttribute('href');
   expect(openInViewerHref).toContain('?sql=');
   expect(new URL(openInViewerHref ?? '').searchParams.get('sql')).toContain('from orders as o');
-  await recentOrdersNode.getByRole('button', { name: 'Copy SQL' }).click();
-  await expect(recentOrdersNode.getByRole('button', { name: 'Copied' })).toBeVisible();
+  await cteComment.getByRole('button', { name: 'Copy SQL' }).click();
+  await expect(cteComment.getByRole('button', { name: 'Copied' })).toBeVisible();
   await expect
     .poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? ''))
     .toContain('from orders as o');
-  await recentOrdersNode.getByRole('button', { name: 'Close comment' }).click();
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toHaveCount(0);
+  await cteComment.getByRole('button', { name: 'Close comment' }).click();
+  await expect(cteComment).toHaveCount(0);
 
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
-  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Extended line amount.' })).toContainText('Extended line amount.');
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
 });
 
 test('preserves formatted expression line breaks', async ({ page }) => {
@@ -115,7 +117,7 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   const outputNode = page.getByTestId('rf__node-main_output');
   await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
 
-  const expression = outputNode.locator('.lineage-expression');
+  const expression = page.locator('.lineage-expression').filter({ hasText: 'case' });
   await expect(expression).toHaveCSS('white-space', 'pre-wrap');
   await expect(expression).toContainText("case\n    when ps.last_paid_at is null then\n        'unknown'");
 });
@@ -178,17 +180,20 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).not.toHaveClass(/animated/);
-  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce(ot.total_amount, 0)');
-  await expect(orderTotalsNode.getByTestId('lineage-comment')).toContainText('Total ordered amount per customer.');
-  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
-  await outputNode.getByRole('button', { name: 'Close comment' }).click();
-  await expect(outputNode.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(orderTotalsNode.getByTestId('lineage-comment')).toContainText('Total ordered amount per customer.');
+  const outputComment = page.getByTestId('lineage-comment').filter({ hasText: 'coalesce(ot.total_amount, 0)' });
+  const orderTotalsComment = page.getByTestId('lineage-comment').filter({ hasText: 'Total ordered amount per customer.' });
+  const recentOrdersComment = page.getByTestId('lineage-comment').filter({ hasText: 'Extended line amount.' });
+  await expect(outputComment).toContainText('coalesce(ot.total_amount, 0)');
+  await expect(orderTotalsComment).toContainText('Total ordered amount per customer.');
+  await expect(recentOrdersComment).toContainText('Extended line amount.');
+  await outputComment.getByRole('button', { name: 'Close comment' }).click();
+  await expect(outputComment).toHaveCount(0);
+  await expect(orderTotalsComment).toContainText('Total ordered amount per customer.');
 
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
-  await expect(outputNode.getByTestId('lineage-comment')).toHaveCount(0);
+  await expect(outputComment).toHaveCount(0);
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
@@ -207,8 +212,10 @@ test('highlights downstream output lineage when a source column is selected', as
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
-  await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce(ot.total_amount, 0)');
-  await expect(recentOrdersNode.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'coalesce(ot.total_amount, 0)' })).toContainText(
+    'coalesce(ot.total_amount, 0)',
+  );
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
 });
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
