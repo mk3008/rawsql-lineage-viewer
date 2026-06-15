@@ -315,7 +315,7 @@ function isAnchorVisible(anchorRect: RectLike, anchor: HTMLElement) {
     top: 0,
   };
   const visibleRect = graphShellRect ? intersectRects(graphShellRect, viewportRect) : viewportRect;
-  return visibleRect ? rectsIntersect(anchorRect, visibleRect) : false;
+  return visibleRect ? rectContains(visibleRect, anchorRect) : false;
 }
 
 function intersectRects(a: RectLike, b: RectLike): RectLike | null {
@@ -326,8 +326,8 @@ function intersectRects(a: RectLike, b: RectLike): RectLike | null {
   return right > left && bottom > top ? { bottom, left, right, top } : null;
 }
 
-function rectsIntersect(a: RectLike, b: RectLike) {
-  return a.right > b.left && a.left < b.right && a.bottom > b.top && a.top < b.bottom;
+function rectContains(container: RectLike, rect: RectLike) {
+  return rect.left >= container.left && rect.right <= container.right && rect.top >= container.top && rect.bottom <= container.bottom;
 }
 
 function buildViewerSqlUrl(sql: string) {

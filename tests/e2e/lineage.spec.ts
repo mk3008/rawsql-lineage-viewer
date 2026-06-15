@@ -158,7 +158,7 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await expect.poll(() => bubble.evaluate((element) => window.getComputedStyle(element).transform)).not.toBe(initialTransform);
 });
 
-test('hides column callouts when the anchor column is clipped outside the graph viewport', async ({ page }) => {
+test('hides column callouts when any part of the anchor column is clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
 
   const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
@@ -170,9 +170,12 @@ test('hides column callouts when the anchor column is clipped outside the graph 
 
   const nodeBox = await paymentSummaryNode.boundingBox();
   expect(nodeBox).not.toBeNull();
+  const graphBox = await page.getByTestId('lineage-graph').boundingBox();
+  expect(graphBox).not.toBeNull();
+  const dragEndX = graphBox!.x - nodeBox!.width + 55;
   await page.mouse.move(nodeBox!.x + 28, nodeBox!.y + 20);
   await page.mouse.down();
-  await page.mouse.move(nodeBox!.x - 900, nodeBox!.y + 20, { steps: 12 });
+  await page.mouse.move(dragEndX, nodeBox!.y + 20, { steps: 12 });
   await page.mouse.up();
 
   await expect
@@ -188,7 +191,9 @@ test('hides column callouts when the anchor column is clipped outside the graph 
         }
 
         const rect = column.getBoundingClientRect();
-        return rect.right <= graph.left || rect.left >= graph.right || rect.bottom <= graph.top || rect.top >= graph.bottom;
+        const isPartiallyClipped = rect.left < graph.left || rect.right > graph.right || rect.top < graph.top || rect.bottom > graph.bottom;
+        const stillPartlyVisible = rect.right > graph.left && rect.left < graph.right && rect.bottom > graph.top && rect.top < graph.bottom;
+        return isPartiallyClipped && stillPartlyVisible;
       }),
     )
     .toBe(true);
