@@ -165,7 +165,8 @@ function readInitialSqlFromUrl() {
     return salesSummarySql;
   }
 
-  const sharedSql = new URLSearchParams(window.location.search).get('sql');
+  const hashSql = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('sql');
+  const sharedSql = hashSql ?? new URLSearchParams(window.location.search).get('sql');
   return sharedSql?.trim() ? sharedSql : salesSummarySql;
 }
 
@@ -191,8 +192,7 @@ function buildShareUrl(sql: string) {
 
   const url = new URL(window.location.href);
   url.search = '';
-  url.hash = '';
-  url.searchParams.set('sql', sql);
+  url.hash = new URLSearchParams({ sql }).toString();
   return url.toString();
 }
 

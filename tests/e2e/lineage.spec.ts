@@ -99,8 +99,8 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   const openInViewerLink = cteComment.getByRole('link', { name: 'Open in viewer' });
   await expect(openInViewerLink).toBeVisible();
   const openInViewerHref = await openInViewerLink.getAttribute('href');
-  expect(openInViewerHref).toContain('?sql=');
-  expect(new URL(openInViewerHref ?? '').searchParams.get('sql')).toMatch(/from\s+orders as o/);
+  expect(openInViewerHref).toContain('#sql=');
+  expect(new URLSearchParams(new URL(openInViewerHref ?? '').hash.replace(/^#/, '')).get('sql')).toMatch(/from\s+orders as o/);
   await cteComment.getByRole('button', { name: 'Copy SQL' }).click();
   await expect(cteComment.getByRole('button', { name: 'Copied' })).toBeVisible();
   await expect
@@ -184,13 +184,22 @@ test('can toggle column and header callouts independently', async ({ page }) => 
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' })).toBeVisible();
 });
 
-test('opens SQL from the sql query parameter on first load', async ({ page }) => {
+test('opens SQL from the sql hash parameter on first load', async ({ page }) => {
   const sql = 'select c.customer_id from customers c';
-  await page.goto(`/?sql=${encodeURIComponent(sql)}`);
+  await page.goto(`/#sql=${encodeURIComponent(sql)}`);
 
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue(sql);
   await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
   await expect(page.getByTestId('rf__node-table_customers')).toBeVisible();
+});
+
+test('keeps legacy sql query parameter links working', async ({ page }) => {
+  const sql = 'select a.id from accounts a';
+  await page.goto(`/?sql=${encodeURIComponent(sql)}`);
+
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue(sql);
+  await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
+  await expect(page.getByTestId('rf__node-table_accounts')).toBeVisible();
 });
 
 test('copies a share URL for the current SQL', async ({ page }) => {
@@ -213,7 +222,8 @@ test('copies a share URL for the current SQL', async ({ page }) => {
   const copiedUrl = await page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? '');
   const parsedUrl = new URL(copiedUrl);
   expect(parsedUrl.pathname).toBe('/');
-  expect(parsedUrl.searchParams.get('sql')).toBe(sql);
+  expect(parsedUrl.search).toBe('');
+  expect(new URLSearchParams(parsedUrl.hash.replace(/^#/, '')).get('sql')).toBe(sql);
 });
 
 test('does not copy a share URL when the SQL is too long', async ({ page }) => {

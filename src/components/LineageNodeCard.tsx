@@ -260,7 +260,8 @@ function CommentBubble({
 
 function buildViewerSqlUrl(sql: string) {
   const url = new URL(window.location.href);
-  url.searchParams.set('sql', sql);
+  url.search = '';
+  url.hash = new URLSearchParams({ sql }).toString();
   return url.toString();
 }
 
