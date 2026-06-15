@@ -132,7 +132,7 @@ export function App() {
               <span><i className="legend-dot derived" />Derived</span>
               <span><i className="legend-dot output" />Output</span>
               <span><i className="legend-line data" />Data flow</span>
-              <span><i className="legend-line outer" />Outer join</span>
+              <span title="Nullable by OUTER JOIN"><i className="legend-line outer" />Nullable flow</span>
             </div>
           </div>
 

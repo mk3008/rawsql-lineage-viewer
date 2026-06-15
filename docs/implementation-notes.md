@@ -26,7 +26,7 @@ The current adapter uses `SelectQueryParser.parse()` and reads the `rawsql-ts` A
 - `SimpleSelectQuery.fromClause.joins` provides joined sources and join types.
 - CTE names are resolved to CTE nodes; other table sources become table nodes.
 
-JOIN edges are kept in the internal lineage model and are routed from the joined source to the current query result node, not from one source to another. This keeps SELECT lineage directional: physical tables remain upstream sources, while CTEs and the final output receive incoming reference edges. The graph renderer intentionally hides JOIN edges and JOIN-type labels; JOIN context is only reflected on data-flow edges through dashed outer-join styling. Data-flow edges may show the source alias, such as `o`, `oi`, or `ot`, when the SQL source has one. CUD statements with `RETURNING` are a separate future scope and may need different target rules.
+The public lineage model does not expose JOIN relationships as separate edges. SELECT lineage stays directional: physical tables remain upstream sources, while CTEs and the final output receive incoming data-flow edges. OUTER JOIN context is kept only as `joinNullability` metadata on data-flow edges and rendered as a dashed line. This is a join-context marker, not full output nullability inference. Data-flow edges may show the source alias, such as `o`, `oi`, or `ot`, when the SQL source has one. CUD statements with `RETURNING` are a separate future scope and may need different target rules.
 
 Column lists are populated from the AST as best-effort lineage metadata:
 

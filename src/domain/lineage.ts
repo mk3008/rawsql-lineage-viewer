@@ -1,6 +1,6 @@
 export type LineageNodeType = 'table' | 'cte' | 'derived' | 'output';
 
-export type LineageEdgeType = 'dataFlow' | 'join' | 'expression' | 'unknown';
+export type LineageEdgeType = 'dataFlow' | 'expression' | 'unknown';
 
 export interface LineageColumnRef {
   nodeId: string;
@@ -32,7 +32,10 @@ export interface LineageEdge {
   type: LineageEdgeType;
   label?: string;
   sourceAlias?: string;
-  joinType?: 'inner' | 'left' | 'right' | 'full' | 'unknown';
+  joinNullability?: {
+    reason: 'outerJoin';
+    joinType: 'left' | 'right' | 'full';
+  };
   confidence?: 'high' | 'medium' | 'low';
 }
 

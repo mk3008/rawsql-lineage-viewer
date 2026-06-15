@@ -79,7 +79,7 @@ describe('rawsqlAdapter', () => {
     );
   });
 
-  it('separates source-to-result data flow from source-to-result joins', () => {
+  it('records source-to-result data flows with outer join nullability context', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const edgeIds = lineage.edges.map((edge) => edge.id);
 
@@ -95,38 +95,33 @@ describe('rawsqlAdapter', () => {
       ]),
     );
 
-    expect(edgeIds).toEqual(
-      expect.arrayContaining([
-        'table_order_items-cte_recent_orders-JOIN',
-        'cte_order_totals-main_output-LEFT_JOIN',
-        'cte_payment_summary-main_output-LEFT_JOIN',
-      ]),
-    );
-
     const dataFlowEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
-    const joinEdges = lineage.edges.filter((edge) => edge.type === 'join');
 
     expect(dataFlowEdges).toHaveLength(7);
-    expect(joinEdges).toHaveLength(3);
+    expect(lineage.edges.every((edge) => edge.type === 'dataFlow')).toBe(true);
     expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')).toMatchObject({
       label: 'JOIN',
       sourceAlias: 'oi',
-      joinType: 'inner',
     });
     expect(dataFlowEdges.find((edge) => edge.id === 'cte_order_totals-main_output')).toMatchObject({
       label: 'LEFT JOIN',
       sourceAlias: 'ot',
-      joinType: 'left',
+      joinNullability: {
+        reason: 'outerJoin',
+        joinType: 'left',
+      },
     });
     expect(dataFlowEdges.find((edge) => edge.id === 'cte_payment_summary-main_output')).toMatchObject({
       label: 'LEFT JOIN',
       sourceAlias: 'ps',
-      joinType: 'left',
+      joinNullability: {
+        reason: 'outerJoin',
+        joinType: 'left',
+      },
     });
     expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.sourceAlias).toBe('c');
-    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinType).toBeUndefined();
-    expect(joinEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders-JOIN')?.joinType).toBe('inner');
-    expect(joinEdges.find((edge) => edge.id === 'cte_order_totals-main_output-LEFT_JOIN')?.joinType).toBe('left');
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinNullability).toBeUndefined();
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')?.joinNullability).toBeUndefined();
   });
 
   it('populates output and referenced source columns', () => {
@@ -238,7 +233,7 @@ describe('rawsqlAdapter', () => {
     expect(lineage.nodes.find((node) => node.id === 'cte_recent_orders')?.comments).toEqual(['Inner select comment for the CTE.']);
   });
 
-  it('routes join edges toward the query result instead of into joined sources', () => {
+  it('routes joined source data flows toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (
         SELECT customer_id, SUM(amount) AS total_amount
@@ -261,18 +256,24 @@ describe('rawsqlAdapter', () => {
     expect(lineage.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'cte_order_totals-main_output-LEFT_JOIN',
+          id: 'cte_order_totals-main_output',
           source: 'cte_order_totals',
           target: 'main_output',
-          type: 'join',
-          joinType: 'left',
+          type: 'dataFlow',
+          joinNullability: {
+            reason: 'outerJoin',
+            joinType: 'left',
+          },
         }),
         expect.objectContaining({
-          id: 'cte_payment_summary-main_output-LEFT_JOIN',
+          id: 'cte_payment_summary-main_output',
           source: 'cte_payment_summary',
           target: 'main_output',
-          type: 'join',
-          joinType: 'left',
+          type: 'dataFlow',
+          joinNullability: {
+            reason: 'outerJoin',
+            joinType: 'left',
+          },
         }),
       ]),
     );

@@ -17,6 +17,8 @@ This is a static TypeScript web app intended for GitHub Pages. SQL is parsed loc
 
 Save/load, JSON import/export, SVG/PNG export, and upstream/downstream switching are intentionally left for later iterations. The internal model layers are separated so those capabilities can be added without binding the app to the raw parser AST.
 
+The graph visualizes value lineage, not JOIN relationships as separate edges. Dashed data-flow edges indicate values from an OUTER JOIN nullable side. This is a join-context marker, not full output nullability inference.
+
 ## Development
 
 ```bash

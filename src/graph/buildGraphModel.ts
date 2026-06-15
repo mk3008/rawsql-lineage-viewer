@@ -12,8 +12,8 @@ const layoutSpacing = {
 };
 
 export function buildGraphModel(lineage: LineageModel): GraphModel {
-  const positioned = layoutNodes(lineage.nodes, lineage.edges);
   const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
+  const positioned = layoutNodes(lineage.nodes, visibleEdges);
 
   return {
     nodes: positioned.map((node) => ({
@@ -107,7 +107,7 @@ function calculateDepths(nodes: LineageNode[], edges: LineageEdge[]): Map<string
 }
 
 function toGraphEdge(edge: LineageEdge): GraphEdge {
-  const isOuterJoinContext = edge.joinType !== undefined && edge.joinType !== 'inner';
+  const isNullableByOuterJoin = edge.joinNullability?.reason === 'outerJoin';
   return {
     id: edge.id,
     source: edge.source,
@@ -123,7 +123,7 @@ function toGraphEdge(edge: LineageEdge): GraphEdge {
     style: {
       stroke: '#059669',
       strokeWidth: 2,
-      strokeDasharray: isOuterJoinContext ? '8 5' : undefined,
+      strokeDasharray: isNullableByOuterJoin ? '8 5' : undefined,
     },
     markerEnd: {
       type: 'arrowclosed',

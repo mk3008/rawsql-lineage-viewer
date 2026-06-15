@@ -200,6 +200,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
 
     for (const join of joins) {
       const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+      const joinType = normalizeJoinType(join);
       sources.push(joinedSource);
 
       addLineageEdge(edges, {
@@ -208,17 +209,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         type: 'dataFlow',
         label: normalizeJoinLabel(join),
         sourceAlias: joinedSource.sourceAlias,
-        joinType: normalizeJoinType(join),
-        confidence: 'high',
-      });
-
-      addLineageEdge(edges, {
-        source: joinedSource.node.id,
-        target: targetId,
-        type: 'join',
-        label: normalizeJoinLabel(join),
-        sourceAlias: joinedSource.sourceAlias,
-        joinType: normalizeJoinType(join),
+        joinNullability: toJoinNullability(joinType),
         confidence: 'high',
       });
     }
@@ -747,7 +738,7 @@ function createDerivedNode(id: string, label: string, nodes: Map<string, Lineage
 function addLineageEdge(edges: LineageEdge[], edge: Omit<LineageEdge, 'id'>): void {
   edges.push({
     ...edge,
-    id: `${edge.source}-${edge.target}${edge.type === 'join' ? `-${sanitizeId(edge.label ?? 'join')}` : ''}`,
+    id: `${edge.source}-${edge.target}`,
   });
 }
 
@@ -756,7 +747,7 @@ function normalizeJoinLabel(join: JoinClause): string {
   return value.length > 0 ? value.toUpperCase() : 'JOIN';
 }
 
-function normalizeJoinType(join: JoinClause): LineageEdge['joinType'] {
+function normalizeJoinType(join: JoinClause): 'inner' | 'left' | 'right' | 'full' | 'unknown' {
   const normalized = join.joinType.value.toLowerCase();
   if (normalized.includes('left')) {
     return 'left';
@@ -771,6 +762,16 @@ function normalizeJoinType(join: JoinClause): LineageEdge['joinType'] {
     return 'inner';
   }
   return 'unknown';
+}
+
+function toJoinNullability(joinType: ReturnType<typeof normalizeJoinType>): LineageEdge['joinNullability'] {
+  if (joinType === 'inner' || joinType === 'unknown') {
+    return undefined;
+  }
+  return {
+    reason: 'outerJoin',
+    joinType,
+  };
 }
 
 function normalizeMaterializationHint(materialized: CommonTable['materialized']): LineageNode['materializationHint'] {

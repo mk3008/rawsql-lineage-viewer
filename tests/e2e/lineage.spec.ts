@@ -16,9 +16,6 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_orders-cte_recent_orders')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders')).toBeAttached();
-  await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders-JOIN')).not.toBeAttached();
-  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN')).not.toBeAttached();
-  await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output-LEFT_JOIN')).not.toBeAttached();
 
   const outerDataFlowStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
@@ -30,22 +27,22 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByText('Flow direction')).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Downstream' })).not.toBeVisible();
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
+  await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
+  await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
 
-test('does not render join edges while keeping outer join context on data flows', async ({ page }) => {
+test('renders outer join nullability context on data flows without separate join edges', async ({ page }) => {
   await page.goto('/');
 
   const dataFlowEdge = page.getByTestId('rf__edge-table_customers-main_output');
   const outerDataFlowEdge = page.getByTestId('rf__edge-cte_order_totals-main_output');
-  const joinEdge = page.getByTestId('rf__edge-cte_order_totals-main_output-LEFT_JOIN');
 
   await expect(dataFlowEdge).toBeAttached();
   await expect(outerDataFlowEdge).toBeAttached();
-  await expect(joinEdge).not.toBeAttached();
   const outerDataFlowStyle = await outerDataFlowEdge.locator('.react-flow__edge-path').first().getAttribute('style');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
 });
@@ -384,6 +381,5 @@ test('updates the lineage graph after editing SQL', async ({ page }) => {
   await expect(page.getByTestId('rf__node-table_users')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_accounts')).toBeVisible();
   await expect(page.getByTestId('rf__edge-table_accounts-main_output')).toBeAttached();
-  await expect(page.getByTestId('rf__edge-table_accounts-main_output-LEFT_JOIN')).not.toBeAttached();
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
 });
