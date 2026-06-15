@@ -31,6 +31,7 @@ export interface LineageEdge {
   target: string;
   type: LineageEdgeType;
   label?: string;
+  sourceAlias?: string;
   joinType?: 'inner' | 'left' | 'right' | 'full' | 'unknown';
   confidence?: 'high' | 'medium' | 'low';
 }

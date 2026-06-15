@@ -13,15 +13,19 @@ describe('buildGraphModel', () => {
     expect(graph.edges.every((edge) => edge.data?.lineageEdge.type === 'dataFlow')).toBe(true);
   });
 
-  it('renders data flows without labels and preserves outer join context as a dashed line', () => {
+  it('renders data source aliases on data flows and preserves outer join context as a dashed line', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const graph = buildGraphModel(lineage);
 
     const preservedDataFlow = graph.edges.find((edge) => edge.id === 'table_customers-main_output');
     const outerDataFlow = graph.edges.find((edge) => edge.id === 'cte_order_totals-main_output');
     const innerDataFlow = graph.edges.find((edge) => edge.id === 'table_order_items-cte_recent_orders');
+    const unaliasedDataFlow = graph.edges.find((edge) => edge.id === 'cte_recent_orders-cte_order_totals');
 
-    expect(graph.edges.every((edge) => edge.label === undefined)).toBe(true);
+    expect(preservedDataFlow?.label).toBe('c');
+    expect(outerDataFlow?.label).toBe('ot');
+    expect(innerDataFlow?.label).toBe('oi');
+    expect(unaliasedDataFlow?.label).toBeUndefined();
     expect(preservedDataFlow?.style).toMatchObject({
       stroke: '#059669',
       strokeWidth: 2,
@@ -42,7 +46,7 @@ describe('buildGraphModel', () => {
     const orders = graph.nodes.find((node) => node.id === 'table_orders');
     const orderItems = graph.nodes.find((node) => node.id === 'table_order_items');
 
-    expect(graph.edges.every((edge) => edge.type === 'default')).toBe(true);
+    expect(graph.edges.every((edge) => edge.type === 'lineageDataFlow')).toBe(true);
     expect(orders?.position.x).toBe(orderItems?.position.x);
     expect(Math.abs((orders?.position.y ?? 0) - (orderItems?.position.y ?? 0))).toBeGreaterThanOrEqual(230);
   });

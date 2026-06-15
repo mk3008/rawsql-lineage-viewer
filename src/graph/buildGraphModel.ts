@@ -112,7 +112,10 @@ function toGraphEdge(edge: LineageEdge): GraphEdge {
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'default',
+    type: 'lineageDataFlow',
+    label: edge.sourceAlias,
+    labelBgPadding: edge.sourceAlias ? [6, 3] : undefined,
+    labelBgBorderRadius: edge.sourceAlias ? 6 : undefined,
     animated: false,
     data: {
       lineageEdge: edge,

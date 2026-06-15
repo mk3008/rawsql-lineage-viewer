@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, Copy, Database, Eye, EyeOff, FileJson2, GitBranch, Table2 } from 'lucide-react';
+import { Check, Copy, Database, Eye, EyeOff, FileJson2, GitBranch, Table2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 
 const iconByType = {
@@ -49,7 +49,12 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
         </div>
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
-        <CommentBubble comments={node.comments} cteExecutableSql={node.cteExecutableSql} variant="node" />
+        <CommentBubble
+          comments={node.comments}
+          cteExecutableSql={node.cteExecutableSql}
+          onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
+          variant="node"
+        />
       ) : null}
       {columnsVisible ? (
         <div className="lineage-node-body">
@@ -72,7 +77,12 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                     {column.name}
                   </button>
                   {isCommentSelected && (column.comments?.length || column.expressionSql) ? (
-                    <CommentBubble comments={column.comments} expressionSql={column.expressionSql} variant="column" />
+                    <CommentBubble
+                      comments={column.comments}
+                      expressionSql={column.expressionSql}
+                      onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
+                      variant="column"
+                    />
                   ) : null}
                 </div>
               );
@@ -91,11 +101,13 @@ function CommentBubble({
   comments,
   expressionSql,
   cteExecutableSql,
+  onClose,
   variant,
 }: {
   comments?: string[];
   expressionSql?: string;
   cteExecutableSql?: string;
+  onClose?: () => void;
   variant: 'column' | 'node';
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -121,6 +133,17 @@ function CommentBubble({
       className={`lineage-comment-bubble lineage-comment-bubble-${variant} ${cteExecutableSql ? 'lineage-comment-bubble-has-sql' : ''} nodrag`}
       data-testid="lineage-comment"
     >
+      <button
+        aria-label="Close comment"
+        className="lineage-comment-close nodrag"
+        type="button"
+        onClick={(event) => {
+          event.stopPropagation();
+          onClose?.();
+        }}
+      >
+        <X size={12} aria-hidden="true" />
+      </button>
       {comments && comments.length > 0 ? (
         <div className="lineage-comment-section">
           <div className="lineage-comment-label">Comment</div>

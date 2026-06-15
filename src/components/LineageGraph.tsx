@@ -1,4 +1,15 @@
-import { Background, Controls, MiniMap, ReactFlow, ReactFlowProvider, useEdgesState, useNodesState } from '@xyflow/react';
+import {
+  Background,
+  BaseEdge,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  ReactFlowProvider,
+  getBezierPath,
+  useEdgesState,
+  useNodesState,
+  type EdgeProps,
+} from '@xyflow/react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
@@ -7,6 +18,10 @@ import { LineageNodeCard } from './LineageNodeCard';
 
 const nodeTypes = {
   lineageNode: LineageNodeCard,
+};
+
+const edgeTypes = {
+  lineageDataFlow: LineageDataFlowEdge,
 };
 
 interface SelectedColumn {
@@ -21,6 +36,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
+  const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const allColumnsHidden = hiddenColumnNodeIds.size === lineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -44,10 +60,12 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   }, [lineage.nodes]);
   const selectNode = useCallback((nodeId: string) => {
     setSelectedColumn(null);
+    setDismissedCommentTargetIds(new Set());
     setSelectedNodeCommentTargetId((current) => (current === nodeCommentTargetId(nodeId) ? null : nodeCommentTargetId(nodeId)));
   }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     setSelectedNodeCommentTargetId(null);
+    setDismissedCommentTargetIds(new Set());
     setSelectedColumn((current) =>
       current?.columnId === column.id
         ? null
@@ -58,6 +76,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           },
     );
   }, []);
+  const closeComment = useCallback((targetId: string) => {
+    setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
+  }, []);
   const columnHighlights = useMemo(
     () =>
       selectedColumn
@@ -67,15 +88,29 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   );
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
-      return new Set([
+      const targetIds = new Set([
         columnCommentTargetId(selectedColumn.columnId),
         ...[...columnHighlights.highlightedColumnIds].map(columnCommentTargetId),
         ...[...columnHighlights.sourceColumnIds].map(columnCommentTargetId),
       ]);
+      for (const dismissedTargetId of dismissedCommentTargetIds) {
+        targetIds.delete(dismissedTargetId);
+      }
+      return targetIds;
     }
 
-    return selectedNodeCommentTargetId ? new Set([selectedNodeCommentTargetId]) : new Set<string>();
-  }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn, selectedNodeCommentTargetId]);
+    if (selectedNodeCommentTargetId && !dismissedCommentTargetIds.has(selectedNodeCommentTargetId)) {
+      return new Set([selectedNodeCommentTargetId]);
+    }
+
+    return new Set<string>();
+  }, [
+    columnHighlights.highlightedColumnIds,
+    columnHighlights.sourceColumnIds,
+    dismissedCommentTargetIds,
+    selectedColumn,
+    selectedNodeCommentTargetId,
+  ]);
   const graphNodes = useMemo(
     () =>
       graph.nodes.map((node) => ({
@@ -91,6 +126,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           selectedCommentTargetIds,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           sourceColumnIds: columnHighlights.sourceColumnIds,
+          onCommentClose: closeComment,
         },
       })),
     [
@@ -101,6 +137,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       hiddenColumnNodeIds,
       selectNode,
       selectColumn,
+      closeComment,
       selectedColumn?.columnId,
       selectedCommentTargetIds,
       toggleColumns,
@@ -169,6 +206,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   useEffect(() => {
     setSelectedColumn(null);
     setSelectedNodeCommentTargetId(null);
+    setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(new Set());
   }, [lineage]);
 
@@ -183,6 +221,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           nodes={nodes}
           edges={edges}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           nodesDraggable
@@ -313,4 +352,42 @@ export function nodeCommentTargetId(nodeId: string) {
 
 export function columnCommentTargetId(columnId: string) {
   return `column:${columnId}`;
+}
+
+function LineageDataFlowEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  markerEnd,
+  style,
+  label,
+  labelBgPadding,
+  labelBgBorderRadius,
+}: EdgeProps) {
+  const [edgePath, labelX, labelY] = getBezierPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+
+  return (
+    <BaseEdge
+      id={id}
+      path={edgePath}
+      markerEnd={markerEnd}
+      style={style}
+      label={label}
+      labelX={labelX}
+      labelY={labelY}
+      labelBgPadding={labelBgPadding}
+      labelBgBorderRadius={labelBgBorderRadius}
+    />
+  );
 }

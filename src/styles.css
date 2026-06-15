@@ -506,6 +506,31 @@ textarea {
   white-space: normal;
 }
 
+.lineage-comment-close {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.lineage-comment-close:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.lineage-comment-close + .lineage-comment-section {
+  padding-right: 20px;
+}
+
 .lineage-comment-bubble-has-sql {
   max-width: min(600px, 70vw);
 }
@@ -653,10 +678,12 @@ textarea {
 
 .react-flow__edge-textbg {
   fill: #fff;
+  stroke: #bbf7d0;
+  stroke-width: 1px;
 }
 
 .react-flow__edge-text {
-  fill: #334155;
+  fill: #047857;
   font-size: 11px;
   font-weight: 750;
 }

@@ -22,7 +22,11 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
 
   const outerDataFlowStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
-  await expect(page.locator('.react-flow__edge-text')).toHaveCount(0);
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'oi' })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ot' })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ps' })).toBeVisible();
+  await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
@@ -89,6 +93,8 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await expect
     .poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? ''))
     .toContain('from "orders" as "o"');
+  await recentOrdersNode.getByRole('button', { name: 'Close comment' }).click();
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toHaveCount(0);
 
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
@@ -147,6 +153,9 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputNode.getByTestId('lineage-comment')).toContainText('coalesce("ot"."total_amount", 0)');
   await expect(orderTotalsNode.getByTestId('lineage-comment')).toContainText('Total ordered amount per customer.');
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');
+  await outputNode.getByRole('button', { name: 'Close comment' }).click();
+  await expect(outputNode.getByTestId('lineage-comment')).toHaveCount(0);
+  await expect(orderTotalsNode.getByTestId('lineage-comment')).toContainText('Total ordered amount per customer.');
 
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);

@@ -11,6 +11,7 @@ export type GraphNodeData = {
   highlightedColumnIds?: Set<string>;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;
+  onCommentClose?: (targetId: string) => void;
 };
 
 export type GraphEdgeData = {

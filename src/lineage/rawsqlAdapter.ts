@@ -115,6 +115,7 @@ interface CollectQueryEdgesOptions {
 interface ResolvedSource {
   node: LineageNode;
   aliases: string[];
+  sourceAlias?: string;
 }
 
 function collectQueryEdges(options: CollectQueryEdgesOptions): void {
@@ -141,6 +142,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         source: source.node.id,
         target: targetId,
         type: 'dataFlow',
+        sourceAlias: source.sourceAlias,
         confidence: 'high',
       });
     }
@@ -154,6 +156,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         target: targetId,
         type: 'dataFlow',
         label: normalizeJoinLabel(join),
+        sourceAlias: joinedSource.sourceAlias,
         joinType: normalizeJoinType(join),
         confidence: 'high',
       });
@@ -163,6 +166,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         target: targetId,
         type: 'join',
         label: normalizeJoinLabel(join),
+        sourceAlias: joinedSource.sourceAlias,
         joinType: normalizeJoinType(join),
         confidence: 'high',
       });
@@ -264,17 +268,19 @@ function resolveSourceExpression(
 
   if (datasource instanceof TableSource) {
     const sourceName = datasource.getSourceName();
-    const alias = source.getAliasName();
+    const alias = source.aliasExpression ? source.getAliasName() : null;
     const aliases = alias ? [alias, sourceName] : [sourceName];
     if (cteNames.has(sourceName)) {
       return {
         node: nodes.get(toCteId(sourceName)) ?? createCteNode(sourceName, nodes),
         aliases,
+        sourceAlias: alias ?? undefined,
       };
     }
     return {
       node: createTableNode(sourceName, nodes),
       aliases,
+      sourceAlias: alias ?? undefined,
     };
   }
 
@@ -302,6 +308,7 @@ function resolveSourceExpression(
     return {
       node,
       aliases: [alias],
+      sourceAlias: alias,
     };
   }
 
@@ -321,9 +328,11 @@ function resolveSourceExpression(
 
   if (datasource instanceof FunctionSource) {
     const name = datasource.name instanceof Object && 'name' in datasource.name ? datasource.name.name : String(datasource.name);
+    const alias = source.aliasExpression ? source.getAliasName() : null;
     return {
       node: createDerivedNode(`function_${sanitizeId(name)}`, name, nodes),
-      aliases: [source.getAliasName() ?? name],
+      aliases: [alias ?? name],
+      sourceAlias: alias ?? undefined,
     };
   }
 
@@ -334,6 +343,7 @@ function resolveSourceExpression(
   return {
     node: createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes),
     aliases: [source.getAliasName() ?? 'unknown source'],
+    sourceAlias: source.getAliasName() ?? undefined,
   };
 }
 
