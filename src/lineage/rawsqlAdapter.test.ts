@@ -183,6 +183,19 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('records executable SQL for CTEs with required dependencies', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+    const recentOrdersSql = nodeById.get('cte_recent_orders')?.cteExecutableSql?.toLowerCase();
+    const orderTotalsSql = nodeById.get('cte_order_totals')?.cteExecutableSql?.toLowerCase();
+    const paymentSummarySql = nodeById.get('cte_payment_summary')?.cteExecutableSql?.toLowerCase();
+
+    expect(recentOrdersSql).toContain('from "orders" as "o"');
+    expect(orderTotalsSql).toContain('with recent_orders as');
+    expect(orderTotalsSql).toContain('sum("amount") as "total_amount"');
+    expect(paymentSummarySql).toContain('from "payments" as "p"');
+  });
+
   it('uses comments before the inner CTE select query as CTE comments', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (

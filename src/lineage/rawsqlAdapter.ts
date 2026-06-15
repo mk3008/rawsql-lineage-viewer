@@ -1,6 +1,7 @@
 import {
   BinarySelectQuery,
   CTECollector,
+  CTEQueryDecomposer,
   ColumnReference,
   Formatter,
   FunctionSource,
@@ -43,6 +44,8 @@ export function analyzeSql(sql: string): ParserAdapterResult {
 
   const ctes = new CTECollector().collect(query);
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
+  const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
+  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings);
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -51,7 +54,8 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       type: 'cte',
       label: cteName,
       columns: [],
-      comments: extractCteComments(cte),
+      comments: cteCommentsByName.get(cteName),
+      cteExecutableSql: cteExecutableSqlByName.get(cteName),
       materializationHint: normalizeMaterializationHint(cte.materialized),
     });
   }
@@ -209,6 +213,43 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
   });
   collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
   return id;
+}
+
+function collectCteExecutableSql(query: unknown, ctes: CommonTable[], warnings: AnalysisWarning[]): Map<string, string> {
+  const sqlByName = new Map<string, string>();
+  if (ctes.length === 0) {
+    return sqlByName;
+  }
+
+  if (!(query instanceof SimpleSelectQuery)) {
+    warnings.push({
+      code: 'cte-executable-sql-unsupported-query-kind',
+      message: 'Executable CTE SQL extraction is only available for simple SELECT queries in the MVP adapter.',
+    });
+    return sqlByName;
+  }
+
+  const decomposer = new CTEQueryDecomposer();
+  for (const cte of ctes) {
+    const cteName = cte.getSourceAliasName();
+    try {
+      const result = decomposer.extractCTE(query, cteName);
+      sqlByName.set(cteName, result.executableSql.trim());
+      for (const warning of result.warnings) {
+        warnings.push({
+          code: 'cte-executable-sql-warning',
+          message: `${cteName}: ${warning}`,
+        });
+      }
+    } catch (error) {
+      warnings.push({
+        code: 'cte-executable-sql-failed',
+        message: `Could not extract executable SQL for CTE ${cteName}: ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
+  }
+
+  return sqlByName;
 }
 
 function resolveSourceExpression(

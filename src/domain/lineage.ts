@@ -21,6 +21,7 @@ export interface LineageNode {
   label: string;
   columns: LineageColumn[];
   comments?: string[];
+  cteExecutableSql?: string;
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
 }
 

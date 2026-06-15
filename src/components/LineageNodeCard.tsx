@@ -1,5 +1,6 @@
+import { useState, type MouseEvent } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Database, Eye, EyeOff, FileJson2, GitBranch, Table2 } from 'lucide-react';
+import { Check, Copy, Database, Eye, EyeOff, FileJson2, GitBranch, Table2 } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 
 const iconByType = {
@@ -47,8 +48,8 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <span className="lineage-node-kind">{node.type}</span>
         </div>
       </div>
-      {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && node.comments && node.comments.length > 0 ? (
-        <CommentBubble comments={node.comments} variant="node" />
+      {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
+        <CommentBubble comments={node.comments} cteExecutableSql={node.cteExecutableSql} variant="node" />
       ) : null}
       {columnsVisible ? (
         <div className="lineage-node-body">
@@ -86,9 +87,40 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   );
 }
 
-function CommentBubble({ comments, expressionSql, variant }: { comments?: string[]; expressionSql?: string; variant: 'column' | 'node' }) {
+function CommentBubble({
+  comments,
+  expressionSql,
+  cteExecutableSql,
+  variant,
+}: {
+  comments?: string[];
+  expressionSql?: string;
+  cteExecutableSql?: string;
+  variant: 'column' | 'node';
+}) {
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  const copyCteSql = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.stopPropagation();
+    if (!cteExecutableSql) {
+      return;
+    }
+
+    try {
+      await copyText(cteExecutableSql);
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1600);
+    } catch {
+      setCopyState('failed');
+      window.setTimeout(() => setCopyState('idle'), 2200);
+    }
+  };
+
   return (
-    <div className={`lineage-comment-bubble lineage-comment-bubble-${variant} nodrag`} data-testid="lineage-comment">
+    <div
+      className={`lineage-comment-bubble lineage-comment-bubble-${variant} ${cteExecutableSql ? 'lineage-comment-bubble-has-sql' : ''} nodrag`}
+      data-testid="lineage-comment"
+    >
       {comments && comments.length > 0 ? (
         <div className="lineage-comment-section">
           <div className="lineage-comment-label">Comment</div>
@@ -103,8 +135,47 @@ function CommentBubble({ comments, expressionSql, variant }: { comments?: string
           <code className="lineage-expression">{expressionSql}</code>
         </div>
       ) : null}
+      {cteExecutableSql ? (
+        <div className="lineage-comment-section">
+          <div className="lineage-comment-heading">
+            <div className="lineage-comment-label">CTE SQL</div>
+            <button className="lineage-copy-button nodrag" type="button" onClick={copyCteSql}>
+              {copyState === 'copied' ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+              {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
+            </button>
+          </div>
+          <pre className="lineage-sql-preview">
+            <code>{cteExecutableSql}</code>
+          </pre>
+        </div>
+      ) : null}
     </div>
   );
+}
+
+async function copyText(text: string) {
+  if (navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return;
+    } catch {
+      // Fall back for embedded browsers or permission-limited contexts.
+    }
+  }
+
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', 'true');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+  const copied = document.execCommand('copy');
+  document.body.removeChild(textarea);
+  if (!copied) {
+    throw new Error('Clipboard copy failed.');
+  }
 }
 
 function nodeCommentTargetId(nodeId: string) {

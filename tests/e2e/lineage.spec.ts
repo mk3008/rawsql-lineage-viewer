@@ -67,12 +67,28 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
 });
 
 test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: {
+        writeText: async (text: string) => {
+          (window as Window & { __copiedText?: string }).__copiedText = text;
+        },
+      },
+    });
+  });
   await page.goto('/');
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Recent order line items used as the base sales fact.');
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('CTE SQL');
+  await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('from "orders" as "o"');
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toHaveCSS('position', 'absolute');
+  await recentOrdersNode.getByRole('button', { name: 'Copy SQL' }).click();
+  await expect(recentOrdersNode.getByRole('button', { name: 'Copied' })).toBeVisible();
+  await expect
+    .poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? ''))
+    .toContain('from "orders" as "o"');
 
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(recentOrdersNode.getByTestId('lineage-comment')).toContainText('Extended line amount.');

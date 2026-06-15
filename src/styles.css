@@ -506,6 +506,10 @@ textarea {
   white-space: normal;
 }
 
+.lineage-comment-bubble-has-sql {
+  max-width: min(600px, 70vw);
+}
+
 .lineage-comment-section + .lineage-comment-section {
   margin-top: 8px;
   padding-top: 7px;
@@ -520,6 +524,37 @@ textarea {
   text-transform: uppercase;
 }
 
+.lineage-comment-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.lineage-comment-heading .lineage-comment-label {
+  margin-bottom: 0;
+}
+
+.lineage-copy-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 24px;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.lineage-copy-button:hover {
+  background: #dbeafe;
+}
+
 .lineage-expression {
   display: block;
   overflow-wrap: anywhere;
@@ -530,6 +565,22 @@ textarea {
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
   font-weight: 700;
+}
+
+.lineage-sql-preview {
+  max-width: 560px;
+  max-height: 260px;
+  margin: 0;
+  overflow: auto;
+  border-radius: 6px;
+  padding: 8px 9px;
+  background: #0f172a;
+  color: #e2e8f0;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .lineage-comment-bubble::before {
