@@ -21,8 +21,8 @@ describe('buildGraphModel', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const graph = buildGraphModel(lineage, { dataFlow: true, join: true });
 
-    const innerJoin = graph.edges.find((edge) => edge.id === 'table_orders-table_order_items-JOIN');
-    const outerJoin = graph.edges.find((edge) => edge.id === 'table_customers-cte_order_totals-LEFT_JOIN');
+    const innerJoin = graph.edges.find((edge) => edge.id === 'table_order_items-cte_recent_orders-JOIN');
+    const outerJoin = graph.edges.find((edge) => edge.id === 'cte_order_totals-main_output-LEFT_JOIN');
     const preservedDataFlow = graph.edges.find((edge) => edge.id === 'table_customers-main_output');
     const outerDataFlow = graph.edges.find((edge) => edge.id === 'cte_order_totals-main_output');
     const innerDataFlow = graph.edges.find((edge) => edge.id === 'table_order_items-cte_recent_orders');

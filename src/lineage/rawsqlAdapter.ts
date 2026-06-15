@@ -1,7 +1,6 @@
 import {
   BinarySelectQuery,
   CTECollector,
-  ColumnReference,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
@@ -139,7 +138,6 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
 
     for (const join of joins) {
       const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
-      const joinBaseSource = findJoinBaseSource(join, joinedSource, sources) ?? sources[sources.length - 1];
       sources.push(joinedSource);
 
       addLineageEdge(edges, {
@@ -152,8 +150,8 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       });
 
       addLineageEdge(edges, {
-        source: joinBaseSource.node.id,
-        target: joinedSource.node.id,
+        source: joinedSource.node.id,
+        target: targetId,
         type: 'join',
         label: normalizeJoinLabel(join),
         joinType: normalizeJoinType(join),
@@ -288,49 +286,6 @@ function resolveSourceExpression(
     node: createDerivedNode(`derived_unknown_${nodes.size}`, 'unknown source', nodes),
     aliases: [source.getAliasName() ?? 'unknown source'],
   };
-}
-
-function findJoinBaseSource(join: JoinClause, joinedSource: ResolvedSource, existingSources: ResolvedSource[]): ResolvedSource | null {
-  const conditionNamespaces = collectConditionNamespaces(join.condition);
-  if (conditionNamespaces.size === 0) {
-    return null;
-  }
-
-  const joinedAliases = new Set(joinedSource.aliases);
-  return existingSources.find((source) =>
-    source.aliases.some((alias) => conditionNamespaces.has(alias) && !joinedAliases.has(alias)),
-  ) ?? null;
-}
-
-function collectConditionNamespaces(value: unknown): Set<string> {
-  const namespaces = new Set<string>();
-  const visited = new Set<unknown>();
-
-  const visit = (current: unknown): void => {
-    if (!current || typeof current !== 'object' || visited.has(current)) {
-      return;
-    }
-    visited.add(current);
-
-    if (current instanceof ColumnReference) {
-      const namespace = current.getNamespace();
-      if (namespace) {
-        namespaces.add(namespace);
-      }
-      return;
-    }
-
-    for (const nested of Object.values(current)) {
-      if (Array.isArray(nested)) {
-        nested.forEach(visit);
-      } else {
-        visit(nested);
-      }
-    }
-  };
-
-  visit(value);
-  return namespaces;
 }
 
 function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {

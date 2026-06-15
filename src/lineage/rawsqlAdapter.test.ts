@@ -2,6 +2,64 @@ import { describe, expect, it } from 'vitest';
 import { salesSummarySql } from '../examples/salesSummarySql';
 import { analyzeSql } from './rawsqlAdapter';
 
+const heavySelectSql = `with order_base as (
+  select o.id, o.customer_id, o.status, o.total_amount, o.created_at
+  from orders o
+  where o.created_at >= :report_from
+),
+customer_order_summary as (
+  select
+    c.id customer_id,
+    c.name,
+    count(ob.id) order_count,
+    sum(case when ob.status = :refunded_status then 0 else ob.total_amount end) gross_amount
+  from customers c
+  left join order_base ob on ob.customer_id = c.id
+  where c.deleted_at is null
+  group by c.id, c.name
+),
+support_pressure as (
+  select st.customer_id, count(st.id) open_ticket_count
+  from support_tickets st
+  where st.status <> 'closed'
+  group by st.customer_id
+),
+ranked_customers as (
+  select
+    cos.customer_id,
+    cos.name,
+    cos.order_count,
+    cos.gross_amount,
+    coalesce(sp.open_ticket_count, 0) open_ticket_count,
+    row_number() over(partition by cos.name order by cos.gross_amount desc) tier_rank
+  from customer_order_summary cos
+  left join support_pressure sp on sp.customer_id = cos.customer_id
+)
+select
+  rc.customer_id,
+  rc.name,
+  (
+    select count(*)
+    from orders o2
+    where o2.customer_id = rc.customer_id
+  ) recent_order_count,
+  p.name favorite_product
+from ranked_customers rc
+left join customer_favorites cf on cf.customer_id = rc.customer_id and cf.is_active = true
+left join products p on p.id = cf.product_id
+where exists (
+  select 1
+  from customer_favorites cf2
+  where cf2.customer_id = rc.customer_id and cf2.is_active = true
+)
+order by rc.customer_id`;
+
+function edgesTargetingTables(sql: string) {
+  const { lineage } = analyzeSql(sql);
+  const tableNodeIds = new Set(lineage.nodes.filter((node) => node.type === 'table').map((node) => node.id));
+  return lineage.edges.filter((edge) => tableNodeIds.has(edge.target));
+}
+
 describe('rawsqlAdapter', () => {
   it('builds a lineage model from rawsql-ts AST without Mermaid parsing', () => {
     const { lineage } = analyzeSql(salesSummarySql);
@@ -21,7 +79,7 @@ describe('rawsqlAdapter', () => {
     );
   });
 
-  it('separates source-to-result data flow from source-to-source joins', () => {
+  it('separates source-to-result data flow from source-to-result joins', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const edgeIds = lineage.edges.map((edge) => edge.id);
 
@@ -39,9 +97,9 @@ describe('rawsqlAdapter', () => {
 
     expect(edgeIds).toEqual(
       expect.arrayContaining([
-        'table_orders-table_order_items-JOIN',
-        'table_customers-cte_order_totals-LEFT_JOIN',
-        'table_customers-cte_payment_summary-LEFT_JOIN',
+        'table_order_items-cte_recent_orders-JOIN',
+        'cte_order_totals-main_output-LEFT_JOIN',
+        'cte_payment_summary-main_output-LEFT_JOIN',
       ]),
     );
 
@@ -63,11 +121,11 @@ describe('rawsqlAdapter', () => {
       joinType: 'left',
     });
     expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinType).toBeUndefined();
-    expect(joinEdges.find((edge) => edge.id === 'table_orders-table_order_items-JOIN')?.joinType).toBe('inner');
-    expect(joinEdges.find((edge) => edge.id === 'table_customers-cte_order_totals-LEFT_JOIN')?.joinType).toBe('left');
+    expect(joinEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders-JOIN')?.joinType).toBe('inner');
+    expect(joinEdges.find((edge) => edge.id === 'cte_order_totals-main_output-LEFT_JOIN')?.joinType).toBe('left');
   });
 
-  it('uses join condition aliases to connect joins to the referenced base source', () => {
+  it('routes join edges toward the query result instead of into joined sources', () => {
     const sql = `
       WITH order_totals AS (
         SELECT customer_id, SUM(amount) AS total_amount
@@ -90,20 +148,24 @@ describe('rawsqlAdapter', () => {
     expect(lineage.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          id: 'table_customers-cte_order_totals-LEFT_JOIN',
-          source: 'table_customers',
-          target: 'cte_order_totals',
+          id: 'cte_order_totals-main_output-LEFT_JOIN',
+          source: 'cte_order_totals',
+          target: 'main_output',
           type: 'join',
           joinType: 'left',
         }),
         expect.objectContaining({
-          id: 'table_customers-cte_payment_summary-LEFT_JOIN',
-          source: 'table_customers',
-          target: 'cte_payment_summary',
+          id: 'cte_payment_summary-main_output-LEFT_JOIN',
+          source: 'cte_payment_summary',
+          target: 'main_output',
           type: 'join',
           joinType: 'left',
         }),
       ]),
     );
+  });
+
+  it('does not target physical tables in SELECT lineage edges, even for heavy nested queries', () => {
+    expect(edgesTargetingTables(heavySelectSql)).toEqual([]);
   });
 });
