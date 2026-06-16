@@ -191,8 +191,9 @@ function CommentBubble({
       }
 
       const anchorRect = anchor.getBoundingClientRect();
-      if (!isAnchorVisible(anchorRect, anchor)) {
-        setPosition((current) => (current?.visible === false ? current : { left: 0, top: 0, visible: false }));
+      const visibleRect = getVisibleGraphRect(anchor);
+      if (!visibleRect || !rectContains(visibleRect, anchorRect)) {
+        setPosition((current) => (current?.visible === false ? current : { left: current?.left ?? 0, top: current?.top ?? 0, visible: false }));
         animationFrame = window.requestAnimationFrame(updatePosition);
         return;
       }
@@ -200,14 +201,21 @@ function CommentBubble({
       const bubbleRect = bubbleRef.current?.getBoundingClientRect();
       const bubbleWidth = bubbleRect?.width ?? 320;
       const bubbleHeight = bubbleRect?.height ?? 120;
-      const nextLeft = Math.min(anchorRect.right + 10, window.innerWidth - bubbleWidth - 12);
+      const nextLeft = anchorRect.right + 10;
       const preferredTop = variant === 'node' ? anchorRect.top : anchorRect.top - 4;
-      const nextTop = Math.max(8, Math.min(preferredTop, window.innerHeight - bubbleHeight - 8));
+      const nextTop = preferredTop;
+      const nextBubbleRect = {
+        bottom: nextTop + bubbleHeight,
+        left: nextLeft,
+        right: nextLeft + bubbleWidth,
+        top: nextTop,
+      };
+      const nextVisible = rectContains(visibleRect, nextBubbleRect);
 
       setPosition((current) =>
-        current?.visible && Math.abs(current.left - nextLeft) < 0.5 && Math.abs(current.top - nextTop) < 0.5
+        current?.visible === nextVisible && Math.abs(current.left - nextLeft) < 0.5 && Math.abs(current.top - nextTop) < 0.5
           ? current
-          : { left: nextLeft, top: nextTop, visible: true },
+          : { left: nextLeft, top: nextTop, visible: nextVisible },
       );
       animationFrame = window.requestAnimationFrame(updatePosition);
     };
@@ -233,7 +241,10 @@ function CommentBubble({
   };
 
   const bubbleStyle: CSSProperties & { '--lineage-comment-scale': string } = {
-    ...(position?.visible ? { left: position.left, top: position.top } : { display: 'none', pointerEvents: 'none' }),
+    left: position?.left ?? 0,
+    top: position?.top ?? 0,
+    visibility: position?.visible ? 'visible' : 'hidden',
+    pointerEvents: position?.visible ? 'auto' : 'none',
     '--lineage-comment-scale': String(viewportZoom),
     zIndex: isActive ? 100001 : 100000,
   };
@@ -307,7 +318,7 @@ function CommentBubble({
 
 type RectLike = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>;
 
-function isAnchorVisible(anchorRect: RectLike, anchor: HTMLElement) {
+function getVisibleGraphRect(anchor: HTMLElement) {
   const graphShellRect = anchor.closest('.graph-shell')?.getBoundingClientRect();
   const viewportRect = {
     bottom: window.innerHeight,
@@ -315,8 +326,7 @@ function isAnchorVisible(anchorRect: RectLike, anchor: HTMLElement) {
     right: window.innerWidth,
     top: 0,
   };
-  const visibleRect = graphShellRect ? intersectRects(graphShellRect, viewportRect) : viewportRect;
-  return visibleRect ? rectContains(visibleRect, anchorRect) : false;
+  return graphShellRect ? intersectRects(graphShellRect, viewportRect) : viewportRect;
 }
 
 function intersectRects(a: RectLike, b: RectLike): RectLike | null {

@@ -39,6 +39,10 @@ test('can clear the SQL editor on mobile before entering another query', async (
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
+  await page.getByRole('button', { name: 'Hide SQL panel' }).click();
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).not.toBeVisible();
+  await page.getByRole('button', { name: 'Show SQL panel' }).click();
+
   const editor = page.getByRole('textbox', { name: 'SQL editor' });
   await expect(editor).toHaveValue(/recent_orders AS/);
 
@@ -210,6 +214,54 @@ test('hides column callouts when any part of the anchor column is clipped outsid
         const isPartiallyClipped = rect.left < graph.left || rect.right > graph.right || rect.top < graph.top || rect.bottom > graph.bottom;
         const stillPartlyVisible = rect.right > graph.left && rect.left < graph.right && rect.bottom > graph.top && rect.top < graph.bottom;
         return isPartiallyClipped && stillPartlyVisible;
+      }),
+    )
+    .toBe(true);
+  await expect(bubble).toBeHidden();
+});
+
+test('hides column callouts when the bubble would be clipped outside the graph viewport', async ({ page }) => {
+  await page.goto('/');
+
+  const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
+  await expect(paymentSummaryNode).toBeVisible();
+  await paymentSummaryNode.getByRole('button', { name: 'paid_amount', exact: true }).click();
+
+  const bubble = page.getByTestId('lineage-comment').filter({ hasText: 'sum(p.amount)' });
+  await expect(bubble).toBeVisible();
+
+  const nodeBox = await paymentSummaryNode.boundingBox();
+  expect(nodeBox).not.toBeNull();
+  const graphBox = await page.getByTestId('lineage-graph').boundingBox();
+  expect(graphBox).not.toBeNull();
+  const dragEndX = graphBox!.x + graphBox!.width - nodeBox!.width - 8;
+  await page.mouse.move(nodeBox!.x + 28, nodeBox!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(dragEndX + 28, nodeBox!.y + 20, { steps: 12 });
+  await page.mouse.up();
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const graph = document.querySelector('[data-testid="lineage-graph"]')?.getBoundingClientRect();
+        const node = document.querySelector('[data-testid="rf__node-cte_payment_summary"]');
+        const column = Array.from(node?.querySelectorAll('.lineage-column') ?? []).find(
+          (element) => element.textContent?.trim() === 'paid_amount',
+        );
+        const bubbleElement = Array.from(document.querySelectorAll('[data-testid="lineage-comment"]')).find((element) =>
+          element.textContent?.includes('sum(p.amount)'),
+        );
+        if (!graph || !column || !bubbleElement) {
+          return false;
+        }
+
+        const columnRect = column.getBoundingClientRect();
+        const bubbleRect = bubbleElement.getBoundingClientRect();
+        const columnFullyVisible =
+          columnRect.left >= graph.left && columnRect.right <= graph.right && columnRect.top >= graph.top && columnRect.bottom <= graph.bottom;
+        const bubbleClipped =
+          bubbleRect.left < graph.left || bubbleRect.right > graph.right || bubbleRect.top < graph.top || bubbleRect.bottom > graph.bottom;
+        return columnFullyVisible && bubbleClipped;
       }),
     )
     .toBe(true);

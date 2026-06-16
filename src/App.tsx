@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Code2, Eraser, GitBranch, Menu, Play, Share2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Code2, Eraser, GitBranch, PanelLeftClose, PanelLeftOpen, Play, Share2 } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
@@ -53,8 +53,14 @@ export function App() {
     <div className="app-shell">
       <header className="app-header">
         <div className="brand">
-          <button className="icon-button" type="button" onClick={() => setIsPanelOpen((value) => !value)} aria-label="Toggle SQL panel">
-            {isPanelOpen ? <X size={18} /> : <Menu size={18} />}
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setIsPanelOpen((value) => !value)}
+            aria-label={isPanelOpen ? 'Hide SQL panel' : 'Show SQL panel'}
+            title={isPanelOpen ? 'Hide SQL panel' : 'Show SQL panel'}
+          >
+            {isPanelOpen ? <PanelLeftClose size={18} /> : <PanelLeftOpen size={18} />}
           </button>
           <div>
             <h1>SQL Lineage Viewer</h1>
