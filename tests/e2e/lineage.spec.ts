@@ -43,7 +43,12 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
   const passthroughToggle = page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' });
   await expect(passthroughToggle).toBeVisible();
-  await expect(passthroughToggle).toHaveCSS('opacity', '0.34');
+  await expect(passthroughToggle).toHaveCSS('opacity', '0.48');
+  const recentOrdersBox = await page.getByTestId('rf__node-cte_recent_orders').boundingBox();
+  const passthroughToggleBox = await passthroughToggle.boundingBox();
+  expect(recentOrdersBox).not.toBeNull();
+  expect(passthroughToggleBox).not.toBeNull();
+  expect(passthroughToggleBox!.y).toBeLessThan(recentOrdersBox!.y);
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');

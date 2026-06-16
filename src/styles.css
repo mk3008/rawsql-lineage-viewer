@@ -558,12 +558,12 @@ textarea {
 
 .lineage-node-action-buttons {
   position: absolute;
-  top: 50%;
-  right: 56px;
+  top: -34px;
+  right: 0;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  transform: translateY(-50%);
+  z-index: 2;
 }
 
 .node-icon-button {
@@ -575,11 +575,12 @@ textarea {
   border: 1px solid rgb(15 23 42 / 8%);
   border-radius: 6px;
   padding: 0;
-  background: rgb(255 255 255 / 28%);
+  background: rgb(255 255 255 / 62%);
   color: #334155;
   cursor: pointer;
-  opacity: 0.34;
+  opacity: 0.48;
   overflow: hidden;
+  backdrop-filter: blur(4px);
   transition:
     background-color 120ms ease,
     border-color 120ms ease,
