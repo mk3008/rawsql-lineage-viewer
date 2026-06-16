@@ -551,6 +551,93 @@ textarea {
   gap: 8px;
 }
 
+.lineage-inspector-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  border-radius: 7px;
+  padding: 3px;
+  background: #f1f5f9;
+}
+
+.lineage-inspector-tabs button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 6px 8px;
+  background: transparent;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.lineage-inspector-tabs button span {
+  color: #94a3b8;
+  font-size: 10px;
+}
+
+.lineage-inspector-tabs button:hover {
+  color: #1d4ed8;
+}
+
+.lineage-inspector-tabs .lineage-inspector-tab-active {
+  border-color: #dbeafe;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.lineage-inspector-tab-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.lineage-inspector-tab-panel .lineage-inspector-section {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+
+.lineage-inspector-source-list {
+  display: grid;
+  gap: 8px;
+}
+
+.lineage-inspector-source-group {
+  display: grid;
+  gap: 7px;
+  border: 1px solid #e4ebf5;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.lineage-inspector-source-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.lineage-inspector-source-columns {
+  display: grid;
+  gap: 6px;
+  padding-left: 7px;
+  border-left: 2px solid #e8edf5;
+}
+
+.lineage-inspector-source-column {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .lineage-inspector-rule-list {
   display: grid;
   gap: 8px;

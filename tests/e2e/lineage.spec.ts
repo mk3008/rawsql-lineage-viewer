@@ -577,6 +577,8 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('total_amount');
   await expect(inspector).toContainText('Selected');
   await expect(inspector).toContainText('Sources');
+  await expect(inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('quantity');
+  await expect(inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('unit_price');
   await expect(inspector).toContainText('Upstream');
   await expect(inspector).toContainText('Upstream ot');
   await expect(inspector).toContainText('Upstream oi');
@@ -585,6 +587,9 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector.locator('.lineage-inspector-section h3', { hasText: 'Expression' })).toHaveCount(0);
   await expect(inspector).toContainText('Total ordered amount per customer.');
   await expect(inspector).toContainText('Extended line amount.');
+  await inspector.getByRole('tab', { name: /Downstream/ }).click();
+  await expect(inspector.getByRole('tab', { name: /Downstream/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(inspector).toContainText('No downstream columns.');
 
   await page.getByRole('tab', { name: 'SQL' }).click();
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).toBeVisible();
@@ -600,12 +605,12 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
 });
 
 test('focuses the graph node when inspector column or table names are clicked', async ({ page }) => {
-  await page.setViewportSize({ width: 1000, height: 720 });
+  await page.setViewportSize({ width: 1400, height: 720 });
   await page.goto('/');
 
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
-  const sourceCard = inspector.locator('.lineage-inspector-column-card').filter({ hasText: 'order_items' }).first();
+  const sourceCard = inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
 
   await sourceCard.getByRole('button', { name: 'order_items' }).click();
   await page.waitForTimeout(550);
@@ -618,6 +623,11 @@ test('focuses the graph node when inspector column or table names are clicked', 
   expect(nodeBox!.x + nodeBox!.width).toBeLessThanOrEqual(graphBox!.x + graphBox!.width);
   expect(nodeBox!.y).toBeGreaterThanOrEqual(graphBox!.y);
   expect(nodeBox!.y + nodeBox!.height).toBeLessThanOrEqual(graphBox!.y + graphBox!.height);
+
+  await page.locator('.react-flow__controls-zoomin').click();
+  await expect(page.getByTestId('graph-zoom')).toContainText('120%');
+  await page.waitForTimeout(450);
+  await expect(page.getByTestId('graph-zoom')).toContainText('120%');
 });
 
 test('records analyzed SQL in the history tab and can reopen it', async ({ page }) => {

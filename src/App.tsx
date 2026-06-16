@@ -210,6 +210,7 @@ export function App() {
           ) : panelTab === 'inspector' ? (
             <LineageInspector
               activeCaseRule={caseRuleSelection}
+              flowDirection={flowDirection}
               onFocusNode={(nodeId) => {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
               }}

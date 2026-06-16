@@ -83,6 +83,7 @@ export function LineageGraph({
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
+  const lastHandledFocusNonceRef = useRef<number | null>(null);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
@@ -384,11 +385,15 @@ export function LineageGraph({
     if (!focusTarget) {
       return;
     }
+    if (lastHandledFocusNonceRef.current === focusTarget.nonce) {
+      return;
+    }
 
     const targetNode = nodes.find((node) => node.id === focusTarget.nodeId);
     if (!targetNode) {
       return;
     }
+    lastHandledFocusNonceRef.current = focusTarget.nonce;
 
     const timeoutId = window.setTimeout(() => {
       const shell = graphShellRef.current;
@@ -399,10 +404,7 @@ export function LineageGraph({
       const shellRect = shell.getBoundingClientRect();
       const width = targetNode.measured?.width ?? targetNode.width ?? 220;
       const height = targetNode.measured?.height ?? targetNode.height ?? 140;
-      const zoom = Math.max(
-        0.35,
-        Math.min(viewportZoom, (shellRect.width - 72) / width, (shellRect.height - 120) / height, 1),
-      );
+      const zoom = viewportZoom;
       const x = shellRect.width / 2 - (targetNode.position.x + width / 2) * zoom;
       const y = shellRect.height / 2 - (targetNode.position.y + height / 2) * zoom;
 
@@ -410,7 +412,7 @@ export function LineageGraph({
     }, 200);
 
     return () => window.clearTimeout(timeoutId);
-  }, [focusTarget, nodes, viewportZoom]);
+  }, [focusTarget?.nodeId, focusTarget?.nonce]);
 
   useEffect(() => {
     setSelectedColumn(null);
@@ -487,11 +489,13 @@ export function LineageGraph({
 
 export function LineageInspector({
   activeCaseRule,
+  flowDirection,
   onFocusNode,
   onSelectCaseRule,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
+  flowDirection: GraphFlowDirection;
   onFocusNode?: (nodeId: string) => void;
   onSelectCaseRule?: (selection: CaseRuleSelection) => void;
   selection: InspectorSelection;
@@ -524,7 +528,13 @@ export function LineageInspector({
       </div>
       {selection ? (
         selection.kind === 'column' ? (
-          <ColumnInspector activeCaseRule={activeCaseRule} onFocusNode={onFocusNode} onSelectCaseRule={onSelectCaseRule} selection={selection} />
+          <ColumnInspector
+            activeCaseRule={activeCaseRule}
+            flowDirection={flowDirection}
+            onFocusNode={onFocusNode}
+            onSelectCaseRule={onSelectCaseRule}
+            selection={selection}
+          />
         ) : (
           <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
         )
@@ -537,15 +547,23 @@ export function LineageInspector({
 
 function ColumnInspector({
   activeCaseRule,
+  flowDirection,
   onFocusNode,
   onSelectCaseRule,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
+  flowDirection: GraphFlowDirection;
   onFocusNode?: (nodeId: string) => void;
   onSelectCaseRule?: (selection: CaseRuleSelection) => void;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
 }) {
+  const defaultTab = flowDirection === 'downstream' ? 'downstream' : 'upstream';
+  const [activeTab, setActiveTab] = useState<'upstream' | 'downstream'>(defaultTab);
+  useEffect(() => {
+    setActiveTab(defaultTab);
+  }, [defaultTab, selection.selected.column.id, selection.selected.node.id]);
+
   return (
     <div className="lineage-inspector-body">
       <section className="lineage-inspector-section">
@@ -554,9 +572,36 @@ function ColumnInspector({
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
       <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
-      <InspectorColumnList emptyText="No unresolved source columns." items={selection.sources} onFocusNode={onFocusNode} title="Sources" />
-      <InspectorUpstreamGroups groups={selection.upstreamGroups} onFocusNode={onFocusNode} />
-      <InspectorColumnList emptyText="No downstream columns." items={selection.downstream} onFocusNode={onFocusNode} title="Downstream" />
+      <InspectorSourceGroups items={selection.sources} onFocusNode={onFocusNode} />
+      <section className="lineage-inspector-section">
+        <div className="lineage-inspector-tabs" role="tablist" aria-label="Lineage direction">
+          <button
+            aria-selected={activeTab === 'upstream'}
+            className={activeTab === 'upstream' ? 'lineage-inspector-tab-active' : ''}
+            role="tab"
+            type="button"
+            onClick={() => setActiveTab('upstream')}
+          >
+            Upstream <span>{selection.upstream.length}</span>
+          </button>
+          <button
+            aria-selected={activeTab === 'downstream'}
+            className={activeTab === 'downstream' ? 'lineage-inspector-tab-active' : ''}
+            role="tab"
+            type="button"
+            onClick={() => setActiveTab('downstream')}
+          >
+            Downstream <span>{selection.downstream.length}</span>
+          </button>
+        </div>
+        <div className="lineage-inspector-tab-panel" role="tabpanel">
+          {activeTab === 'upstream' ? (
+            <InspectorUpstreamGroups groups={selection.upstreamGroups} onFocusNode={onFocusNode} />
+          ) : (
+            <InspectorColumnList emptyText="No downstream columns." items={selection.downstream} onFocusNode={onFocusNode} title="Downstream" />
+          )}
+        </div>
+      </section>
     </div>
   );
 }
@@ -647,6 +692,59 @@ function InspectorUpstreamGroups({ groups, onFocusNode }: { groups: InspectorCol
   );
 }
 
+function InspectorSourceGroups({ items, onFocusNode }: { items: InspectorColumnItem[]; onFocusNode?: (nodeId: string) => void }) {
+  const groups = groupInspectorItemsByNode(items);
+  return (
+    <section className="lineage-inspector-section">
+      <h3>
+        Sources <span>{items.length}</span>
+      </h3>
+      {groups.length > 0 ? (
+        <div className="lineage-inspector-source-list">
+          {groups.map((group) => (
+            <InspectorSourceGroup group={group} key={group.items[0]?.node.id ?? 'source'} onFocusNode={onFocusNode} />
+          ))}
+        </div>
+      ) : (
+        <div className="lineage-inspector-muted">No unresolved source columns.</div>
+      )}
+    </section>
+  );
+}
+
+function InspectorSourceGroup({ group, onFocusNode }: { group: InspectorColumnGroup; onFocusNode?: (nodeId: string) => void }) {
+  const node = group.items[0]?.node;
+  if (!node) {
+    return null;
+  }
+  const focusNode = () => onFocusNode?.(node.id);
+  return (
+    <div className="lineage-inspector-source-group">
+      <div className="lineage-inspector-source-heading">
+        <span className={`lineage-inspector-type lineage-inspector-type-${node.type}`}>{node.type}</span>
+        <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
+          {node.label}
+        </button>
+      </div>
+      <div className="lineage-inspector-source-columns">
+        {group.items.map((item) => {
+          const expressionSql =
+            item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
+          return (
+            <div className="lineage-inspector-source-column" key={item.column.id}>
+              <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
+                {item.column.name}
+              </button>
+              {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+              {expressionSql ? <code className="lineage-inspector-inline-code">{expressionSql}</code> : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function InspectorCaseRules({
   activeCaseRule,
   item,
@@ -716,6 +814,23 @@ function InspectorColumnCard({ item, onFocusNode }: { item: InspectorColumnItem;
       {expressionSql ? <code className="lineage-inspector-inline-code">{expressionSql}</code> : null}
     </div>
   );
+}
+
+function groupInspectorItemsByNode(items: InspectorColumnItem[]) {
+  const groups: InspectorColumnGroup[] = [];
+  const groupByNodeId = new Map<string, InspectorColumnGroup>();
+  for (const item of items) {
+    const existing = groupByNodeId.get(item.node.id);
+    if (existing) {
+      existing.items.push(item);
+      continue;
+    }
+
+    const next = { items: [item] };
+    groupByNodeId.set(item.node.id, next);
+    groups.push(next);
+  }
+  return groups;
 }
 
 function InspectorTextSection({ title, values }: { title: string; values: string[] }) {
