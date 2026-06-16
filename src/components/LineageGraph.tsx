@@ -5,14 +5,10 @@ import {
   MiniMap,
   ReactFlow,
   ReactFlowProvider,
-  applyNodeChanges,
   getBezierPath,
   useEdgesState,
   useNodesState,
   type EdgeProps,
-  type Node,
-  type NodeChange,
-  type NodeProps,
 } from '@xyflow/react';
 import { Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -22,7 +18,6 @@ import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../grap
 import { LineageNodeCard } from './LineageNodeCard';
 
 const nodeTypes = {
-  groupFrame: GroupFrameNode,
   lineageNode: LineageNodeCard,
 };
 
@@ -34,11 +29,6 @@ interface SelectedColumn {
   columnId: string;
   columnName: string;
   nodeId: string;
-}
-
-interface GroupFrameData extends Record<string, unknown> {
-  label: string;
-  summary: string;
 }
 
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
@@ -168,7 +158,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     showColumnCallouts,
     showHeaderCallouts,
   ]);
-  const lineageGraphNodes = useMemo(
+  const graphNodes = useMemo(
     () =>
       graph.nodes.map((node) => ({
         ...node,
@@ -214,10 +204,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       toggleColumns,
     ],
   );
-  const graphNodes = useMemo(
-    () => addGroupFrameNodes(lineageGraphNodes, collapsibleGroups, collapsedGroupRootIds),
-    [collapsedGroupRootIds, collapsibleGroups, lineageGraphNodes],
-  );
   const graphEdges = useMemo(
     () =>
       graph.edges.map((edge) => {
@@ -245,18 +231,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       }),
     [columnHighlights.highlightedEdgeIds, graph.edges],
   );
-  const [nodes, setNodes] = useNodesState(graphNodes);
+  const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
-  const handleNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      setNodes((currentNodes) => {
-        const nextNodes = applyNodeChanges(changes, currentNodes);
-        const shouldRecalculateFrames = changes.some((change) => change.type === 'position' || change.type === 'remove');
-        return shouldRecalculateFrames ? addGroupFrameNodes(nextNodes, collapsibleGroups, collapsedGroupRootIds) : nextNodes;
-      });
-    },
-    [collapsedGroupRootIds, collapsibleGroups, setNodes],
-  );
 
   useEffect(() => {
     if (previousLineageRef.current !== lineage) {
@@ -267,7 +243,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
 
     setNodes((currentNodes) => {
       const currentById = new Map(currentNodes.map((node) => [node.id, node]));
-      const nextLineageNodes = graphNodes.filter((node) => node.type === 'lineageNode').map((node) => {
+      return graphNodes.map((node) => {
         const current = currentById.get(node.id);
         if (!current) {
           return node;
@@ -281,9 +257,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           selected: current.selected,
         };
       });
-      return addGroupFrameNodes(nextLineageNodes, collapsibleGroups, collapsedGroupRootIds);
     });
-  }, [collapsedGroupRootIds, collapsibleGroups, graphNodes, lineage, setNodes]);
+  }, [graphNodes, lineage, setNodes]);
 
   useEffect(() => {
     setEdges(graphEdges);
@@ -320,7 +295,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          onNodesChange={handleNodesChange}
+          onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onInit={(instance) => setViewportZoom(instance.getZoom())}
           onMove={(_, viewport) => setViewportZoom(viewport.zoom)}
@@ -338,7 +313,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
             pannable
             zoomable
             nodeColor={(node) => {
-              if (node.type === 'groupFrame') return '#e0f2fe';
               const type = (node.data as { lineageNode?: { type?: string } } | undefined)?.lineageNode?.type;
               if (type === 'table') return '#dbeafe';
               if (type === 'cte') return '#dcfce7';
@@ -350,116 +324,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       </ReactFlowProvider>
     </div>
   );
-}
-
-function GroupFrameNode({ data }: NodeProps<Node<GroupFrameData, 'groupFrame'>>) {
-  return (
-    <div className="lineage-group-frame" data-testid="lineage-group-frame">
-      <div className="lineage-group-frame-label">{data.label}</div>
-      <div className="lineage-group-frame-summary">{data.summary}</div>
-    </div>
-  );
-}
-
-function addGroupFrameNodes(
-  nodes: Node[],
-  collapsibleGroups: ReturnType<typeof collectCollapsibleUpstreamGroups>,
-  collapsedGroupRootIds: Set<string>,
-): Node[] {
-  const lineageNodes = nodes.filter((node) => node.type === 'lineageNode');
-  const frameNodes = [...collapsibleGroups.values()].flatMap((group) => {
-    if (collapsedGroupRootIds.has(group.rootNodeId)) {
-      return [];
-    }
-
-    const memberNodeIds = new Set([group.rootNodeId, ...group.helperNodeIds]);
-    const memberNodes = lineageNodes.filter((node) => memberNodeIds.has(node.id));
-    if (memberNodes.length !== memberNodeIds.size) {
-      return [];
-    }
-
-    const bounds = calculateGroupFrameBounds(memberNodes);
-    if (!bounds) {
-      return [];
-    }
-
-    return [
-      {
-        id: `group-frame-${group.rootNodeId}`,
-        type: 'groupFrame',
-        position: { x: bounds.x, y: bounds.y },
-        draggable: false,
-        selectable: false,
-        connectable: false,
-        deletable: false,
-        focusable: false,
-        zIndex: -10,
-        data: {
-          label: group.label,
-          summary: formatGroupFrameSummary(group.helperCounts),
-        },
-        style: {
-          height: bounds.height,
-          pointerEvents: 'none',
-          width: bounds.width,
-        },
-      } satisfies Node<GroupFrameData, 'groupFrame'>,
-    ];
-  });
-
-  return [...frameNodes, ...lineageNodes];
-}
-
-function calculateGroupFrameBounds(nodes: Node[]) {
-  if (nodes.length === 0) {
-    return null;
-  }
-
-  const padding = 42;
-  const rects = nodes.map((node) => {
-    const size = estimateNodeSize(node);
-    return {
-      bottom: node.position.y + size.height,
-      left: node.position.x,
-      right: node.position.x + size.width,
-      top: node.position.y,
-    };
-  });
-  const left = Math.min(...rects.map((rect) => rect.left));
-  const right = Math.max(...rects.map((rect) => rect.right));
-  const top = Math.min(...rects.map((rect) => rect.top));
-  const bottom = Math.max(...rects.map((rect) => rect.bottom));
-
-  return {
-    height: bottom - top + padding * 2,
-    width: right - left + padding * 2,
-    x: left - padding,
-    y: top - padding,
-  };
-}
-
-function estimateNodeSize(node: Node) {
-  const lineageNode = (node.data as { lineageNode?: LineageNode }).lineageNode;
-  if (!lineageNode) {
-    return { height: 120, width: 220 };
-  }
-
-  const baseHeight = 50;
-  const columnHeight = 40;
-  const emptyBodyHeight = 40;
-  const bodyHeight = lineageNode.columns.length > 0 ? lineageNode.columns.length * columnHeight : emptyBodyHeight;
-  return {
-    height: Math.max(118, baseHeight + bodyHeight),
-    width: 220,
-  };
-}
-
-function formatGroupFrameSummary(helperCounts: { ctes: number; derived: number }) {
-  const parts = [
-    helperCounts.ctes > 0 ? `${helperCounts.ctes} CTE${helperCounts.ctes === 1 ? '' : 's'}` : null,
-    helperCounts.derived > 0 ? `${helperCounts.derived} derived` : null,
-  ].filter((part): part is string => Boolean(part));
-  return parts.length > 0 ? `Can collapse ${parts.join(' + ')}` : 'Can collapse internals';
 }
 
 function resolveColumnHighlights(
