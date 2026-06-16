@@ -680,17 +680,25 @@ function InspectorUpstreamGroups({ groups, onFocusNode }: { groups: InspectorCol
   return (
     <>
       {groups.length > 0 ? (
-        groups.map((group, index) => (
-          <InspectorColumnList
-            emptyText="No upstream columns."
-            items={group.items}
-            key={`${group.alias ?? 'direct'}:${index}`}
-            onFocusNode={onFocusNode}
-            title={group.alias ? `Upstream ${group.alias}` : 'Upstream'}
-          />
-        ))
+        groups.map((group, index) => {
+          const nodeGroups = groupInspectorItemsByNode(group.items);
+          return (
+            <section className="lineage-inspector-section" key={`${group.alias ?? 'direct'}:${index}`}>
+              <h3>
+                {formatInspectorGroupTitle(group)} <span>{group.items.length}</span>
+              </h3>
+              <div className="lineage-inspector-source-list">
+                {nodeGroups.map((nodeGroup) => (
+                  <InspectorSourceGroup group={nodeGroup} key={nodeGroup.items[0]?.node.id ?? 'upstream'} onFocusNode={onFocusNode} />
+                ))}
+              </div>
+            </section>
+          );
+        })
       ) : (
-        <InspectorColumnList emptyText="No upstream columns." items={[]} title="Upstream" />
+        <section className="lineage-inspector-section">
+          <div className="lineage-inspector-muted">No upstream columns.</div>
+        </section>
       )}
     </>
   );
@@ -844,6 +852,15 @@ function groupInspectorItemsByNode(items: InspectorColumnItem[]) {
     groups.push(next);
   }
   return groups;
+}
+
+function formatInspectorGroupTitle(group: InspectorColumnGroup) {
+  if (group.alias) {
+    return group.alias;
+  }
+
+  const nodeLabels = [...new Set(group.items.map((item) => item.node.label))];
+  return nodeLabels.length === 1 ? nodeLabels[0] : 'Direct';
 }
 
 function InspectorTextSection({ title, values }: { title: string; values: string[] }) {

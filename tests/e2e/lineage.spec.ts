@@ -577,11 +577,14 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('total_amount');
   await expect(inspector).toContainText('Selected');
   await expect(inspector).toContainText('Sources');
-  await expect(inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('quantity');
-  await expect(inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('unit_price');
+  const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Sources' });
+  await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('quantity');
+  await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('unit_price');
   await expect(inspector).toContainText('Upstream');
-  await expect(inspector).toContainText('Upstream ot');
-  await expect(inspector).toContainText('Upstream oi');
+  await expect(inspector.locator('.lineage-inspector-tab-panel .lineage-inspector-section h3', { hasText: 'ot' })).toBeVisible();
+  await expect(inspector.locator('.lineage-inspector-tab-panel .lineage-inspector-section h3', { hasText: 'recent_orders' })).toBeVisible();
+  await expect(inspector.locator('.lineage-inspector-tab-panel .lineage-inspector-section h3', { hasText: 'oi' })).toBeVisible();
+  await expect(inspector).not.toContainText('Upstream ot');
   await expect(inspector).toContainText('Downstream');
   await expect(inspector).toContainText('coalesce(ot.total_amount, 0)');
   await expect(inspector.locator('.lineage-inspector-section h3', { hasText: 'Expression' })).toHaveCount(0);
