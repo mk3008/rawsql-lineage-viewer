@@ -535,6 +535,34 @@ test('can toggle column and header callouts independently', async ({ page }) => 
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' })).toBeVisible();
 });
 
+test('shows selected lineage details in the inspector panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector).toBeVisible();
+  await expect(inspector).toContainText('total_amount');
+  await expect(inspector).toContainText('Selected');
+  await expect(inspector).toContainText('Sources');
+  await expect(inspector).toContainText('Upstream');
+  await expect(inspector).toContainText('Downstream');
+  await expect(inspector).toContainText('coalesce(ot.total_amount, 0)');
+
+  await inspector.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(inspector).not.toBeVisible();
+  await page.getByRole('button', { name: 'Inspector' }).click();
+  await expect(inspector).toBeVisible();
+  await expect(inspector).toContainText('total_amount');
+
+  await page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'recent_orders', exact: true }).click();
+  await expect(inspector).toContainText('recent_orders');
+  await expect(inspector).toContainText('Recent order line items used as the base sales fact.');
+  await expect(inspector).toContainText('Open in viewer');
+  await expect(inspector).toContainText('Copy SQL');
+});
+
 test('opens SQL from the sql hash parameter on first load', async ({ page }) => {
   const sql = 'select c.customer_id from customers c';
   await page.goto(`/#sql=${encodeURIComponent(sql)}`);
