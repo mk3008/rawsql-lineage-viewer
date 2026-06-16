@@ -1,7 +1,7 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 import { hasColumnCalloutContent, isPassthroughColumn } from '../lineage/columnDisplay';
 
@@ -9,6 +9,8 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const columnsVisible = data.columnsVisible ?? true;
   const nodeRef = useRef<HTMLDivElement>(null);
+  const canTogglePassthrough = node.type !== 'output' && node.columns.some(isPassthroughColumn);
+  const passthroughCompressed = data.passthroughColumnsCompressed ?? false;
 
   return (
     <div
@@ -40,6 +42,20 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           >
             {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
           </button>
+          {canTogglePassthrough ? (
+            <button
+              aria-label={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns for ${node.label}`}
+              className="node-icon-button nodrag"
+              title={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns`}
+              type="button"
+              onClick={(event) => {
+                event.stopPropagation();
+                data.onTogglePassthroughColumns?.(node.id);
+              }}
+            >
+              {passthroughCompressed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </button>
+          ) : null}
           {data.collapsedGroup ? (
             <button
               aria-label={`Expand ${data.collapsedGroup.label}`}
@@ -138,7 +154,7 @@ function LineageColumnList({
   data: GraphNode['data'];
   nodeId: string;
 }) {
-  const shouldCompress = (data.compressPassthroughColumns ?? true) && data.lineageNode.type !== 'output';
+  const shouldCompress = data.passthroughColumnsCompressed ?? false;
   const visibleColumns = shouldCompress ? columns.filter((column) => !isCompressedPassthroughColumn(column, data)) : columns;
   const compressedCount = shouldCompress ? columns.length - visibleColumns.length : 0;
 

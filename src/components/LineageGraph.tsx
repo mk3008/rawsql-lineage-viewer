@@ -45,7 +45,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
-  const [compressPassthroughColumns, setCompressPassthroughColumns] = useState(true);
+  const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const allColumnsHidden = hiddenColumnNodeIds.size === viewLineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
@@ -68,6 +68,17 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return new Set(viewLineage.nodes.map((node) => node.id));
     });
   }, [viewLineage.nodes]);
+  const togglePassthroughColumns = useCallback((nodeId: string) => {
+    setExpandedPassthroughNodeIds((current) => {
+      const next = new Set(current);
+      if (next.has(nodeId)) {
+        next.delete(nodeId);
+      } else {
+        next.add(nodeId);
+      }
+      return next;
+    });
+  }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
     setCollapsedGroupRootIds((current) => new Set(current).add(nodeId));
     setSelectedColumn(null);
@@ -179,7 +190,8 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           activeCommentTargetId,
           viewportZoom,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
-          compressPassthroughColumns,
+          onTogglePassthroughColumns: togglePassthroughColumns,
+          passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
@@ -189,11 +201,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       columnHighlights.highlightedEdgeIds,
       columnHighlights.highlightedColumnIds,
       columnHighlights.sourceColumnIds,
-      compressPassthroughColumns,
       collapseUpstream,
       collapsedLineage.groups,
       collapsibleGroups,
       expandGroup,
+      expandedPassthroughNodeIds,
       graph.nodes,
       hiddenColumnNodeIds,
       selectNode,
@@ -205,6 +217,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       selectedColumn?.columnId,
       selectedCommentTargetIds,
       toggleColumns,
+      togglePassthroughColumns,
     ],
   );
   const graphEdges = useMemo(
@@ -274,6 +287,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(new Set());
     setCollapsedGroupRootIds(new Set());
+    setExpandedPassthroughNodeIds(new Set());
   }, [lineage]);
 
   return (
@@ -290,14 +304,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         <label className="graph-callout-toggle">
           <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
           Header callouts
-        </label>
-        <label className="graph-callout-toggle">
-          <input
-            type="checkbox"
-            checked={compressPassthroughColumns}
-            onChange={(event) => setCompressPassthroughColumns(event.target.checked)}
-          />
-          Compress passthrough
         </label>
       </div>
       <ReactFlowProvider>

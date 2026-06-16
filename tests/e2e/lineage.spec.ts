@@ -30,10 +30,12 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
-  await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
+  await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' })).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
@@ -74,7 +76,6 @@ test('renders outer join nullability context on data flows without separate join
 
 test('shows referenced columns and can hide columns per node', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const orderItemsNode = page.getByTestId('rf__node-table_order_items');
@@ -187,7 +188,6 @@ test('preserves formatted expression line breaks', async ({ page }) => {
 
 test('does not show column callouts for simple column references', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true }).click();
 
@@ -197,22 +197,27 @@ test('does not show column callouts for simple column references', async ({ page
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 
-test('compresses passthrough columns by default and can show them again', async ({ page }) => {
+test('compresses passthrough columns by default and can show them per node', async ({ page }) => {
   await page.goto('/');
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
-  const toggle = page.getByRole('checkbox', { name: 'Compress passthrough' });
-  await expect(toggle).toBeChecked();
   await expect(outputNode.getByText('Passthrough')).toHaveCount(0);
   await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(outputNode.getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
   await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 
-  await toggle.uncheck();
+  await recentOrdersNode.getByRole('button', { name: 'Show passthrough columns for recent_orders' }).click();
 
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
   await expect(recentOrdersNode.getByText('Passthrough')).toHaveCount(0);
+  await expect(recentOrdersNode.getByRole('button', { name: 'Compress passthrough columns for recent_orders' })).toBeVisible();
+
+  await recentOrdersNode.getByRole('button', { name: 'Compress passthrough columns for recent_orders' }).click();
+
+  await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
+  await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 });
 
 test('shows column callouts for literal expressions', async ({ page }) => {
@@ -401,7 +406,6 @@ test('does not copy a share URL when the SQL is too long', async ({ page }) => {
 
 test('can hide and show columns for all nodes', async ({ page }) => {
   await page.goto('/');
-  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
