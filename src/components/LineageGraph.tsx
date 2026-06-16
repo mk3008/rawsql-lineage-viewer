@@ -82,7 +82,8 @@ export function LineageGraph({
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
   const viewLineage = collapsedLineage.lineage;
   const graph = useMemo(() => buildGraphModel(viewLineage, flowDirection), [flowDirection, viewLineage]);
-  const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
+  const hideableColumnNodeIds = useMemo(() => new Set(viewLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [flowDirection, viewLineage.nodes]);
+  const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(viewLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
@@ -96,8 +97,12 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
-  const allColumnsHidden = hiddenColumnNodeIds.size === viewLineage.nodes.length;
+  const allColumnsHidden = hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => hiddenColumnNodeIds.has(nodeId));
   const toggleColumns = useCallback((nodeId: string) => {
+    if (!hideableColumnNodeIds.has(nodeId)) {
+      return;
+    }
+
     setHiddenColumnNodeIds((current) => {
       const next = new Set(current);
       if (next.has(nodeId)) {
@@ -107,16 +112,16 @@ export function LineageGraph({
       }
       return next;
     });
-  }, []);
+  }, [hideableColumnNodeIds]);
   const toggleAllColumns = useCallback(() => {
     setHiddenColumnNodeIds((current) => {
-      if (current.size === viewLineage.nodes.length) {
+      if (hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => current.has(nodeId))) {
         return new Set();
       }
 
-      return new Set(viewLineage.nodes.map((node) => node.id));
+      return new Set(hideableColumnNodeIds);
     });
-  }, [viewLineage.nodes]);
+  }, [hideableColumnNodeIds]);
   const togglePassthroughColumns = useCallback((nodeId: string) => {
     setExpandedPassthroughNodeIds((current) => {
       const next = new Set(current);
@@ -180,6 +185,19 @@ export function LineageGraph({
         : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
     [selectedColumn, viewLineage.nodes],
   );
+  const forcedVisibleColumnIds = useMemo(() => {
+    const columnIds = new Set<string>();
+    if (selectedColumn) {
+      columnIds.add(selectedColumn.columnId);
+    }
+    for (const columnId of columnHighlights.highlightedColumnIds) {
+      columnIds.add(columnId);
+    }
+    for (const columnId of columnHighlights.sourceColumnIds) {
+      columnIds.add(columnId);
+    }
+    return columnIds;
+  }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
       return resolveInspectorColumnSelection(viewLineage.nodes, viewLineage.edges, selectedColumn);
@@ -234,9 +252,11 @@ export function LineageGraph({
         zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetIds) ? 1000 : node.zIndex,
         data: {
           ...node.data,
+          canToggleColumns: hideableColumnNodeIds.has(node.id),
           canCollapseUpstream: collapsibleGroups.has(node.id),
           collapsedGroup: collapsedLineage.groups.get(node.id),
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
+          forcedVisibleColumnIds,
           onCollapseUpstream: collapseUpstream,
           onExpandGroup: expandGroup,
           onToggleColumns: toggleColumns,
@@ -264,8 +284,10 @@ export function LineageGraph({
       collapsibleGroups,
       expandGroup,
       expandedPassthroughNodeIds,
+      forcedVisibleColumnIds,
       graph.nodes,
       hiddenColumnNodeIds,
+      hideableColumnNodeIds,
       selectNode,
       selectColumn,
       closeComment,
@@ -387,10 +409,10 @@ export function LineageGraph({
     setSelectedNodeCommentTargetId(null);
     setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
-    setHiddenColumnNodeIds(new Set());
+    setHiddenColumnNodeIds(createDefaultHiddenColumnNodeIds(lineage.nodes, flowDirection));
     setCollapsedGroupRootIds(new Set());
     setExpandedPassthroughNodeIds(new Set());
-  }, [lineage]);
+  }, [flowDirection, lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph" ref={graphShellRef}>
@@ -892,6 +914,18 @@ function columnKey(nodeId: string, columnName: string) {
 
 function edgeKey(sourceId: string, targetId: string) {
   return `${sourceId}-${targetId}`;
+}
+
+function canHideColumns(node: LineageNode, flowDirection: GraphFlowDirection) {
+  if (flowDirection === 'upstream') {
+    return node.type !== 'output';
+  }
+
+  return node.type !== 'table';
+}
+
+function createDefaultHiddenColumnNodeIds(nodes: LineageNode[], flowDirection: GraphFlowDirection) {
+  return new Set(nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id));
 }
 
 function nodeHasSelectedComment(node: LineageNode, selectedCommentTargetIds: Set<string>) {

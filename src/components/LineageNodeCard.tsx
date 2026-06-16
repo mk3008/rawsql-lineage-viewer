@@ -9,11 +9,14 @@ import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference }
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const columnsVisible = data.columnsVisible ?? true;
+  const forcedVisibleColumnIds = data.forcedVisibleColumnIds ?? new Set<string>();
+  const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
+  const shouldRenderColumns = columnsVisible || hasForcedVisibleColumns;
   const nodeRef = useRef<HTMLDivElement>(null);
   const canTogglePassthrough = node.type !== 'output' && node.columns.some(isPassthroughColumn);
   const passthroughCompressed = data.passthroughColumnsCompressed ?? false;
   const isPassthroughOnly =
-    columnsVisible && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
+    shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
 
   return (
     <div
@@ -35,17 +38,19 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
         </button>
         <div className="lineage-node-actions">
           <div className="lineage-node-action-buttons">
-            <button
-              aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
-              className="node-icon-button nodrag"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onToggleColumns?.(node.id);
-              }}
-            >
-              {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
-            </button>
+            {data.canToggleColumns === false ? null : (
+              <button
+                aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
+                className="node-icon-button nodrag"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onToggleColumns?.(node.id);
+                }}
+              >
+                {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
+              </button>
+            )}
             {canTogglePassthrough ? (
               <button
                 aria-label={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns for ${node.label}`}
@@ -103,12 +108,12 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           variant="node"
         />
       ) : null}
-      {columnsVisible ? (
+      {shouldRenderColumns ? (
         <div className="lineage-node-body">
           {data.collapsedGroup ? (
             <CollapsedGroupBody data={data} nodeId={node.id} />
           ) : node.columns.length > 0 ? (
-            <LineageColumnList columns={node.columns} data={data} nodeId={node.id} />
+            <LineageColumnList columns={node.columns} data={data} forceOnly={!columnsVisible} nodeId={node.id} />
           ) : (
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}
@@ -130,7 +135,7 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
       <div className="lineage-group-section">
         <div className="lineage-group-summary-title">Output</div>
         {data.lineageNode.columns.length > 0 ? (
-          <LineageColumnList columns={data.lineageNode.columns} data={data} nodeId={nodeId} />
+          <LineageColumnList columns={data.lineageNode.columns} data={data} forceOnly={data.columnsVisible === false} nodeId={nodeId} />
         ) : (
           <div className="lineage-column lineage-column-muted">columns unresolved</div>
         )}
@@ -153,16 +158,19 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
 function LineageColumnList({
   columns,
   data,
+  forceOnly = false,
   nodeId,
 }: {
   columns: GraphNode['data']['lineageNode']['columns'];
   data: GraphNode['data'];
+  forceOnly?: boolean;
   nodeId: string;
 }) {
   const shouldCompress = data.passthroughColumnsCompressed ?? false;
-  const valueColumns = columns.filter((column) => !column.usage);
-  const conditionColumns = columns.filter((column) => column.usage?.role === 'condition');
-  const unusedColumns = data.showUnusedColumns === false ? [] : columns.filter((column) => column.usage?.role === 'unused');
+  const displayColumns = forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
+  const valueColumns = displayColumns.filter((column) => !column.usage);
+  const conditionColumns = displayColumns.filter((column) => column.usage?.role === 'condition');
+  const unusedColumns = data.showUnusedColumns === false ? [] : displayColumns.filter((column) => column.usage?.role === 'unused');
   const visibleValueColumns = shouldCompress ? valueColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : valueColumns;
   const compressedCount = shouldCompress ? valueColumns.length - visibleValueColumns.length : 0;
 
@@ -207,6 +215,7 @@ function isCompressedPassthroughColumn(column: GraphNode['data']['lineageNode'][
     data.selectedColumnId !== column.id &&
     !(data.highlightedColumnIds?.has(column.id) ?? false) &&
     !(data.sourceColumnIds?.has(column.id) ?? false) &&
+    !(data.forcedVisibleColumnIds?.has(column.id) ?? false) &&
     !(data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false)
   );
 }

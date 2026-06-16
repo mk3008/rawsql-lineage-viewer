@@ -4,7 +4,9 @@ import type { CollapsedLineageGroup } from '../graph/collapseGroups';
 
 export type GraphNodeData = {
   lineageNode: LineageNode;
+  canToggleColumns?: boolean;
   columnsVisible?: boolean;
+  forcedVisibleColumnIds?: Set<string>;
   collapsedGroup?: CollapsedLineageGroup;
   canCollapseUpstream?: boolean;
   onToggleColumns?: (nodeId: string) => void;

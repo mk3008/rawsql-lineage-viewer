@@ -1,5 +1,12 @@
 import { expect, test } from '@playwright/test';
 
+async function showAllColumns(page: import('@playwright/test').Page) {
+  const button = page.getByRole('button', { name: 'Show all columns' });
+  if ((await button.count()) > 0 && (await button.isVisible())) {
+    await button.click();
+  }
+}
+
 test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await page.goto('/');
 
@@ -37,18 +44,21 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
-  await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
-  const passthroughToggle = page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' });
-  await expect(passthroughToggle).toBeVisible();
-  await expect(passthroughToggle).toHaveCSS('opacity', '0.48');
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'Hide columns for Final Result' })).toHaveCount(0);
+  await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toHaveCount(0);
+  await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'amount', exact: true })).toHaveCount(0);
+  const columnsToggle = page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show columns for recent_orders' });
+  await expect(columnsToggle).toBeVisible();
+  await expect(columnsToggle).toHaveCSS('opacity', '0.48');
   const recentOrdersBox = await page.getByTestId('rf__node-cte_recent_orders').boundingBox();
-  const passthroughToggleBox = await passthroughToggle.boundingBox();
+  const columnsToggleBox = await columnsToggle.boundingBox();
   expect(recentOrdersBox).not.toBeNull();
-  expect(passthroughToggleBox).not.toBeNull();
-  expect(passthroughToggleBox!.y).toBeLessThan(recentOrdersBox!.y);
+  expect(columnsToggleBox).not.toBeNull();
+  expect(columnsToggleBox!.y).toBeLessThan(recentOrdersBox!.y);
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
@@ -71,6 +81,10 @@ test('can switch the graph flow direction downstream', async ({ page }) => {
 
   await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
+  await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
+  await expect(customersNode.getByRole('button', { name: 'Hide columns for customers' })).toHaveCount(0);
+  await expect(outputNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
+  await expect(outputNode.getByRole('button', { name: 'Show columns for Final Result' })).toBeVisible();
   const downstreamCustomersBox = await customersNode.boundingBox();
   const downstreamOutputBox = await outputNode.boundingBox();
   expect(downstreamCustomersBox).not.toBeNull();
@@ -118,17 +132,20 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
   const orderItemsNode = page.getByTestId('rf__node-table_order_items');
   const outputNode = page.getByTestId('rf__node-main_output');
 
-  await expect(ordersNode.getByText('order_date')).toBeVisible();
-  await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
+  await expect(ordersNode.getByText('order_date')).toHaveCount(0);
+  await expect(orderItemsNode.getByText('unit_price')).toHaveCount(0);
   await expect(outputNode.getByText('customer_name')).toBeVisible();
+  await expect(outputNode.getByRole('button', { name: 'Hide columns for Final Result' })).toHaveCount(0);
 
+  await ordersNode.locator('.lineage-node-header').hover();
+  await ordersNode.getByRole('button', { name: 'Show columns for orders' }).click({ force: true });
   const expandedBox = await ordersNode.boundingBox();
   await ordersNode.locator('.lineage-node-header').hover();
   await ordersNode.getByRole('button', { name: 'Hide columns for orders' }).click({ force: true });
   const collapsedBox = await ordersNode.boundingBox();
 
   await expect(ordersNode.getByText('order_date')).not.toBeVisible();
-  await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
+  await expect(orderItemsNode.getByText('unit_price')).toHaveCount(0);
   expect(collapsedBox?.height).toBeLessThan((expandedBox?.height ?? 0) - 20);
 
   await ordersNode.locator('.lineage-node-header').hover();
@@ -149,6 +166,7 @@ test('groups condition-only and unused CTE columns into sections', async ({ page
     WHERE ro.status = 'open'
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
@@ -173,6 +191,7 @@ test('groups condition-only and unused CTE columns into sections', async ({ page
 test('shows GROUP BY usage without simple reference expression callouts', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
+  await showAllColumns(page);
 
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
   await expect(orderTotalsNode.getByText('Condition')).toBeVisible();
@@ -205,6 +224,7 @@ test('renders scalar subquery table sources and condition columns', async ({ pag
     FROM ranked_customers rc
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -260,6 +280,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await cteComment.getByRole('button', { name: 'Close comment' }).click();
   await expect(cteComment).toHaveCount(0);
 
+  await showAllColumns(page);
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Extended line amount.' })).toContainText('Extended line amount.');
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'oi.quantity * oi.unit_price' })).toBeVisible();
@@ -350,6 +371,7 @@ test('does not show column callouts for simple column references', async ({ page
 
 test('compresses passthrough columns by default and can show them per node', async ({ page }) => {
   await page.goto('/');
+  await showAllColumns(page);
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -385,6 +407,7 @@ test('keeps an all-passthrough summary to a single column row height', async ({ 
     FROM pass p
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const passNode = page.getByTestId('rf__node-cte_pass');
   const summary = passNode.locator('.lineage-passthrough-summary');
@@ -422,6 +445,7 @@ test('shows column callouts for literal expressions', async ({ page }) => {
 test('hides column callouts when any part of the anchor column is clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Downstream' }).click();
+  await showAllColumns(page);
 
   const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
   await expect(paymentSummaryNode).toBeVisible();
@@ -465,6 +489,7 @@ test('hides column callouts when any part of the anchor column is clipped outsid
 test('hides column callouts when the bubble would be clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Downstream' }).click();
+  await showAllColumns(page);
 
   const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
   await expect(paymentSummaryNode).toBeVisible();
@@ -683,17 +708,41 @@ test('can hide and show columns for all nodes', async ({ page }) => {
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
 
-  await page.getByRole('button', { name: 'Hide all columns' }).click();
-
   await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
-  await expect(ordersNode.getByText('order_date')).not.toBeVisible();
-  await expect(outputNode.getByText('customer_name')).not.toBeVisible();
+  await expect(ordersNode.getByText('order_date')).toHaveCount(0);
+  await expect(outputNode.getByText('customer_name')).toBeVisible();
 
   await page.getByRole('button', { name: 'Show all columns' }).click();
 
   await expect(page.getByRole('button', { name: 'Hide all columns' })).toBeVisible();
   await expect(ordersNode.getByText('order_date')).toBeVisible();
   await expect(outputNode.getByText('customer_name')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Hide all columns' }).click();
+
+  await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
+  await expect(ordersNode.getByText('order_date')).not.toBeVisible();
+  await expect(outputNode.getByText('customer_name')).toBeVisible();
+});
+
+test('reveals selected lineage columns even while nodes are hidden', async ({ page }) => {
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  const orderItemsNode = page.getByTestId('rf__node-table_order_items');
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+
+  await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
+  await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveCount(0);
+  await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toHaveCount(0);
+
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+
+  await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toBeVisible();
+  await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toBeVisible();
+  await expect(orderItemsNode.getByRole('button', { name: 'unit_price', exact: true })).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'order_date', exact: true })).toHaveCount(0);
 });
 
 test('can collapse upstream helper CTEs into a CTE group and expand them again', async ({ page }) => {
@@ -724,6 +773,7 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
     FROM ranked_customers rc
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
   await expect(rankedCustomersNode).toBeVisible();
@@ -791,6 +841,7 @@ test('keeps dragged helper node positions and selected columns across group togg
     FROM ranked_customers rc
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const helperNode = page.getByTestId('rf__node-cte_support_pressure');
   await expect(helperNode).toBeVisible();
@@ -822,6 +873,7 @@ test('keeps dragged helper node positions and selected columns across group togg
 
 test('keeps table data flow lines visible when collapsing a sample CTE', async ({ page }) => {
   await page.goto('/');
+  await showAllColumns(page);
 
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
   await expect(orderTotalsNode).toBeVisible();
@@ -865,6 +917,7 @@ test('can collapse nested derived subquery internals and expand them again', asy
     ) q
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
 
   const derivedNodes = page.getByTestId('lineage-node-derived');
   await expect(derivedNodes).toHaveCount(2);
@@ -895,6 +948,7 @@ test('can collapse nested derived subquery internals and expand them again', asy
 
 test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {
   await page.goto('/');
+  await showAllColumns(page);
 
   const node = page.getByTestId('rf__node-cte_recent_orders');
   await expect(node).toBeVisible();
@@ -947,6 +1001,7 @@ test('highlights upstream lineage when an output column is selected', async ({ p
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
+  await showAllColumns(page);
 
   const outputNode = page.getByTestId('rf__node-main_output');
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
@@ -987,6 +1042,7 @@ test('can drag lineage nodes to separate overlapping lines', async ({ page }) =>
 
 test('keeps dragged node positions when selecting a column', async ({ page }) => {
   await page.goto('/');
+  await showAllColumns(page);
 
   const node = page.getByTestId('rf__node-table_orders');
   await expect(node).toBeVisible();
