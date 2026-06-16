@@ -710,10 +710,15 @@ textarea {
 
 .lineage-group-summary {
   display: grid;
-  gap: 6px;
+  gap: 9px;
   color: #334155;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.lineage-group-section {
+  display: grid;
+  gap: 4px;
 }
 
 .lineage-group-summary-title {
@@ -758,11 +763,6 @@ textarea {
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.lineage-group-summary-meta {
-  color: #64748b;
-  font-weight: 650;
 }
 
 .graph-info {

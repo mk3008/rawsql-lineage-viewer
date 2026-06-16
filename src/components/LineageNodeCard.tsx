@@ -84,7 +84,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
       {columnsVisible ? (
         <div className="lineage-node-body">
           {data.collapsedGroup ? (
-            <CollapsedGroupSummary group={data.collapsedGroup} />
+            <CollapsedGroupBody data={data} nodeId={node.id} />
           ) : node.columns.length > 0 ? (
             node.columns.map((column) => (
               <LineageColumnRow column={column} data={data} key={column.id} nodeId={node.id} />
@@ -99,20 +99,34 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   );
 }
 
-function CollapsedGroupSummary({ group }: { group: NonNullable<GraphNode['data']['collapsedGroup']> }) {
+function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId: string }) {
+  const group = data.collapsedGroup;
+  if (!group) {
+    return null;
+  }
+
   return (
     <div className="lineage-group-summary">
-      <div className="lineage-group-summary-title">Hidden</div>
-      <ul className="lineage-group-hidden-list">
-        {group.helperNodes.map((node) => (
-          <li key={node.id}>
-            <span className="lineage-group-hidden-type">{node.type === 'cte' ? 'CTE' : 'Subquery'}</span>
-            <span className="lineage-group-hidden-name">{node.label}</span>
-          </li>
-        ))}
-      </ul>
-      <div className="lineage-group-summary-meta">
-        Sources {group.sourceNodeIds.length} / Columns {group.outputColumnCount}
+      <div className="lineage-group-section">
+        <div className="lineage-group-summary-title">Output</div>
+        {data.lineageNode.columns.length > 0 ? (
+          data.lineageNode.columns.map((column) => (
+            <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
+          ))
+        ) : (
+          <div className="lineage-column lineage-column-muted">columns unresolved</div>
+        )}
+      </div>
+      <div className="lineage-group-section">
+        <div className="lineage-group-summary-title">Input</div>
+        <ul className="lineage-group-hidden-list">
+          {group.helperNodes.map((node) => (
+            <li key={node.id}>
+              <span className="lineage-group-hidden-type">{node.type === 'cte' ? 'CTE' : 'Subquery'}</span>
+              <span className="lineage-group-hidden-name">{node.label}</span>
+            </li>
+          ))}
+        </ul>
       </div>
     </div>
   );
