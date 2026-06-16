@@ -511,6 +511,61 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
 });
 
+test('keeps dragged helper node positions and selected columns across group toggles', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH order_base AS (
+      SELECT o.id, o.customer_id, o.total_amount
+      FROM orders o
+    ),
+    customer_order_summary AS (
+      SELECT c.id AS customer_id, COUNT(ob.id) AS order_count
+      FROM customers c
+      LEFT JOIN order_base ob ON ob.customer_id = c.id
+      GROUP BY c.id
+    ),
+    support_pressure AS (
+      SELECT st.customer_id, COUNT(st.id) AS open_ticket_count
+      FROM support_tickets st
+      GROUP BY st.customer_id
+    ),
+    ranked_customers AS (
+      SELECT cos.customer_id, cos.order_count, COALESCE(sp.open_ticket_count, 0) AS open_ticket_count
+      FROM customer_order_summary cos
+      LEFT JOIN support_pressure sp ON sp.customer_id = cos.customer_id
+    )
+    SELECT rc.customer_id, rc.order_count, rc.open_ticket_count
+    FROM ranked_customers rc
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const helperNode = page.getByTestId('rf__node-cte_support_pressure');
+  await expect(helperNode).toBeVisible();
+  const helperBox = await helperNode.boundingBox();
+  expect(helperBox).not.toBeNull();
+
+  await page.mouse.move(helperBox!.x + 28, helperBox!.y + 20);
+  await page.mouse.down();
+  await page.mouse.move(helperBox!.x + 118, helperBox!.y + 80, { steps: 8 });
+  await page.mouse.up();
+  const draggedTransform = await helperNode.evaluate((element) => window.getComputedStyle(element).transform);
+
+  const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
+  await rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true }).click();
+  await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
+
+  await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
+  await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(helperNode).not.toBeAttached();
+
+  await rankedCustomersNode.getByRole('button', { name: 'Expand Build ranked_customers' }).click();
+
+  await expect(helperNode).toBeVisible();
+  await expect(helperNode).toHaveCSS('transform', draggedTransform);
+  await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
+});
+
 test('keeps table data flow lines visible when collapsing a sample CTE', async ({ page }) => {
   await page.goto('/');
 

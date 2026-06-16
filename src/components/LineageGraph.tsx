@@ -33,6 +33,7 @@ interface SelectedColumn {
 
 export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const previousLineageRef = useRef(lineage);
+  const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
@@ -81,10 +82,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
     setCollapsedGroupRootIds((current) => new Set(current).add(nodeId));
-    setSelectedColumn(null);
-    setSelectedNodeCommentTargetId(null);
-    setActiveCommentTargetId(null);
-    setDismissedCommentTargetIds(new Set());
   }, []);
   const expandGroup = useCallback((nodeId: string) => {
     setCollapsedGroupRootIds((current) => {
@@ -92,10 +89,6 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       next.delete(nodeId);
       return next;
     });
-    setSelectedColumn(null);
-    setSelectedNodeCommentTargetId(null);
-    setActiveCommentTargetId(null);
-    setDismissedCommentTargetIds(new Set());
   }, []);
   const selectNode = useCallback((nodeId: string) => {
     setSelectedColumn(null);
@@ -253,6 +246,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   useEffect(() => {
     if (previousLineageRef.current !== lineage) {
       previousLineageRef.current = lineage;
+      nodePositionsRef.current = new Map(graphNodes.map((node) => [node.id, node.position]));
       setNodes(graphNodes);
       return;
     }
@@ -262,7 +256,10 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       return graphNodes.map((node) => {
         const current = currentById.get(node.id);
         if (!current) {
-          return node;
+          return {
+            ...node,
+            position: nodePositionsRef.current.get(node.id) ?? node.position,
+          };
         }
 
         return {
@@ -275,6 +272,12 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       });
     });
   }, [graphNodes, lineage, setNodes]);
+
+  useEffect(() => {
+    for (const node of nodes) {
+      nodePositionsRef.current.set(node.id, node.position);
+    }
+  }, [nodes]);
 
   useEffect(() => {
     setEdges(graphEdges);
