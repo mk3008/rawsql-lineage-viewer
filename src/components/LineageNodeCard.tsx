@@ -66,7 +66,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
               <Minimize2 size={13} />
             </button>
           ) : null}
-          <span className="lineage-node-kind">{data.collapsedGroup ? 'Query group' : node.type}</span>
+          <span className="lineage-node-kind">{data.collapsedGroup ? 'Group' : node.type}</span>
         </div>
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
@@ -102,11 +102,18 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
 function CollapsedGroupSummary({ group }: { group: NonNullable<GraphNode['data']['collapsedGroup']> }) {
   return (
     <div className="lineage-group-summary">
-      {group.helperCounts.ctes > 0 ? <span><strong>{group.helperCounts.ctes}</strong> CTEs hidden</span> : null}
-      {group.helperCounts.derived > 0 ? <span><strong>{group.helperCounts.derived}</strong> derived hidden</span> : null}
-      <span><strong>{group.sourceNodeIds.length}</strong> source nodes</span>
-      <span><strong>{group.outputColumnCount}</strong> output columns</span>
-      <em>Internal steps hidden</em>
+      <div className="lineage-group-summary-title">Hidden</div>
+      <ul className="lineage-group-hidden-list">
+        {group.helperNodes.map((node) => (
+          <li key={node.id}>
+            <span className="lineage-group-hidden-type">{node.type === 'cte' ? 'CTE' : 'Subquery'}</span>
+            <span className="lineage-group-hidden-name">{node.label}</span>
+          </li>
+        ))}
+      </ul>
+      <div className="lineage-group-summary-meta">
+        Sources {group.sourceNodeIds.length} / Columns {group.outputColumnCount}
+      </div>
     </div>
   );
 }
@@ -277,7 +284,6 @@ function CommentBubble({
       </button>
       {comments && comments.length > 0 ? (
         <div className="lineage-comment-section">
-          <div className="lineage-comment-label">Comment</div>
           {comments.map((comment) => (
             <div key={comment}>{comment}</div>
           ))}

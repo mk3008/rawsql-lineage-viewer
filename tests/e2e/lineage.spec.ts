@@ -405,8 +405,12 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
 
   await expect(rankedCustomersNode).toContainText('Build ranked_customers');
-  await expect(rankedCustomersNode).toContainText('3 CTEs hidden');
-  await expect(rankedCustomersNode).toContainText('3 source nodes');
+  await expect(rankedCustomersNode).toContainText('Group');
+  await expect(rankedCustomersNode).toContainText('Hidden');
+  await expect(rankedCustomersNode).toContainText('order_base');
+  await expect(rankedCustomersNode).toContainText('customer_order_summary');
+  await expect(rankedCustomersNode).toContainText('support_pressure');
+  await expect(rankedCustomersNode).toContainText('Sources 3 / Columns 3');
   await expect(page.getByTestId('rf__node-cte_order_base')).not.toBeAttached();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).not.toBeAttached();
   await expect(page.getByTestId('rf__node-cte_support_pressure')).not.toBeAttached();
@@ -472,7 +476,11 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' }).click();
 
   await expect(outerDerivedNode).toContainText('Build q');
-  await expect(outerDerivedNode).toContainText('1 derived hidden');
+  await expect(outerDerivedNode).toContainText('Group');
+  await expect(outerDerivedNode).toContainText('Hidden');
+  await expect(outerDerivedNode).toContainText('Subquery');
+  await expect(outerDerivedNode).toContainText('q');
+  await expect(outerDerivedNode).toContainText('Sources 1 / Columns 2');
   await expect(derivedNodes).toHaveCount(1);
   await expect(page.getByTestId('rf__edge-table_orders-derived_q_1')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_q_1-main_output')).toBeAttached();

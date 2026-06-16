@@ -4,6 +4,11 @@ export interface CollapsedLineageGroup {
   id: string;
   label: string;
   rootNodeId: string;
+  helperNodes: {
+    id: string;
+    label: string;
+    type: 'cte' | 'derived';
+  }[];
   helperNodeIds: string[];
   helperCounts: {
     ctes: number;
@@ -184,14 +189,22 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
   }
 
   const helperNodes = [...helperNodeIds].map((helperNodeId) => nodesById.get(helperNodeId));
+  const visibleHelperNodes = helperNodes.filter((node): node is LineageNode & { type: 'cte' | 'derived' } =>
+    node ? isCollapsibleHelperNodeType(node.type) : false,
+  );
   return {
     id: `group_${rootNodeId}`,
     label: `Build ${root.label}`,
     rootNodeId,
+    helperNodes: visibleHelperNodes.map((node) => ({
+      id: node.id,
+      label: node.label,
+      type: node.type,
+    })),
     helperNodeIds: [...helperNodeIds],
     helperCounts: {
-      ctes: helperNodes.filter((node) => node?.type === 'cte').length,
-      derived: helperNodes.filter((node) => node?.type === 'derived').length,
+      ctes: visibleHelperNodes.filter((node) => node.type === 'cte').length,
+      derived: visibleHelperNodes.filter((node) => node.type === 'derived').length,
     },
     sourceNodeIds: [...sourceNodeIds],
     outputColumnCount: root.columns.length,

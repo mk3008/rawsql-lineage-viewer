@@ -59,6 +59,11 @@ describe('collapseGroups', () => {
     expect(groups.get('cte_ranked_customers')).toMatchObject({
       label: 'Build ranked_customers',
       rootNodeId: 'cte_ranked_customers',
+      helperNodes: expect.arrayContaining([
+        { id: 'cte_order_base', label: 'order_base', type: 'cte' },
+        { id: 'cte_customer_order_summary', label: 'customer_order_summary', type: 'cte' },
+        { id: 'cte_support_pressure', label: 'support_pressure', type: 'cte' },
+      ]),
       helperNodeIds: expect.arrayContaining(['cte_order_base', 'cte_customer_order_summary', 'cte_support_pressure']),
       helperCounts: {
         ctes: 3,
@@ -120,6 +125,7 @@ describe('collapseGroups', () => {
         ctes: 0,
         derived: 1,
       },
+      helperNodes: expect.arrayContaining([expect.objectContaining({ label: 'q', type: 'derived' })]),
       sourceNodeIds: ['table_orders'],
       outputColumnCount: 2,
     });

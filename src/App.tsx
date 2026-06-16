@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Code2, Eraser, GitBranch, PanelLeftClose, PanelLeftOpen, Play, Share2 } from 'lucide-react';
+import { AlertTriangle, Cat, CheckCircle2, Code2, Eraser, PanelLeftClose, PanelLeftOpen, Play, Share2 } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
@@ -78,7 +78,7 @@ export function App() {
             Share
           </button>
           <a className="github-link" href="https://github.com/mk3008/rawsql-lineage-viewer" target="_blank" rel="noreferrer">
-            <GitBranch size={17} />
+            <Cat size={17} />
             GitHub
           </a>
         </div>
