@@ -89,6 +89,22 @@ describe('collapseGroups', () => {
     expect(collapsed.lineage.edges.some((edge) => edge.source === 'cte_customer_order_summary' || edge.target === 'cte_customer_order_summary')).toBe(false);
   });
 
+  it('rewires collapsed representative column lineage through hidden helpers to visible sources', () => {
+    const { lineage } = analyzeSql(rankedCustomersSql);
+    const collapsed = collapseLineageGroups(lineage, new Set(['cte_ranked_customers']));
+    const rankedCustomers = collapsed.lineage.nodes.find((node) => node.id === 'cte_ranked_customers');
+
+    expect(rankedCustomers?.columns.find((column) => column.name === 'order_count')?.upstream).toEqual(
+      expect.arrayContaining([{ nodeId: 'table_orders', columnName: 'id' }]),
+    );
+    expect(rankedCustomers?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual(
+      expect.arrayContaining([{ nodeId: 'table_customers', columnName: 'id' }]),
+    );
+    expect(rankedCustomers?.columns.find((column) => column.name === 'order_count')?.upstream).not.toEqual(
+      expect.arrayContaining([{ nodeId: 'cte_customer_order_summary', columnName: 'order_count' }]),
+    );
+  });
+
   it('collects nested FROM subqueries as collapsible derived query block internals', () => {
     const { lineage } = analyzeSql(nestedDerivedSql);
     const groups = collectCollapsibleUpstreamGroups(lineage);

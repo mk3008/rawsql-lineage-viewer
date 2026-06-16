@@ -361,11 +361,39 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__edge-table_orders-cte_ranked_customers')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_customers-cte_ranked_customers')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_support_tickets-cte_ranked_customers')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-cte_ranked_customers').locator('.react-flow__edge-path').first()).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_customers-cte_ranked_customers').locator('.react-flow__edge-path').first()).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_support_tickets-cte_ranked_customers').locator('.react-flow__edge-path').first()).toBeVisible();
 
   await rankedCustomersNode.getByRole('button', { name: 'Expand Build ranked_customers' }).click();
   await expect(page.getByTestId('rf__node-cte_order_base')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
+});
+
+test('keeps table data flow lines visible when collapsing a sample CTE', async ({ page }) => {
+  await page.goto('/');
+
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  await expect(orderTotalsNode).toBeVisible();
+  await orderTotalsNode.getByRole('button', { name: 'Collapse inner query for order_totals' }).click();
+
+  await expect(orderTotalsNode).toContainText('Build order_totals');
+  await expect(page.getByTestId('rf__node-cte_recent_orders')).not.toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-cte_order_totals')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_order_totals')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-cte_order_totals').locator('.react-flow__edge-path').first()).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_order_totals').locator('.react-flow__edge-path').first()).toBeVisible();
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true }).click();
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute(
+    'style',
+    /stroke-width: 5/,
+  );
+  await expect(page.getByTestId('rf__edge-table_order_items-cte_order_totals').locator('.react-flow__edge-path').first()).toHaveAttribute(
+    'style',
+    /stroke-width: 5/,
+  );
 });
 
 test('can collapse nested derived subquery internals and expand them again', async ({ page }) => {

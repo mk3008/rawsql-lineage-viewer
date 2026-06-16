@@ -1,4 +1,4 @@
-import type { LineageEdge, LineageModel } from '../domain/lineage';
+import type { LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
 export interface CollapsedLineageGroup {
   id: string;
@@ -55,6 +55,7 @@ export function collapseLineageGroups(lineage: LineageModel, rootNodeIds: Set<st
     }
   }
 
+  const nodesById = new Map(lineage.nodes.map((node) => [node.id, node]));
   const nodes = lineage.nodes
     .filter((node) => !hiddenNodeIds.has(node.id))
     .map((node) => {
@@ -66,6 +67,7 @@ export function collapseLineageGroups(lineage: LineageModel, rootNodeIds: Set<st
       return {
         ...node,
         label: group.label,
+        columns: collapseRootColumns(node, nodesById, hiddenNodeIds),
       };
     });
 
@@ -81,6 +83,58 @@ export function collapseLineageGroups(lineage: LineageModel, rootNodeIds: Set<st
       edges,
     },
   };
+}
+
+function collapseRootColumns(
+  rootNode: LineageNode,
+  nodesById: Map<string, LineageNode>,
+  hiddenNodeIds: Set<string>,
+): LineageNode['columns'] {
+  return rootNode.columns.map((column) => ({
+    ...column,
+    upstream: collapseColumnRefs(column.upstream ?? [], nodesById, hiddenNodeIds, new Set()),
+  }));
+}
+
+function collapseColumnRefs(
+  refs: LineageColumnRef[],
+  nodesById: Map<string, LineageNode>,
+  hiddenNodeIds: Set<string>,
+  visitedColumnKeys: Set<string>,
+): LineageColumnRef[] {
+  const collapsedRefs = refs.flatMap((ref) => {
+    if (!hiddenNodeIds.has(ref.nodeId)) {
+      return [ref];
+    }
+
+    const key = `${ref.nodeId}:${ref.columnName}`;
+    if (visitedColumnKeys.has(key)) {
+      return [];
+    }
+
+    const hiddenNode = nodesById.get(ref.nodeId);
+    const hiddenColumn = hiddenNode?.columns.find((column) => column.name === ref.columnName);
+    if (!hiddenColumn) {
+      return [];
+    }
+
+    const nextVisited = new Set(visitedColumnKeys).add(key);
+    return collapseColumnRefs(hiddenColumn.upstream ?? [], nodesById, hiddenNodeIds, nextVisited);
+  });
+
+  return dedupeColumnRefs(collapsedRefs);
+}
+
+function dedupeColumnRefs(refs: LineageColumnRef[]): LineageColumnRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.nodeId}:${ref.columnName}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: string): CollapsedLineageGroup | null {
