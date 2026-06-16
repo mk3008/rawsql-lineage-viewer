@@ -542,14 +542,17 @@ test('can toggle column and header callouts independently', async ({ page }) => 
 
   const columnCallouts = page.getByRole('checkbox', { name: 'Column callouts' });
   const headerCallouts = page.getByRole('checkbox', { name: 'Header callouts' });
-  await expect(columnCallouts).toBeChecked();
+  await expect(columnCallouts).not.toBeChecked();
   await expect(headerCallouts).toBeChecked();
 
   const outputNode = page.getByTestId('rf__node-main_output');
-  await columnCallouts.uncheck();
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-selected/);
-  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'coalesce(ot.total_amount, 0)' })).toHaveCount(0);
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'coalesce(ot.total_amount, 0)' })).toBeVisible();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Total ordered amount per customer.' })).toHaveCount(0);
+
+  await columnCallouts.check();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Total ordered amount per customer.' })).toBeVisible();
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   await headerCallouts.uncheck();
@@ -962,6 +965,7 @@ test('shows all expanded columns without node resizing or vertical scrolling', a
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Column callouts' }).check();
 
   const outputNode = page.getByTestId('rf__node-main_output');
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
@@ -998,9 +1002,38 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputComment).toHaveCount(0);
 });
 
+test('shows CASE rules in the inspector and can highlight a single rule lineage', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1000 });
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
+  const paymentsNode = page.getByTestId('rf__node-table_payments');
+
+  await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector).toContainText('Rules');
+  await expect(inspector).toContainText('when ps.last_paid_at is null');
+  await expect(inspector).toContainText("Result'unknown'");
+  await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
+
+  await inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ }).click();
+
+  await expect(inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
+  await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(paymentsNode.getByRole('button', { name: 'paid_at', exact: true })).toHaveClass(/lineage-column-source/);
+  await expect(paymentSummaryNode.getByRole('button', { name: 'paid_amount', exact: true })).toHaveCount(0);
+  await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute(
+    'style',
+    /stroke-width: 5/,
+  );
+});
+
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Column callouts' }).check();
   await showAllColumns(page);
 
   const outputNode = page.getByTestId('rf__node-main_output');

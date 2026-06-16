@@ -15,6 +15,7 @@ import type { CommonTable, JoinClause, SourceExpression } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
+  LineageCaseRule,
   LineageColumnRef,
   LineageColumnUsageReason,
   LineageEdge,
@@ -451,6 +452,7 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
   return query.selectClause.items.map((item, index) => {
     const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     const comments = extractSelectItemComments(query.selectClause.items, index);
+    const caseRules = collectCaseRules(item.value, sources);
     const name = (() => {
     if (item.identifier) {
       return item.identifier.name;
@@ -464,11 +466,115 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       id: '',
       name,
       comments,
+      caseRules,
       expressionSql: formatExpressionSql(item.value),
       upstream,
       usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
     };
   });
+}
+
+function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
+  const cases = collectCaseExpressions(value);
+  if (cases.length === 0) {
+    return undefined;
+  }
+
+  const directSingleCase = cases.length === 1 && cases[0] === value;
+  const rules = cases.flatMap((caseExpression, caseIndex) => {
+    const caseLabel = directSingleCase ? undefined : `case ${caseIndex + 1}`;
+    return collectCaseExpressionRules(caseExpression, caseIndex, caseLabel, sources);
+  });
+  return rules.length > 0 ? rules : undefined;
+}
+
+function collectCaseExpressions(value: unknown): unknown[] {
+  const cases: unknown[] = [];
+  const visited = new Set<unknown>();
+
+  const visit = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || visited.has(current)) {
+      return;
+    }
+    visited.add(current);
+
+    if (isCaseExpressionLike(current)) {
+      cases.push(current);
+    }
+
+    for (const nested of Object.values(current)) {
+      if (Array.isArray(nested)) {
+        nested.forEach(visit);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(value);
+  return cases;
+}
+
+function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, caseLabel: string | undefined, sources: ResolvedSource[]): LineageCaseRule[] {
+  if (!isCaseExpressionLike(caseExpression)) {
+    return [];
+  }
+
+  const condition = caseExpression.condition;
+  const switchCase = caseExpression.switchCase;
+  const branches = Array.isArray(switchCase?.cases) ? switchCase.cases : [];
+  const conditionRefs = condition ? resolveColumnReferences(condition, sources) : [];
+  const rules: LineageCaseRule[] = [];
+
+  branches.forEach((branch, branchIndex) => {
+    if (!branch || typeof branch !== 'object') {
+      return;
+    }
+
+    const key = (branch as { key?: unknown }).key;
+    const result = (branch as { value?: unknown }).value;
+    const conditionSql = formatCaseConditionSql(condition, key);
+    const resultSql = formatExpressionSql(result);
+    rules.push({
+      id: `case_${caseIndex + 1}_when_${branchIndex + 1}`,
+      label: conditionSql ? `when ${conditionSql}` : `when ${branchIndex + 1}`,
+      caseLabel,
+      conditionSql,
+      resultSql,
+      conditionUpstream: mergeColumnRefs(conditionRefs, resolveColumnReferences(key, sources)),
+      resultUpstream: resolveColumnReferences(result, sources),
+    });
+  });
+
+  if (switchCase && 'elseValue' in switchCase && switchCase.elseValue) {
+    rules.push({
+      id: `case_${caseIndex + 1}_else`,
+      label: 'else',
+      caseLabel,
+      resultSql: formatExpressionSql(switchCase.elseValue),
+      conditionUpstream: [],
+      resultUpstream: resolveColumnReferences(switchCase.elseValue, sources),
+    });
+  }
+
+  return rules;
+}
+
+function isCaseExpressionLike(value: unknown): value is { condition?: unknown; switchCase?: { cases?: unknown[]; elseValue?: unknown } } {
+  return Boolean(value && typeof value === 'object' && value.constructor?.name === 'CaseExpression' && 'switchCase' in value);
+}
+
+function formatCaseConditionSql(condition: unknown, key: unknown): string | undefined {
+  const keySql = formatExpressionSql(key);
+  if (!condition) {
+    return keySql;
+  }
+
+  const conditionSql = formatExpressionSql(condition);
+  if (!conditionSql || !keySql) {
+    return conditionSql ?? keySql;
+  }
+  return `${conditionSql} = ${keySql}`;
 }
 
 function isGroupedSelectItem(value: unknown, query: SimpleSelectQuery): boolean {
@@ -677,6 +783,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
   for (const column of columns) {
     const name = typeof column === 'string' ? column : column.name;
     const comments = typeof column === 'string' ? undefined : column.comments;
+    const caseRules = typeof column === 'string' ? undefined : column.caseRules;
     const expressionSql = typeof column === 'string' ? undefined : column.expressionSql;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     const usage = typeof column === 'string' ? undefined : column.usage;
@@ -686,6 +793,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         id: `${nodeId}.${sanitizeId(name)}`,
         name,
         comments,
+        caseRules,
         expressionSql,
         upstream,
         usage,
@@ -697,6 +805,9 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
       }
       if (existing && comments && comments.length > 0) {
         existing.comments = mergeComments(existing.comments, comments);
+      }
+      if (existing && caseRules && caseRules.length > 0) {
+        existing.caseRules = caseRules;
       }
       if (existing && expressionSql) {
         existing.expressionSql = expressionSql;

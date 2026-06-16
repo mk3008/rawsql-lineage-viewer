@@ -551,6 +551,75 @@ textarea {
   gap: 8px;
 }
 
+.lineage-inspector-rule-list {
+  display: grid;
+  gap: 8px;
+}
+
+.lineage-inspector-rule-card {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+  border: 1px solid #e4ebf5;
+  border-radius: 7px;
+  padding: 9px 10px;
+  background: #fff;
+  color: #0f172a;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lineage-inspector-rule-card:hover {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+}
+
+.lineage-inspector-rule-card-active {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
+.lineage-inspector-rule-case {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.lineage-inspector-rule-label {
+  overflow: hidden;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lineage-inspector-rule-sql {
+  display: grid;
+  gap: 3px;
+}
+
+.lineage-inspector-rule-sql span {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.lineage-inspector-rule-sql code {
+  display: block;
+  overflow: auto;
+  border-radius: 6px;
+  padding: 6px 7px;
+  background: #f8fafc;
+  color: #0f172a;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  white-space: pre;
+}
+
 .lineage-inspector-column-card {
   display: grid;
   gap: 6px;

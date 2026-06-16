@@ -185,6 +185,66 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('records CASE expression rules with branch-level lineage', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        CASE
+          WHEN p.last_paid_at IS NULL THEN 'unknown'
+          WHEN p.last_paid_at < CURRENT_DATE THEN p.status
+          ELSE p.customer_id
+        END AS payment_status
+      FROM payments p
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const rules = outputNode?.columns.find((column) => column.name === 'payment_status')?.caseRules;
+
+    expect(rules).toHaveLength(3);
+    expect(rules?.[0]).toMatchObject({
+      id: 'case_1_when_1',
+      label: 'when p.last_paid_at is null',
+      conditionUpstream: [{ nodeId: 'table_payments', columnName: 'last_paid_at' }],
+      resultUpstream: [],
+    });
+    expect(rules?.[1]).toMatchObject({
+      id: 'case_1_when_2',
+      conditionUpstream: [{ nodeId: 'table_payments', columnName: 'last_paid_at' }],
+      resultUpstream: [{ nodeId: 'table_payments', columnName: 'status' }],
+    });
+    expect(rules?.[2]).toMatchObject({
+      id: 'case_1_else',
+      label: 'else',
+      conditionUpstream: [],
+      resultUpstream: [{ nodeId: 'table_payments', columnName: 'customer_id' }],
+    });
+  });
+
+  it('records simple and composite CASE expression rules', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        CASE p.status WHEN 'paid' THEN p.amount ELSE 0 END AS simple_case,
+        p.customer_id || CASE WHEN p.is_active THEN p.email ELSE p.name END AS composite_case,
+        CASE WHEN p.status = 'paid' THEN p.amount END || CASE WHEN p.status = 'failed' THEN p.customer_id END AS double_case
+      FROM payments p
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const simpleCase = outputNode?.columns.find((column) => column.name === 'simple_case')?.caseRules;
+    const compositeCase = outputNode?.columns.find((column) => column.name === 'composite_case')?.caseRules;
+    const doubleCase = outputNode?.columns.find((column) => column.name === 'double_case')?.caseRules;
+
+    expect(simpleCase?.[0]).toMatchObject({
+      label: "when p.status = 'paid'",
+      conditionUpstream: [{ nodeId: 'table_payments', columnName: 'status' }],
+      resultUpstream: [{ nodeId: 'table_payments', columnName: 'amount' }],
+    });
+    expect(compositeCase).toHaveLength(2);
+    expect(compositeCase?.[0]).toMatchObject({
+      caseLabel: 'case 1',
+      conditionUpstream: [{ nodeId: 'table_payments', columnName: 'is_active' }],
+      resultUpstream: [{ nodeId: 'table_payments', columnName: 'email' }],
+    });
+    expect(doubleCase?.map((rule) => rule.caseLabel)).toEqual(['case 1', 'case 2']);
+  });
+
   it('records title comments for output and derived nodes', () => {
     const { lineage } = analyzeSql(`
       -- Final output comment.

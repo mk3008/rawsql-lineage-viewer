@@ -14,10 +14,21 @@ export interface LineageColumnUsage {
   reasons?: LineageColumnUsageReason[];
 }
 
+export interface LineageCaseRule {
+  id: string;
+  label: string;
+  caseLabel?: string;
+  conditionSql?: string;
+  resultSql?: string;
+  conditionUpstream: LineageColumnRef[];
+  resultUpstream: LineageColumnRef[];
+}
+
 export interface LineageColumn {
   id: string;
   name: string;
   comments?: string[];
+  caseRules?: LineageCaseRule[];
   expressionSql?: string;
   upstream?: LineageColumnRef[];
   usage?: LineageColumnUsage;

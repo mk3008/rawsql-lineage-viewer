@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Play, Share2, Trash2 } from 'lucide-react';
-import { LineageGraph, LineageInspector, type InspectorSelection } from './components/LineageGraph';
+import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorSelection } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import type { GraphFlowDirection } from './graph/buildGraphModel';
 import { analyzeSql } from './lineage/rawsqlAdapter';
@@ -22,6 +22,7 @@ export function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
+  const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(() => readSqlHistory(initialSql));
@@ -65,6 +66,7 @@ export function App() {
     : null;
   const handleInspectorSelectionChange = useCallback((selection: InspectorSelection) => {
     setInspectorSelection(selection);
+    setCaseRuleSelection(null);
     if (selection) {
       setIsPanelOpen(true);
       setPanelTab('inspector');
@@ -73,6 +75,7 @@ export function App() {
   const openSql = useCallback((nextSql: string) => {
     setSql(nextSql);
     setLastAnalyzedSql(nextSql);
+    setCaseRuleSelection(null);
     setInspectorSelection(null);
     setShareStatus('idle');
     setSqlHistory((current) => saveSqlHistory(nextSql, current));
@@ -206,8 +209,16 @@ export function App() {
             </>
           ) : panelTab === 'inspector' ? (
             <LineageInspector
+              activeCaseRule={caseRuleSelection}
               onFocusNode={(nodeId) => {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
+              }}
+              onSelectCaseRule={(selection) => {
+                setCaseRuleSelection((current) =>
+                  current?.nodeId === selection.nodeId && current.columnId === selection.columnId && current.ruleId === selection.ruleId
+                    ? null
+                    : selection,
+                );
               }}
               selection={inspectorSelection}
             />
@@ -263,6 +274,7 @@ export function App() {
           {adapterResult ? (
             <>
               <LineageGraph
+                caseRuleSelection={caseRuleSelection}
                 flowDirection={flowDirection}
                 focusTarget={graphFocusTarget}
                 lineage={adapterResult.lineage}

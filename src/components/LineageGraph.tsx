@@ -14,7 +14,7 @@ import {
 import { Copy, ExternalLink, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
-import type { LineageColumn, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
@@ -34,6 +34,12 @@ interface SelectedColumn {
   columnId: string;
   columnName: string;
   nodeId: string;
+}
+
+export interface CaseRuleSelection {
+  columnId: string;
+  nodeId: string;
+  ruleId: string;
 }
 
 export type InspectorSelection =
@@ -62,11 +68,13 @@ interface InspectorColumnGroup {
 }
 
 export function LineageGraph({
+  caseRuleSelection,
   focusTarget,
   flowDirection,
   lineage,
   onInspectorSelectionChange,
 }: {
+  caseRuleSelection?: CaseRuleSelection | null;
   focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
   lineage: LineageModel;
@@ -88,7 +96,7 @@ export function LineageGraph({
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
-  const [showColumnCallouts, setShowColumnCallouts] = useState(true);
+  const [showColumnCallouts, setShowColumnCallouts] = useState(false);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
   const [showUnusedColumns, setShowUnusedColumns] = useState(true);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
@@ -181,9 +189,9 @@ export function LineageGraph({
   const columnHighlights = useMemo(
     () =>
       selectedColumn
-        ? resolveColumnHighlights(viewLineage.nodes, selectedColumn)
+        ? resolveColumnHighlights(viewLineage.nodes, selectedColumn, resolveSelectedCaseRuleRefs(viewLineage.nodes, selectedColumn, caseRuleSelection))
         : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
-    [selectedColumn, viewLineage.nodes],
+    [caseRuleSelection, selectedColumn, viewLineage.nodes],
   );
   const forcedVisibleColumnIds = useMemo(() => {
     const columnIds = new Set<string>();
@@ -216,15 +224,15 @@ export function LineageGraph({
   }, [inspectorSelection, onInspectorSelectionChange]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
-      if (!showColumnCallouts) {
-        return new Set<string>();
+      const targetIds = new Set<string>([columnCommentTargetId(selectedColumn.columnId)]);
+      if (showColumnCallouts) {
+        for (const columnId of columnHighlights.highlightedColumnIds) {
+          targetIds.add(columnCommentTargetId(columnId));
+        }
+        for (const columnId of columnHighlights.sourceColumnIds) {
+          targetIds.add(columnCommentTargetId(columnId));
+        }
       }
-
-      const targetIds = new Set([
-        columnCommentTargetId(selectedColumn.columnId),
-        ...[...columnHighlights.highlightedColumnIds].map(columnCommentTargetId),
-        ...[...columnHighlights.sourceColumnIds].map(columnCommentTargetId),
-      ]);
       for (const dismissedTargetId of dismissedCommentTargetIds) {
         targetIds.delete(dismissedTargetId);
       }
@@ -477,7 +485,17 @@ export function LineageGraph({
   );
 }
 
-export function LineageInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: string) => void; selection: InspectorSelection }) {
+export function LineageInspector({
+  activeCaseRule,
+  onFocusNode,
+  onSelectCaseRule,
+  selection,
+}: {
+  activeCaseRule?: CaseRuleSelection | null;
+  onFocusNode?: (nodeId: string) => void;
+  onSelectCaseRule?: (selection: CaseRuleSelection) => void;
+  selection: InspectorSelection;
+}) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const copyCteSql = async () => {
@@ -506,7 +524,7 @@ export function LineageInspector({ onFocusNode, selection }: { onFocusNode?: (no
       </div>
       {selection ? (
         selection.kind === 'column' ? (
-          <ColumnInspector onFocusNode={onFocusNode} selection={selection} />
+          <ColumnInspector activeCaseRule={activeCaseRule} onFocusNode={onFocusNode} onSelectCaseRule={onSelectCaseRule} selection={selection} />
         ) : (
           <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
         )
@@ -517,7 +535,17 @@ export function LineageInspector({ onFocusNode, selection }: { onFocusNode?: (no
   );
 }
 
-function ColumnInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: string) => void; selection: Extract<InspectorSelection, { kind: 'column' }> }) {
+function ColumnInspector({
+  activeCaseRule,
+  onFocusNode,
+  onSelectCaseRule,
+  selection,
+}: {
+  activeCaseRule?: CaseRuleSelection | null;
+  onFocusNode?: (nodeId: string) => void;
+  onSelectCaseRule?: (selection: CaseRuleSelection) => void;
+  selection: Extract<InspectorSelection, { kind: 'column' }>;
+}) {
   return (
     <div className="lineage-inspector-body">
       <section className="lineage-inspector-section">
@@ -525,6 +553,7 @@ function ColumnInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: st
         <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} />
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
+      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
       <InspectorColumnList emptyText="No unresolved source columns." items={selection.sources} onFocusNode={onFocusNode} title="Sources" />
       <InspectorUpstreamGroups groups={selection.upstreamGroups} onFocusNode={onFocusNode} />
       <InspectorColumnList emptyText="No downstream columns." items={selection.downstream} onFocusNode={onFocusNode} title="Downstream" />
@@ -615,6 +644,57 @@ function InspectorUpstreamGroups({ groups, onFocusNode }: { groups: InspectorCol
         <InspectorColumnList emptyText="No upstream columns." items={[]} title="Upstream" />
       )}
     </>
+  );
+}
+
+function InspectorCaseRules({
+  activeCaseRule,
+  item,
+  onSelectCaseRule,
+}: {
+  activeCaseRule?: CaseRuleSelection | null;
+  item: InspectorColumnItem;
+  onSelectCaseRule?: (selection: CaseRuleSelection) => void;
+}) {
+  const rules = item.column.caseRules ?? [];
+  if (rules.length === 0) {
+    return null;
+  }
+
+  return (
+    <section className="lineage-inspector-section">
+      <h3>
+        Rules <span>{rules.length}</span>
+      </h3>
+      <div className="lineage-inspector-rule-list">
+        {rules.map((rule) => {
+          const isActive =
+            activeCaseRule?.nodeId === item.node.id && activeCaseRule.columnId === item.column.id && activeCaseRule.ruleId === rule.id;
+          return (
+            <button
+              className={`lineage-inspector-rule-card ${isActive ? 'lineage-inspector-rule-card-active' : ''}`}
+              key={rule.id}
+              type="button"
+              onClick={() => onSelectCaseRule?.({ columnId: item.column.id, nodeId: item.node.id, ruleId: rule.id })}
+            >
+              {rule.caseLabel ? <span className="lineage-inspector-rule-case">{rule.caseLabel}</span> : null}
+              <span className="lineage-inspector-rule-label">{rule.label}</span>
+              {rule.conditionSql ? <InspectorRuleSql label="Condition" sql={rule.conditionSql} /> : null}
+              {rule.resultSql ? <InspectorRuleSql label="Result" sql={rule.resultSql} /> : null}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
+  return (
+    <span className="lineage-inspector-rule-sql">
+      <span>{label}</span>
+      <code>{sql}</code>
+    </span>
   );
 }
 
@@ -833,6 +913,7 @@ function formatInspectorUsage(column: LineageColumn) {
 function resolveColumnHighlights(
   nodes: LineageNode[],
   selectedColumn: SelectedColumn,
+  upstreamRefs?: LineageColumnRef[],
 ): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const downstreamByColumnKey = new Map<string, Array<{ columnName: string; nodeId: string }>>();
@@ -903,11 +984,54 @@ function resolveColumnHighlights(
     }
   };
 
-  visitUpstream(selectedColumn.nodeId, selectedColumn.columnName);
+  if (upstreamRefs && upstreamRefs.length > 0) {
+    for (const ref of upstreamRefs) {
+      highlightedEdgeIds.add(edgeKey(ref.nodeId, selectedColumn.nodeId));
+      visitUpstream(ref.nodeId, ref.columnName);
+    }
+  } else {
+    visitUpstream(selectedColumn.nodeId, selectedColumn.columnName);
+  }
   visitDownstream(selectedColumn.nodeId, selectedColumn.columnName);
   highlightedColumnIds.delete(selectedColumn.columnId);
   sourceColumnIds.delete(selectedColumn.columnId);
   return { highlightedColumnIds, highlightedEdgeIds, sourceColumnIds };
+}
+
+function resolveSelectedCaseRuleRefs(
+  nodes: LineageNode[],
+  selectedColumn: SelectedColumn,
+  caseRuleSelection?: CaseRuleSelection | null,
+): LineageColumnRef[] | undefined {
+  if (
+    !caseRuleSelection ||
+    caseRuleSelection.nodeId !== selectedColumn.nodeId ||
+    caseRuleSelection.columnId !== selectedColumn.columnId
+  ) {
+    return undefined;
+  }
+
+  const node = nodes.find((item) => item.id === selectedColumn.nodeId);
+  const column = node?.columns.find((item) => item.id === selectedColumn.columnId);
+  const rule = column?.caseRules?.find((item) => item.id === caseRuleSelection.ruleId);
+  if (!rule) {
+    return undefined;
+  }
+
+  return mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream);
+}
+
+function mergeInspectorColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {
+  const refs: LineageColumnRef[] = [];
+  const seen = new Set<string>();
+  for (const ref of [...left, ...right]) {
+    const key = columnKey(ref.nodeId, ref.columnName);
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push(ref);
+    }
+  }
+  return refs;
 }
 
 function columnKey(nodeId: string, columnName: string) {
