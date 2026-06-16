@@ -735,6 +735,26 @@ textarea {
   cursor: default;
 }
 
+.lineage-passthrough-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px dashed rgb(71 85 105 / 30%);
+  border-radius: 5px;
+  padding: 2px 5px;
+  background: rgb(255 255 255 / 48%);
+  color: #475569;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.3;
+}
+
+.lineage-passthrough-summary strong {
+  color: #0f172a;
+  font-size: 12px;
+}
+
 .lineage-group-summary {
   display: grid;
   gap: 9px;

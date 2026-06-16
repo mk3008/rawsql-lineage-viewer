@@ -30,6 +30,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
+  await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toBeChecked();
+  await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
@@ -70,6 +72,7 @@ test('renders outer join nullability context on data flows without separate join
 
 test('shows referenced columns and can hide columns per node', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const orderItemsNode = page.getByTestId('rf__node-table_order_items');
@@ -168,7 +171,7 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
 
   const expression = page.locator('.lineage-expression').filter({ hasText: 'case' });
-  const referenceColumn = outputNode.getByRole('button', { name: 'customer_id', exact: true });
+  const referenceColumn = outputNode.getByRole('button', { name: 'paid_amount', exact: true });
   await expect(expression).toHaveCSS('white-space', 'pre');
   await expect(expression).toHaveCSS('font-size', await referenceColumn.evaluate((element) => window.getComputedStyle(element).fontSize));
   await expect(expression).toHaveCSS('font-weight', await referenceColumn.evaluate((element) => window.getComputedStyle(element).fontWeight));
@@ -182,6 +185,7 @@ test('preserves formatted expression line breaks', async ({ page }) => {
 
 test('does not show column callouts for simple column references', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true }).click();
 
@@ -189,6 +193,21 @@ test('does not show column callouts for simple column references', async ({ page
     /lineage-column-selected/,
   );
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
+});
+
+test('compresses passthrough columns by default and can show them again', async ({ page }) => {
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const toggle = page.getByRole('checkbox', { name: 'Compress passthrough' });
+  await expect(toggle).toBeChecked();
+  await expect(outputNode.getByText('Passthrough')).toBeVisible();
+  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveCount(0);
+
+  await toggle.uncheck();
+
+  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(outputNode.getByText('Passthrough')).toHaveCount(0);
 });
 
 test('shows column callouts for literal expressions', async ({ page }) => {
@@ -377,6 +396,7 @@ test('does not copy a share URL when the SQL is too long', async ({ page }) => {
 
 test('can hide and show columns for all nodes', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('checkbox', { name: 'Compress passthrough' }).uncheck();
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -434,8 +454,10 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(collapsedCard).toHaveCSS('border-top-width', '2px');
   await expect(rankedCustomersNode).toContainText('Output');
   await expect(rankedCustomersNode).toContainText('Input');
-  await expect(rankedCustomersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
-  await expect(rankedCustomersNode.getByRole('button', { name: 'order_count', exact: true })).toBeVisible();
+  await expect(rankedCustomersNode.getByText('Passthrough')).toBeVisible();
+  await expect(rankedCustomersNode.getByTitle('2 passthrough columns hidden')).toBeVisible();
+  await expect(rankedCustomersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
+  await expect(rankedCustomersNode.getByRole('button', { name: 'order_count', exact: true })).toHaveCount(0);
   await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toBeVisible();
   await expect(rankedCustomersNode).toContainText('order_base');
   await expect(rankedCustomersNode).toContainText('customer_order_summary');
@@ -512,8 +534,10 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await expect(outerDerivedNode).toContainText('Group');
   await expect(outerDerivedNode).toContainText('Output');
   await expect(outerDerivedNode).toContainText('Input');
-  await expect(outerDerivedNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
-  await expect(outerDerivedNode.getByRole('button', { name: 'total_amount', exact: true })).toBeVisible();
+  await expect(outerDerivedNode.getByText('Passthrough')).toBeVisible();
+  await expect(outerDerivedNode.getByTitle('2 passthrough columns hidden')).toBeVisible();
+  await expect(outerDerivedNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
+  await expect(outerDerivedNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveCount(0);
   await expect(outerDerivedNode).toContainText('Subquery');
   await expect(outerDerivedNode).toContainText('q');
   await expect(derivedNodes).toHaveCount(1);

@@ -16,6 +16,7 @@ export type GraphNodeData = {
   activeCommentTargetId?: string | null;
   viewportZoom?: number;
   highlightedColumnIds?: Set<string>;
+  compressPassthroughColumns?: boolean;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;
   onCommentClose?: (targetId: string) => void;

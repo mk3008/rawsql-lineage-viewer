@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
+import { hasColumnCalloutContent, isPassthroughColumn } from '../lineage/columnDisplay';
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
@@ -86,9 +87,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           {data.collapsedGroup ? (
             <CollapsedGroupBody data={data} nodeId={node.id} />
           ) : node.columns.length > 0 ? (
-            node.columns.map((column) => (
-              <LineageColumnRow column={column} data={data} key={column.id} nodeId={node.id} />
-            ))
+            <LineageColumnList columns={node.columns} data={data} nodeId={node.id} />
           ) : (
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}
@@ -110,9 +109,7 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
       <div className="lineage-group-section">
         <div className="lineage-group-summary-title">Output</div>
         {data.lineageNode.columns.length > 0 ? (
-          data.lineageNode.columns.map((column) => (
-            <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
-          ))
+          <LineageColumnList columns={data.lineageNode.columns} data={data} nodeId={nodeId} />
         ) : (
           <div className="lineage-column lineage-column-muted">columns unresolved</div>
         )}
@@ -128,6 +125,47 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
           ))}
         </ul>
       </div>
+    </div>
+  );
+}
+
+function LineageColumnList({
+  columns,
+  data,
+  nodeId,
+}: {
+  columns: GraphNode['data']['lineageNode']['columns'];
+  data: GraphNode['data'];
+  nodeId: string;
+}) {
+  const shouldCompress = data.compressPassthroughColumns ?? true;
+  const visibleColumns = shouldCompress ? columns.filter((column) => !isCompressedPassthroughColumn(column, data)) : columns;
+  const compressedCount = shouldCompress ? columns.length - visibleColumns.length : 0;
+
+  return (
+    <>
+      {visibleColumns.map((column) => (
+        <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
+      ))}
+      {compressedCount > 0 ? <PassthroughSummary count={compressedCount} /> : null}
+    </>
+  );
+}
+
+function isCompressedPassthroughColumn(column: GraphNode['data']['lineageNode']['columns'][number], data: GraphNode['data']) {
+  return (
+    isPassthroughColumn(column) &&
+    data.selectedColumnId !== column.id &&
+    !(data.highlightedColumnIds?.has(column.id) ?? false) &&
+    !(data.sourceColumnIds?.has(column.id) ?? false) &&
+    !(data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false)
+  );
+}
+
+function PassthroughSummary({ count }: { count: number }) {
+  return (
+    <div className="lineage-passthrough-summary" title={`${count} passthrough columns hidden`}>
+      Passthrough <strong>{count}</strong>
     </div>
   );
 }
@@ -174,25 +212,6 @@ function LineageColumnRow({
       ) : null}
     </div>
   );
-}
-
-function hasColumnCalloutContent(column: GraphNode['data']['lineageNode']['columns'][number]) {
-  if (column.comments?.length) {
-    return true;
-  }
-  return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));
-}
-
-const sqlIdentifierPattern = String.raw`(?:"[^"]+"|` + '`[^`]+`' + String.raw`|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
-const simpleColumnReferencePattern = new RegExp(String.raw`^\s*${sqlIdentifierPattern}(?:\s*\.\s*${sqlIdentifierPattern})?\s*;?\s*$`);
-const literalKeywords = new Set(['false', 'null', 'true']);
-
-function isSimpleColumnReference(sql: string) {
-  const trimmedSql = sql.trim().replace(/;$/, '').trim();
-  if (literalKeywords.has(trimmedSql.toLowerCase())) {
-    return false;
-  }
-  return simpleColumnReferencePattern.test(trimmedSql);
 }
 
 function CommentBubble({

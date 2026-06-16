@@ -45,6 +45,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
+  const [compressPassthroughColumns, setCompressPassthroughColumns] = useState(true);
   const [viewportZoom, setViewportZoom] = useState(1);
   const allColumnsHidden = hiddenColumnNodeIds.size === viewLineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
@@ -178,6 +179,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           activeCommentTargetId,
           viewportZoom,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
+          compressPassthroughColumns,
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
@@ -187,6 +189,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
       columnHighlights.highlightedEdgeIds,
       columnHighlights.highlightedColumnIds,
       columnHighlights.sourceColumnIds,
+      compressPassthroughColumns,
       collapseUpstream,
       collapsedLineage.groups,
       collapsibleGroups,
@@ -287,6 +290,14 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         <label className="graph-callout-toggle">
           <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
           Header callouts
+        </label>
+        <label className="graph-callout-toggle">
+          <input
+            type="checkbox"
+            checked={compressPassthroughColumns}
+            onChange={(event) => setCompressPassthroughColumns(event.target.checked)}
+          />
+          Compress passthrough
         </label>
       </div>
       <ReactFlowProvider>
