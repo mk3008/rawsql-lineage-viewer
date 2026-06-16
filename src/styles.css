@@ -830,8 +830,8 @@ textarea {
 
 .react-flow__edge-text {
   fill: #047857;
-  font-size: 13px;
-  font-weight: 750;
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .react-flow__node {

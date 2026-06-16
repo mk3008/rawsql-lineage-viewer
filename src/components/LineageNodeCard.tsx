@@ -160,7 +160,7 @@ function LineageColumnRow({
       >
         {column.name}
       </button>
-      {isCommentSelected && (column.comments?.length || column.expressionSql) ? (
+      {isCommentSelected && hasColumnCalloutContent(column) ? (
         <CommentBubble
           anchorRef={columnRef}
           comments={column.comments}
@@ -174,6 +174,20 @@ function LineageColumnRow({
       ) : null}
     </div>
   );
+}
+
+function hasColumnCalloutContent(column: GraphNode['data']['lineageNode']['columns'][number]) {
+  if (column.comments?.length) {
+    return true;
+  }
+  return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));
+}
+
+const sqlIdentifierPattern = String.raw`(?:"[^"]+"|` + '`[^`]+`' + String.raw`|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
+const simpleColumnReferencePattern = new RegExp(String.raw`^\s*${sqlIdentifierPattern}(?:\s*\.\s*${sqlIdentifierPattern})?\s*;?\s*$`);
+
+function isSimpleColumnReference(sql: string) {
+  return simpleColumnReferencePattern.test(sql);
 }
 
 function CommentBubble({

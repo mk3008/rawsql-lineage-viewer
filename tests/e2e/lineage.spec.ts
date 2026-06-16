@@ -23,6 +23,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'oi' })).toBeVisible();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ot' })).toBeVisible();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ps' })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' }).first()).toHaveCSS('font-size', '15px');
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
   await expect(page.getByText('Flow direction')).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Downstream' })).not.toBeVisible();
@@ -177,6 +178,17 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   const initialTransform = await bubble.evaluate((element) => window.getComputedStyle(element).transform);
   await page.locator('.react-flow__controls-zoomin').click();
   await expect.poll(() => bubble.evaluate((element) => window.getComputedStyle(element).transform)).not.toBe(initialTransform);
+});
+
+test('does not show column callouts for simple column references', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true }).click();
+
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true })).toHaveClass(
+    /lineage-column-selected/,
+  );
+  await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 
 test('hides column callouts when any part of the anchor column is clipped outside the graph viewport', async ({ page }) => {
