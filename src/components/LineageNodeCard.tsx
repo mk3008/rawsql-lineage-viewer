@@ -185,9 +185,14 @@ function hasColumnCalloutContent(column: GraphNode['data']['lineageNode']['colum
 
 const sqlIdentifierPattern = String.raw`(?:"[^"]+"|` + '`[^`]+`' + String.raw`|\[[^\]]+\]|[A-Za-z_][\w$]*)`;
 const simpleColumnReferencePattern = new RegExp(String.raw`^\s*${sqlIdentifierPattern}(?:\s*\.\s*${sqlIdentifierPattern})?\s*;?\s*$`);
+const literalKeywords = new Set(['false', 'null', 'true']);
 
 function isSimpleColumnReference(sql: string) {
-  return simpleColumnReferencePattern.test(sql);
+  const trimmedSql = sql.trim().replace(/;$/, '').trim();
+  if (literalKeywords.has(trimmedSql.toLowerCase())) {
+    return false;
+  }
+  return simpleColumnReferencePattern.test(trimmedSql);
 }
 
 function CommentBubble({

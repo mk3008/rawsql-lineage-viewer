@@ -191,6 +191,16 @@ test('does not show column callouts for simple column references', async ({ page
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 
+test('shows column callouts for literal expressions', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill('select false as a');
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'a', exact: true }).click();
+
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'false' })).toBeVisible();
+});
+
 test('hides column callouts when any part of the anchor column is clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
 
