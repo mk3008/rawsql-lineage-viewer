@@ -1048,14 +1048,18 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
   await page.goto('/');
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
-    /* Monthly customer health report. */
+    /* Monthly customer health report.
+       Top-level header comment for comment export mode comparison. */
     with order_base as (
+      /* Pull only order rows that affect monthly customer health.
+         This CTE was originally copied from the billing report and has grown a few extra filters. */
       select o.id,o.customer_id,o.status,o.total_amount,o.created_at
       from orders o
       where o.created_at >= :report_from
         and o.status in (:paid_status,:shipped_status,:refunded_status)
     ),
     customer_order_summary as(
+      /* Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names. */
       select c.id customer_id,c.name,c.email,c.tier,
         count(ob.id) order_count,
         sum(case
@@ -1071,6 +1075,8 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
       group by c.id,c.name,c.email,c.tier
     ),
     support_pressure as (
+      /* Old support model:
+         any non-closed ticket should keep the account visible even when revenue is low. */
       select st.customer_id, count(st.id) open_ticket_count
       from support_tickets st
       where st.status <> 'closed'
@@ -1094,10 +1100,26 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
         when rc.order_count >= :repeat_order_count then :repeat_label
         else :standard_label
       end customer_segment,
-      rc.order_count,rc.gross_amount,rc.open_ticket_count,rc.last_order_at
+      rc.order_count,rc.gross_amount,rc.open_ticket_count,rc.last_order_at,
+      (
+        /* Kept as a subquery because the old export compared this value before joins were added. */
+        select count(*)
+        from orders o2
+        where o2.customer_id = rc.customer_id
+          and o2.created_at >= :recent_order_from
+          and o2.status <> :refunded_status
+      ) recent_order_count,
+      p.name favorite_product
     from ranked_customers rc
+    left join customer_favorites cf on cf.customer_id = rc.customer_id and cf.is_active = true
+    left join products p on p.id = cf.product_id
     where rc.tier_rank <= :tier_rank_limit
       and (rc.gross_amount >= :minimum_amount or rc.open_ticket_count > :open_ticket_threshold)
+      and exists(
+        /* Product team only wants customers with at least one active favorite in this screen. */
+        select 1 from customer_favorites cf2
+        where cf2.customer_id = rc.customer_id and cf2.is_active = true
+      )
     order by rc.tier asc, rc.gross_amount desc, rc.customer_id
   `);
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
@@ -1110,6 +1132,16 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
   await expect(inspector).toContainText('when rc.tier = :enterprise_tier');
   await expect(inspector).toContainText('when rc.open_ticket_count > :open_ticket_threshold');
   await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).not.toContainText('case');
+  await expect
+    .poll(() =>
+      inspector.evaluate((element) => {
+        const headings = Array.from(element.querySelectorAll('.lineage-inspector-section h3')).map((heading) =>
+          heading.textContent?.trim().replace(/\s+/g, ' '),
+        );
+        return headings.slice(0, 2);
+      }),
+    )
+    .toEqual(['Rules 4', 'Selected']);
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {

@@ -247,18 +247,24 @@ describe('rawsqlAdapter', () => {
 
   it('records CASE rules for a commented output CASE without AS alias', () => {
     const { lineage } = analyzeSql(`
-      /* Monthly customer health report. */
+      /* Monthly customer health report.
+         Top-level header comment for comment export mode comparison. */
       with order_base as (
+        /* Pull only order rows that affect monthly customer health.
+           This CTE was originally copied from the billing report and has grown a few extra filters. */
         select o.id,o.customer_id,o.status,o.total_amount,o.created_at
         from orders o
         where o.created_at >= :report_from
           and o.status in (:paid_status,:shipped_status,:refunded_status)
       ),
       customer_order_summary as(
+        /* Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names. */
         select c.id customer_id,c.name,c.email,c.tier,
           count(ob.id) order_count,
           sum(case
+            /* Refunds are operational noise for this score, but the row still proves the customer came back. */
             when ob.status = :refunded_status then 0
+            /* Paid and shipped share the same business meaning here. */
             else ob.total_amount
           end) gross_amount,
           max(ob.created_at) last_order_at
@@ -268,6 +274,8 @@ describe('rawsqlAdapter', () => {
         group by c.id,c.name,c.email,c.tier
       ),
       support_pressure as (
+        /* Old support model:
+           any non-closed ticket should keep the account visible even when revenue is low. */
         select st.customer_id, count(st.id) open_ticket_count
         from support_tickets st
         where st.status <> 'closed'

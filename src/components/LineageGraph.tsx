@@ -566,6 +566,7 @@ function ColumnInspector({
 
   return (
     <div className="lineage-inspector-body">
+      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
       <section className="lineage-inspector-section">
         <h3>Selected</h3>
         <InspectorColumnCard
@@ -575,7 +576,6 @@ function ColumnInspector({
         />
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
-      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
       <InspectorSourceGroups items={selection.sources} onFocusNode={onFocusNode} />
       <section className="lineage-inspector-section">
         <div className="lineage-inspector-tabs" role="tablist" aria-label="Lineage direction">
