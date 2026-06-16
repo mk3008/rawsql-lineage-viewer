@@ -160,7 +160,7 @@ function LineageColumnList({
   const shouldCompress = data.passthroughColumnsCompressed ?? false;
   const valueColumns = columns.filter((column) => !column.usage);
   const conditionColumns = columns.filter((column) => column.usage?.role === 'condition');
-  const unusedColumns = columns.filter((column) => column.usage?.role === 'unused');
+  const unusedColumns = data.showUnusedColumns === false ? [] : columns.filter((column) => column.usage?.role === 'unused');
   const visibleValueColumns = shouldCompress ? valueColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : valueColumns;
   const compressedCount = shouldCompress ? valueColumns.length - visibleValueColumns.length : 0;
 

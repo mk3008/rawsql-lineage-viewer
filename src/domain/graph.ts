@@ -17,6 +17,7 @@ export type GraphNodeData = {
   viewportZoom?: number;
   highlightedColumnIds?: Set<string>;
   passthroughColumnsCompressed?: boolean;
+  showUnusedColumns?: boolean;
   sourceColumnIds?: Set<string>;
   onColumnSelect?: (nodeId: string, column: LineageColumn) => void;
   onTogglePassthroughColumns?: (nodeId: string) => void;

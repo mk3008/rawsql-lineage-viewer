@@ -52,6 +52,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
+  const [showUnusedColumns, setShowUnusedColumns] = useState(true);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const resetZoom = useCallback(() => {
@@ -195,6 +196,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
           passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
+          showUnusedColumns,
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
@@ -219,6 +221,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
       viewportZoom,
       selectedColumn?.columnId,
       selectedCommentTargetIds,
+      showUnusedColumns,
       toggleColumns,
       togglePassthroughColumns,
     ],
@@ -318,6 +321,10 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
         <label className="graph-callout-toggle">
           <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
           Header callouts
+        </label>
+        <label className="graph-callout-toggle">
+          <input type="checkbox" checked={showUnusedColumns} onChange={(event) => setShowUnusedColumns(event.target.checked)} />
+          Unused columns
         </label>
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />

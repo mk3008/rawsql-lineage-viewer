@@ -41,9 +41,9 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
-  await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' })).not.toBeVisible();
-  await page.getByTestId('rf__node-cte_recent_orders').locator('.lineage-node-header').hover();
-  await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' })).toBeVisible();
+  const passthroughToggle = page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' });
+  await expect(passthroughToggle).toBeVisible();
+  await expect(passthroughToggle).toHaveCSS('opacity', '0.34');
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
@@ -152,6 +152,14 @@ test('groups condition-only and unused CTE columns into sections', async ({ page
   await expect(recentOrdersNode.getByText('Unused')).toBeVisible();
   await expect(recentOrdersNode.getByRole('button', { name: 'id', exact: true })).toHaveCSS('color', 'rgb(185, 28, 28)');
   await expect(recentOrdersNode.getByRole('button', { name: 'created_at', exact: true })).toHaveCSS('color', 'rgb(185, 28, 28)');
+
+  const unusedColumnsToggle = page.getByRole('checkbox', { name: 'Unused columns' });
+  await expect(unusedColumnsToggle).toBeChecked();
+  await unusedColumnsToggle.uncheck();
+  await expect(recentOrdersNode.getByText('Unused')).toHaveCount(0);
+  await expect(recentOrdersNode.getByRole('button', { name: 'id', exact: true })).toHaveCount(0);
+  await unusedColumnsToggle.check();
+  await expect(recentOrdersNode.getByText('Unused')).toBeVisible();
 
   await recentOrdersNode.getByRole('button', { name: 'status', exact: true }).click();
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Used by: WHERE' })).toBeVisible();
