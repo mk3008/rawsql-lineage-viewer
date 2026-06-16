@@ -350,10 +350,13 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
 
   const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
   await expect(rankedCustomersNode).toBeVisible();
+  const rankedCustomersFrame = page.getByTestId('lineage-group-frame').filter({ hasText: 'Build ranked_customers' });
+  await expect(rankedCustomersFrame).toContainText('Can collapse 3 CTEs');
   await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
 
   await expect(rankedCustomersNode).toContainText('Build ranked_customers');
   await expect(rankedCustomersNode).toContainText('3 CTEs hidden');
+  await expect(rankedCustomersFrame).toHaveCount(0);
   await expect(rankedCustomersNode).toContainText('3 source nodes');
   await expect(page.getByTestId('rf__node-cte_order_base')).not.toBeAttached();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).not.toBeAttached();
@@ -388,11 +391,14 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await expect(derivedNodes).toHaveCount(2);
   const outerDerivedNode = page.getByTestId('rf__node-derived_q_1');
   await expect(outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' })).toBeVisible();
+  const derivedFrame = page.getByTestId('lineage-group-frame').filter({ hasText: 'Build q' });
+  await expect(derivedFrame).toContainText('Can collapse 1 derived');
 
   await outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' }).click();
 
   await expect(outerDerivedNode).toContainText('Build q');
   await expect(outerDerivedNode).toContainText('1 derived hidden');
+  await expect(derivedFrame).toHaveCount(0);
   await expect(derivedNodes).toHaveCount(1);
   await expect(page.getByTestId('rf__edge-table_orders-derived_q_1')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_q_1-main_output')).toBeAttached();
