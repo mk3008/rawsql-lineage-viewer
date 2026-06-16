@@ -242,6 +242,16 @@ describe('rawsqlAdapter', () => {
     expect(recentOrders?.columns.find((column) => column.name === 'created_at')?.usage).toEqual({ role: 'unused' });
   });
 
+  it('classifies grouped output columns as GROUP BY usage before downstream joins', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const orderTotals = lineage.nodes.find((node) => node.id === 'cte_order_totals');
+
+    expect(orderTotals?.columns.find((column) => column.name === 'customer_id')?.usage).toEqual({
+      role: 'condition',
+      reasons: ['groupBy'],
+    });
+  });
+
   it('adds scalar subquery sources and condition columns to lineage', () => {
     const { lineage } = analyzeSql(`
       WITH ranked_customers AS (

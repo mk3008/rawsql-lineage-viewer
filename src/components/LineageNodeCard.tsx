@@ -4,7 +4,7 @@ import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 import type { LineageColumnUsageReason } from '../domain/lineage';
-import { hasColumnCalloutContent, isPassthroughColumn } from '../lineage/columnDisplay';
+import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference } from '../lineage/columnDisplay';
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
@@ -251,7 +251,7 @@ function LineageColumnRow({
         <CommentBubble
           anchorRef={columnRef}
           comments={column.comments}
-          expressionSql={column.expressionSql}
+          expressionSql={column.expressionSql && !isSimpleColumnReference(column.expressionSql) ? column.expressionSql : undefined}
           usageText={formatUsageText(column)}
           isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}

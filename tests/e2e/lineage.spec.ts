@@ -41,6 +41,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
+  await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' })).not.toBeVisible();
+  await page.getByTestId('rf__node-cte_recent_orders').locator('.lineage-node-header').hover();
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show passthrough columns for recent_orders' })).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
@@ -116,14 +118,16 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
   await expect(outputNode.getByText('customer_name')).toBeVisible();
 
   const expandedBox = await ordersNode.boundingBox();
-  await page.locator('button[aria-label="Hide columns for orders"]').click();
+  await ordersNode.locator('.lineage-node-header').hover();
+  await ordersNode.getByRole('button', { name: 'Hide columns for orders' }).click({ force: true });
   const collapsedBox = await ordersNode.boundingBox();
 
   await expect(ordersNode.getByText('order_date')).not.toBeVisible();
   await expect(orderItemsNode.getByText('unit_price')).toBeVisible();
   expect(collapsedBox?.height).toBeLessThan((expandedBox?.height ?? 0) - 20);
 
-  await page.locator('button[aria-label="Show columns for orders"]').click();
+  await ordersNode.locator('.lineage-node-header').hover();
+  await ordersNode.getByRole('button', { name: 'Show columns for orders' }).click({ force: true });
   await expect(ordersNode.getByText('order_date')).toBeVisible();
 });
 
@@ -151,6 +155,20 @@ test('groups condition-only and unused CTE columns into sections', async ({ page
 
   await recentOrdersNode.getByRole('button', { name: 'status', exact: true }).click();
   await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Used by: WHERE' })).toBeVisible();
+});
+
+test('shows GROUP BY usage without simple reference expression callouts', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
+  await page.goto('/');
+
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  await expect(orderTotalsNode.getByText('Condition')).toBeVisible();
+  await orderTotalsNode.getByRole('button', { name: 'customer_id', exact: true }).click();
+
+  const callout = page.getByTestId('lineage-comment').filter({ hasText: 'Used by: GROUP BY' });
+  await expect(callout).toBeVisible();
+  await expect(callout.locator('.lineage-expression')).toHaveCount(0);
+  await expect(callout).not.toContainText('Used by: JOIN');
 });
 
 test('renders scalar subquery table sources and condition columns', async ({ page }) => {
@@ -328,13 +346,15 @@ test('compresses passthrough columns by default and can show them per node', asy
   await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 
-  await recentOrdersNode.getByRole('button', { name: 'Show passthrough columns for recent_orders' }).click();
+  await recentOrdersNode.locator('.lineage-node-header').hover();
+  await recentOrdersNode.getByRole('button', { name: 'Show passthrough columns for recent_orders' }).click({ force: true });
 
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
   await expect(recentOrdersNode.getByText('Passthrough')).toHaveCount(0);
   await expect(recentOrdersNode.getByRole('button', { name: 'Compress passthrough columns for recent_orders' })).toBeVisible();
 
-  await recentOrdersNode.getByRole('button', { name: 'Compress passthrough columns for recent_orders' }).click();
+  await recentOrdersNode.locator('.lineage-node-header').hover();
+  await recentOrdersNode.getByRole('button', { name: 'Compress passthrough columns for recent_orders' }).click({ force: true });
 
   await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
@@ -368,6 +388,7 @@ test('keeps an all-passthrough summary to a single column row height', async ({ 
   expect((collapsedNodeBox?.height ?? 0) - (headerBox?.height ?? 0) - (bodyBox?.height ?? 0)).toBeLessThanOrEqual(2);
   expect(collapsedNodeBox?.height).toBeLessThanOrEqual(88);
 
+  await passNode.locator('.lineage-node-header').hover();
   await passNode.getByRole('button', { name: 'Show passthrough columns for pass' }).click();
   const firstColumn = passNode.getByRole('button', { name: 'id', exact: true });
   await expect(firstColumn).toBeVisible();
@@ -612,6 +633,7 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
 
   const rankedCustomersNode = page.getByTestId('rf__node-cte_ranked_customers');
   await expect(rankedCustomersNode).toBeVisible();
+  await rankedCustomersNode.locator('.lineage-node-header').hover();
   await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
 
   await expect(rankedCustomersNode).toContainText('Build ranked_customers');
@@ -639,6 +661,7 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__edge-table_customers-cte_ranked_customers').locator('.react-flow__edge-path').first()).toBeVisible();
   await expect(page.getByTestId('rf__edge-table_support_tickets-cte_ranked_customers').locator('.react-flow__edge-path').first()).toBeVisible();
 
+  await rankedCustomersNode.locator('.lineage-node-header').hover();
   await rankedCustomersNode.getByRole('button', { name: 'Expand Build ranked_customers' }).click();
   await expect(page.getByTestId('rf__node-cte_order_base')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).toBeVisible();
@@ -690,10 +713,12 @@ test('keeps dragged helper node positions and selected columns across group togg
   await rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true }).click();
   await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
 
+  await rankedCustomersNode.locator('.lineage-node-header').hover();
   await rankedCustomersNode.getByRole('button', { name: 'Collapse inner query for ranked_customers' }).click();
   await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
   await expect(helperNode).not.toBeAttached();
 
+  await rankedCustomersNode.locator('.lineage-node-header').hover();
   await rankedCustomersNode.getByRole('button', { name: 'Expand Build ranked_customers' }).click();
 
   await expect(helperNode).toBeVisible();
@@ -706,6 +731,7 @@ test('keeps table data flow lines visible when collapsing a sample CTE', async (
 
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
   await expect(orderTotalsNode).toBeVisible();
+  await orderTotalsNode.locator('.lineage-node-header').hover();
   await orderTotalsNode.getByRole('button', { name: 'Collapse inner query for order_totals' }).click();
 
   await expect(orderTotalsNode).toContainText('Build order_totals');
@@ -749,6 +775,7 @@ test('can collapse nested derived subquery internals and expand them again', asy
   const derivedNodes = page.getByTestId('lineage-node-derived');
   await expect(derivedNodes).toHaveCount(2);
   const outerDerivedNode = page.getByTestId('rf__node-derived_q_1');
+  await outerDerivedNode.locator('.lineage-node-header').hover();
   await expect(outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' })).toBeVisible();
 
   await outerDerivedNode.getByRole('button', { name: 'Collapse inner query for q' }).click();
@@ -767,6 +794,7 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await expect(page.getByTestId('rf__edge-table_orders-derived_q_1')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_q_1-main_output')).toBeAttached();
 
+  await outerDerivedNode.locator('.lineage-node-header').hover();
   await outerDerivedNode.getByRole('button', { name: 'Expand Build q' }).click();
   await expect(derivedNodes).toHaveCount(2);
 });

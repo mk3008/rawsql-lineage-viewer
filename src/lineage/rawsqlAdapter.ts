@@ -466,8 +466,20 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       comments,
       expressionSql: formatExpressionSql(item.value),
       upstream,
+      usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
     };
   });
+}
+
+function isGroupedSelectItem(value: unknown, query: SimpleSelectQuery): boolean {
+  const groupingRefs = collectColumnReferences(query.groupByClause?.grouping ?? []);
+  if (groupingRefs.length === 0) {
+    return false;
+  }
+  const valueRefs = collectColumnReferences(value);
+  return valueRefs.some((valueRef) =>
+    groupingRefs.some((groupRef) => valueRef.column.name === groupRef.column.name && valueRef.getNamespace() === groupRef.getNamespace()),
+  );
 }
 
 function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
@@ -756,6 +768,12 @@ function mergeColumnUsage(left: LineageColumn['usage'], right: LineageColumn['us
   }
   if (left.role === 'unused' || right.role === 'unused') {
     return left.role === 'unused' ? left : right;
+  }
+  if (left.reasons?.includes('groupBy')) {
+    return left;
+  }
+  if (right.reasons?.includes('groupBy')) {
+    return right;
   }
   return {
     role: 'condition',

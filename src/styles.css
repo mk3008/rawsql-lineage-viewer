@@ -556,15 +556,32 @@ textarea {
 }
 
 .node-icon-button {
+  box-sizing: border-box;
   display: inline-grid;
-  width: 24px;
+  width: 0;
   height: 24px;
   place-items: center;
-  border: 1px solid rgb(15 23 42 / 12%);
+  border: 0 solid transparent;
   border-radius: 6px;
+  padding: 0;
   background: rgb(255 255 255 / 62%);
   color: #334155;
   cursor: pointer;
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.lineage-node:hover .node-icon-button,
+.react-flow__node:hover .node-icon-button,
+.lineage-node:focus-within .node-icon-button {
+  width: 24px;
+  border-width: 1px;
+  border-color: rgb(15 23 42 / 12%);
+  opacity: 1;
+  pointer-events: auto;
+  visibility: visible;
 }
 
 .node-icon-button:hover {
