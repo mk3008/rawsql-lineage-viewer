@@ -396,13 +396,16 @@ textarea {
 .graph-zoom-indicator {
   min-width: 56px;
   justify-content: center;
+  cursor: pointer;
+  font-family: inherit;
 }
 
 .graph-column-toggle {
   cursor: pointer;
 }
 
-.graph-column-toggle:hover {
+.graph-column-toggle:hover,
+.graph-zoom-indicator:hover {
   border-color: #bfdbfe;
   background: #fff;
   color: #1d4ed8;
@@ -770,6 +773,7 @@ textarea {
 .lineage-comment-bubble-column {
   top: -4px;
   left: calc(100% + 10px);
+  max-width: min(420px, 70vw);
 }
 
 .lineage-comment-bubble-column::before {

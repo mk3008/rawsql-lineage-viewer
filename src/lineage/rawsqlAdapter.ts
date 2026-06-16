@@ -20,6 +20,7 @@ export interface ParserAdapterResult {
 }
 
 const parserVersion = 'rawsql-ts';
+const expressionLineMaxLength = 38;
 const rawsqlDemoFormatterOptions = {
   indentSize: 4,
   indentChar: 'space',
@@ -59,13 +60,17 @@ const rawsqlDemoFormatterOptions = {
 } as const;
 const expressionFormatterOptions = {
   ...rawsqlDemoFormatterOptions,
+  caseOneLine: false,
+  oneLineMaxLength: expressionLineMaxLength,
+  whenOneLine: false,
   sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
 };
 const expressionFormatter = new SqlFormatter(expressionFormatterOptions as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 const cteExecutableSqlFormatter = new SqlFormatter({
-  ...expressionFormatterOptions,
+  ...rawsqlDemoFormatterOptions,
   identifierEscape: 'quote',
   identifierEscapeTarget: 'minimal',
+  sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
@@ -578,10 +583,56 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
 function formatExpressionSql(value: unknown): string | undefined {
   try {
     const formatted = expressionFormatter.format(value as Parameters<SqlFormatter['format']>[0]).formattedSql.trim();
-    return formatted.length > 0 ? formatted : undefined;
+    const wrapped = wrapLongExpressionSql(formatted);
+    return wrapped.length > 0 ? wrapped : undefined;
   } catch {
     return undefined;
   }
+}
+
+function wrapLongExpressionSql(sql: string): string {
+  if (!sql.split('\n').some((line) => line.length > expressionLineMaxLength)) {
+    return sql;
+  }
+
+  return sql
+    .replace(/\bcase\s+when\b/gi, 'case\n    when')
+    .replace(/\s+when\s+/gi, '\n    when ')
+    .replace(/\s+then\s+/gi, ' then\n        ')
+    .replace(/\s+else\s+/gi, '\n    else\n        ')
+    .replace(/\s+end\b/gi, '\nend')
+    .split('\n')
+    .flatMap((line) => wrapExpressionLine(line, expressionLineMaxLength))
+    .join('\n');
+}
+
+function wrapExpressionLine(line: string, maxLength: number): string[] {
+  if (line.length <= maxLength) {
+    return [line];
+  }
+
+  const indent = line.match(/^\s*/)?.[0] ?? '';
+  const continuationIndent = `${indent}    `;
+  const tokens = line.trim().split(/\s+/);
+  const lines: string[] = [];
+  let current = indent;
+
+  for (const token of tokens) {
+    const separator = current.trim().length === 0 ? '' : ' ';
+    if (current.length + separator.length + token.length > maxLength && current.trim().length > 0) {
+      lines.push(current);
+      current = continuationIndent + token;
+      continue;
+    }
+
+    current += separator + token;
+  }
+
+  if (current.trim().length > 0) {
+    lines.push(current);
+  }
+
+  return lines;
 }
 
 function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['items'], index: number): string[] | undefined {

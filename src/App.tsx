@@ -13,7 +13,7 @@ export function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
-  const [flowDirection, setFlowDirection] = useState<GraphFlowDirection>('downstream');
+  const [flowDirection, setFlowDirection] = useState<GraphFlowDirection>('upstream');
 
   const analysis = useMemo(() => {
     try {

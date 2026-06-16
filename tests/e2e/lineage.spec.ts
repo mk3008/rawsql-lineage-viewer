@@ -26,8 +26,12 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' }).first()).toHaveCSS('font-size', '15px');
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
   await expect(page.getByRole('group', { name: 'Flow direction' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByRole('button', { name: 'Upstream' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByRole('button', { name: 'Upstream' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
+  await page.locator('.react-flow__controls-zoomin').click();
+  await expect(page.getByTestId('graph-zoom')).not.toHaveText('100%');
+  await page.getByRole('button', { name: 'Reset zoom to 100%' }).click();
   await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
@@ -44,26 +48,27 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
 
-test('can switch the graph flow direction upstream', async ({ page }) => {
+test('can switch the graph flow direction downstream', async ({ page }) => {
   await page.goto('/');
 
   const customersNode = page.getByTestId('rf__node-table_customers');
   const outputNode = page.getByTestId('rf__node-main_output');
-  const downstreamCustomersBox = await customersNode.boundingBox();
-  const downstreamOutputBox = await outputNode.boundingBox();
-  expect(downstreamCustomersBox).not.toBeNull();
-  expect(downstreamOutputBox).not.toBeNull();
-  expect(downstreamCustomersBox!.x).toBeLessThan(downstreamOutputBox!.x);
-
-  await page.getByRole('button', { name: 'Upstream' }).click();
-
   await expect(page.getByRole('button', { name: 'Upstream' })).toHaveAttribute('aria-pressed', 'true');
-  await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
   const upstreamCustomersBox = await customersNode.boundingBox();
   const upstreamOutputBox = await outputNode.boundingBox();
   expect(upstreamCustomersBox).not.toBeNull();
   expect(upstreamOutputBox).not.toBeNull();
   expect(upstreamOutputBox!.x).toBeLessThan(upstreamCustomersBox!.x);
+
+  await page.getByRole('button', { name: 'Downstream' }).click();
+
+  await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
+  const downstreamCustomersBox = await customersNode.boundingBox();
+  const downstreamOutputBox = await outputNode.boundingBox();
+  expect(downstreamCustomersBox).not.toBeNull();
+  expect(downstreamOutputBox).not.toBeNull();
+  expect(downstreamCustomersBox!.x).toBeLessThan(downstreamOutputBox!.x);
   await expect(page.getByTestId('rf__edge-table_customers-main_output')).toBeAttached();
 });
 
@@ -213,6 +218,30 @@ test('preserves formatted expression line breaks', async ({ page }) => {
   await expect.poll(() => bubble.evaluate((element) => window.getComputedStyle(element).transform)).not.toBe(initialTransform);
 });
 
+test('formats long expressions without horizontal scrolling', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT
+      CASE
+        WHEN q.total_tax - q.cumulative_adjustment_amount > 0 THEN q.total_tax - q.cumulative_adjustment_amount
+        ELSE 0
+      END AS adjusted_tax
+    FROM (
+      SELECT 100 AS total_tax, 20 AS cumulative_adjustment_amount
+    ) q
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'adjusted_tax', exact: true }).click();
+
+  const expression = page.locator('.lineage-expression').filter({ hasText: 'cumulative_adjustment_amount' });
+  await expect(expression).toBeVisible();
+  await expect(expression).toContainText('case\n');
+  const overflow = await expression.evaluate((element) => element.scrollWidth - element.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(1);
+});
+
 test('does not show column callouts for simple column references', async ({ page }) => {
   await page.goto('/');
 
@@ -294,6 +323,7 @@ test('shows column callouts for literal expressions', async ({ page }) => {
 
 test('hides column callouts when any part of the anchor column is clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: 'Downstream' }).click();
 
   const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
   await expect(paymentSummaryNode).toBeVisible();
@@ -336,6 +366,7 @@ test('hides column callouts when any part of the anchor column is clipped outsid
 
 test('hides column callouts when the bubble would be clipped outside the graph viewport', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: 'Downstream' }).click();
 
   const paymentSummaryNode = page.getByTestId('rf__node-cte_payment_summary');
   await expect(paymentSummaryNode).toBeVisible();
@@ -552,6 +583,7 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
 
 test('keeps dragged helper node positions and selected columns across group toggles', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: 'Downstream' }).click();
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
     WITH order_base AS (
@@ -751,6 +783,7 @@ test('highlights downstream output lineage when a source column is selected', as
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
   await page.goto('/');
+  await page.getByRole('button', { name: 'Downstream' }).click();
 
   const node = page.getByTestId('rf__node-table_orders');
   await expect(node).toBeVisible();

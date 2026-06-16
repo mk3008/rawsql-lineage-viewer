@@ -202,6 +202,25 @@ describe('rawsqlAdapter', () => {
     expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
   });
 
+  it('wraps long expression display SQL at token boundaries', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        CASE
+          WHEN q.total_tax - q.cumulative_adjustment_amount > 0 THEN q.total_tax - q.cumulative_adjustment_amount
+          ELSE 0
+        END AS adjusted_tax
+      FROM (
+        SELECT 100 AS total_tax, 20 AS cumulative_adjustment_amount
+      ) q
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const expressionSql = outputNode?.columns.find((column) => column.name === 'adjusted_tax')?.expressionSql;
+
+    expect(expressionSql).toContain('case\n');
+    expect(expressionSql).toContain('q.cumulative_adjustment_amount');
+    expect(expressionSql?.split('\n').every((line) => line.length <= 42)).toBe(true);
+  });
+
   it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {
     const { lineage } = analyzeSql(`
       SELECT q.customer_id, q.total_amount

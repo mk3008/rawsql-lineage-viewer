@@ -9,9 +9,11 @@ import {
   useEdgesState,
   useNodesState,
   type EdgeProps,
+  type ReactFlowInstance,
 } from '@xyflow/react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
@@ -25,6 +27,8 @@ const edgeTypes = {
   lineageDataFlow: LineageDataFlowEdge,
 };
 
+const defaultViewport = { x: 16, y: 72, zoom: 1 };
+
 interface SelectedColumn {
   columnId: string;
   columnName: string;
@@ -35,6 +39,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
+  const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
@@ -49,6 +54,10 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
+  const resetZoom = useCallback(() => {
+    void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
+    setViewportZoom(1);
+  }, []);
   const allColumnsHidden = hiddenColumnNodeIds.size === viewLineage.nodes.length;
   const toggleColumns = useCallback((nodeId: string) => {
     setHiddenColumnNodeIds((current) => {
@@ -164,7 +173,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
     showColumnCallouts,
     showHeaderCallouts,
   ]);
-  const graphNodes = useMemo(
+  const graphNodes = useMemo<GraphNode[]>(
     () =>
       graph.nodes.map((node) => ({
         ...node,
@@ -214,7 +223,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
       togglePassthroughColumns,
     ],
   );
-  const graphEdges = useMemo(
+  const graphEdges = useMemo<GraphEdge[]>(
     () =>
       graph.edges.map((edge) => {
         if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
@@ -310,9 +319,10 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
           <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
           Header callouts
         </label>
-        <span className="graph-zoom-indicator" aria-label="Graph zoom" data-testid="graph-zoom">
+        <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
+          <RotateCcw size={14} />
           {Math.round(viewportZoom * 100)}%
-        </span>
+        </button>
       </div>
       <ReactFlowProvider>
         <ReactFlow
@@ -322,8 +332,11 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          defaultViewport={{ x: 16, y: 72, zoom: 1 }}
-          onInit={() => setViewportZoom(1)}
+          defaultViewport={defaultViewport}
+          onInit={(instance) => {
+            flowInstanceRef.current = instance;
+            setViewportZoom(1);
+          }}
           onMove={(_, viewport) => setViewportZoom(viewport.zoom)}
           nodesDraggable
           nodesConnectable={false}
