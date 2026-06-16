@@ -22,6 +22,7 @@ export function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
+  const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(() => readSqlHistory(initialSql));
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
@@ -204,7 +205,12 @@ export function App() {
               </div>
             </>
           ) : panelTab === 'inspector' ? (
-            <LineageInspector selection={inspectorSelection} />
+            <LineageInspector
+              onFocusNode={(nodeId) => {
+                setGraphFocusTarget({ nodeId, nonce: Date.now() });
+              }}
+              selection={inspectorSelection}
+            />
           ) : (
             <SqlHistoryPanel
               history={sqlHistory}
@@ -256,7 +262,12 @@ export function App() {
 
           {adapterResult ? (
             <>
-              <LineageGraph flowDirection={flowDirection} lineage={adapterResult.lineage} onInspectorSelectionChange={handleInspectorSelectionChange} />
+              <LineageGraph
+                flowDirection={flowDirection}
+                focusTarget={graphFocusTarget}
+                lineage={adapterResult.lineage}
+                onInspectorSelectionChange={handleInspectorSelectionChange}
+              />
               <div className="graph-info" data-testid="graph-info">
                 <span>Tables <strong>{graphStats?.tables}</strong></span>
                 <span>CTEs <strong>{graphStats?.ctes}</strong></span>

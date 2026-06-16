@@ -14,7 +14,7 @@ import {
 import { Copy, ExternalLink, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
-import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageColumn, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
@@ -42,6 +42,7 @@ export type InspectorSelection =
       selected: InspectorColumnItem;
       sources: InspectorColumnItem[];
       upstream: InspectorColumnItem[];
+      upstreamGroups: InspectorColumnGroup[];
       downstream: InspectorColumnItem[];
     }
   | {
@@ -55,17 +56,25 @@ interface InspectorColumnItem {
   node: LineageNode;
 }
 
+interface InspectorColumnGroup {
+  alias?: string;
+  items: InspectorColumnItem[];
+}
+
 export function LineageGraph({
+  focusTarget,
   flowDirection,
   lineage,
   onInspectorSelectionChange,
 }: {
+  focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
   lineage: LineageModel;
   onInspectorSelectionChange?: (selection: InspectorSelection) => void;
 }) {
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
+  const graphShellRef = useRef<HTMLDivElement | null>(null);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
@@ -173,7 +182,7 @@ export function LineageGraph({
   );
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
-      return resolveInspectorColumnSelection(viewLineage.nodes, selectedColumn);
+      return resolveInspectorColumnSelection(viewLineage.nodes, viewLineage.edges, selectedColumn);
     }
 
     if (selectedNodeCommentTargetId) {
@@ -342,6 +351,38 @@ export function LineageGraph({
   }, [graphEdges, setEdges]);
 
   useEffect(() => {
+    if (!focusTarget) {
+      return;
+    }
+
+    const targetNode = nodes.find((node) => node.id === focusTarget.nodeId);
+    if (!targetNode) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const shell = graphShellRef.current;
+      if (!shell) {
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const width = targetNode.measured?.width ?? targetNode.width ?? 220;
+      const height = targetNode.measured?.height ?? targetNode.height ?? 140;
+      const zoom = Math.max(
+        0.35,
+        Math.min(viewportZoom, (shellRect.width - 72) / width, (shellRect.height - 120) / height, 1),
+      );
+      const x = shellRect.width / 2 - (targetNode.position.x + width / 2) * zoom;
+      const y = shellRect.height / 2 - (targetNode.position.y + height / 2) * zoom;
+
+      void flowInstanceRef.current?.setViewport({ x, y, zoom }, { duration: 220 });
+    }, 200);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [focusTarget, nodes, viewportZoom]);
+
+  useEffect(() => {
     setSelectedColumn(null);
     setSelectedNodeCommentTargetId(null);
     setActiveCommentTargetId(null);
@@ -352,7 +393,7 @@ export function LineageGraph({
   }, [lineage]);
 
   return (
-    <div className="graph-shell" data-testid="lineage-graph">
+    <div className="graph-shell" data-testid="lineage-graph" ref={graphShellRef}>
       <div className="graph-display-controls nodrag" aria-label="Graph display options">
         <button className="graph-column-toggle" type="button" onClick={toggleAllColumns}>
           {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
@@ -414,7 +455,7 @@ export function LineageGraph({
   );
 }
 
-export function LineageInspector({ selection }: { selection: InspectorSelection }) {
+export function LineageInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: string) => void; selection: InspectorSelection }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const copyCteSql = async () => {
@@ -443,7 +484,7 @@ export function LineageInspector({ selection }: { selection: InspectorSelection 
       </div>
       {selection ? (
         selection.kind === 'column' ? (
-          <ColumnInspector selection={selection} />
+          <ColumnInspector onFocusNode={onFocusNode} selection={selection} />
         ) : (
           <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
         )
@@ -454,24 +495,14 @@ export function LineageInspector({ selection }: { selection: InspectorSelection 
   );
 }
 
-function ColumnInspector({ selection }: { selection: Extract<InspectorSelection, { kind: 'column' }> }) {
-  const selected = selection.selected;
-  const expressionSql =
-    selected.column.expressionSql && !isSimpleColumnReference(selected.column.expressionSql) ? selected.column.expressionSql : undefined;
+function ColumnInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: string) => void; selection: Extract<InspectorSelection, { kind: 'column' }> }) {
   return (
     <div className="lineage-inspector-body">
-      <InspectorColumnCard item={selected} title="Selected" />
-      {selected.column.comments?.length ? <InspectorTextSection title="Comments" values={selected.column.comments} /> : null}
-      {expressionSql ? (
-        <section className="lineage-inspector-section">
-          <h3>Expression</h3>
-          <code className="lineage-inspector-code">{expressionSql}</code>
-        </section>
-      ) : null}
-      {selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selected.column)]} /> : null}
-      <InspectorColumnList title="Sources" items={selection.sources} emptyText="No unresolved source columns." />
-      <InspectorColumnList title="Upstream" items={selection.upstream} emptyText="No upstream columns." />
-      <InspectorColumnList title="Downstream" items={selection.downstream} emptyText="No downstream columns." />
+      <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} title="Selected" />
+      {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
+      <InspectorColumnList emptyText="No unresolved source columns." items={selection.sources} onFocusNode={onFocusNode} title="Sources" />
+      <InspectorUpstreamGroups groups={selection.upstreamGroups} onFocusNode={onFocusNode} />
+      <InspectorColumnList emptyText="No downstream columns." items={selection.downstream} onFocusNode={onFocusNode} title="Downstream" />
     </div>
   );
 }
@@ -513,7 +544,17 @@ function NodeInspector({
   );
 }
 
-function InspectorColumnList({ title, items, emptyText }: { title: string; items: InspectorColumnItem[]; emptyText: string }) {
+function InspectorColumnList({
+  emptyText,
+  items,
+  onFocusNode,
+  title,
+}: {
+  emptyText: string;
+  items: InspectorColumnItem[];
+  onFocusNode?: (nodeId: string) => void;
+  title: string;
+}) {
   return (
     <section className="lineage-inspector-section">
       <h3>
@@ -522,7 +563,7 @@ function InspectorColumnList({ title, items, emptyText }: { title: string; items
       {items.length > 0 ? (
         <div className="lineage-inspector-column-list">
           {items.map((item) => (
-            <InspectorColumnCard item={item} key={`${item.node.id}:${item.column.id}`} />
+            <InspectorColumnCard item={item} key={`${item.node.id}:${item.column.id}`} onFocusNode={onFocusNode} />
           ))}
         </div>
       ) : (
@@ -532,15 +573,40 @@ function InspectorColumnList({ title, items, emptyText }: { title: string; items
   );
 }
 
-function InspectorColumnCard({ item, title }: { item: InspectorColumnItem; title?: string }) {
+function InspectorUpstreamGroups({ groups, onFocusNode }: { groups: InspectorColumnGroup[]; onFocusNode?: (nodeId: string) => void }) {
+  return (
+    <>
+      {groups.length > 0 ? (
+        groups.map((group, index) => (
+          <InspectorColumnList
+            emptyText="No upstream columns."
+            items={group.items}
+            key={`${group.alias ?? 'direct'}:${index}`}
+            onFocusNode={onFocusNode}
+            title={group.alias ? `Upstream ${group.alias}` : 'Upstream'}
+          />
+        ))
+      ) : (
+        <InspectorColumnList emptyText="No upstream columns." items={[]} title="Upstream" />
+      )}
+    </>
+  );
+}
+
+function InspectorColumnCard({ item, onFocusNode, title }: { item: InspectorColumnItem; onFocusNode?: (nodeId: string) => void; title?: string }) {
   const expressionSql = item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
+  const focusNode = () => onFocusNode?.(item.node.id);
   return (
     <div className="lineage-inspector-column-card">
       {title ? <div className="lineage-inspector-card-title">{title}</div> : null}
-      <div className="lineage-inspector-column-name">{item.column.name}</div>
+      <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
+        {item.column.name}
+      </button>
       <div className="lineage-inspector-column-meta">
         <span className={`lineage-inspector-type lineage-inspector-type-${item.node.type}`}>{item.node.type}</span>
-        <span>{item.node.label}</span>
+        <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
+          {item.node.label}
+        </button>
       </div>
       {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
       {expressionSql ? <code className="lineage-inspector-inline-code">{expressionSql}</code> : null}
@@ -559,7 +625,11 @@ function InspectorTextSection({ title, values }: { title: string; values: string
   );
 }
 
-function resolveInspectorColumnSelection(nodes: LineageNode[], selectedColumn: SelectedColumn): Extract<InspectorSelection, { kind: 'column' }> | null {
+function resolveInspectorColumnSelection(
+  nodes: LineageNode[],
+  edges: LineageEdge[],
+  selectedColumn: SelectedColumn,
+): Extract<InspectorSelection, { kind: 'column' }> | null {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const selectedNode = nodesById.get(selectedColumn.nodeId);
   const selected = selectedNode?.columns.find((column) => column.id === selectedColumn.columnId);
@@ -568,7 +638,9 @@ function resolveInspectorColumnSelection(nodes: LineageNode[], selectedColumn: S
   }
 
   const downstreamByColumnKey = buildDownstreamColumnIndex(nodes);
+  const edgeAliasByNodePair = buildEdgeAliasIndex(edges);
   const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name);
+  const upstreamGroups = collectUpstreamColumnGroups(nodesById, edgeAliasByNodePair, selectedNode.id, selected.name);
   const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
   const sources = upstream.filter((item) => (item.column.upstream ?? []).length === 0);
   return {
@@ -576,8 +648,20 @@ function resolveInspectorColumnSelection(nodes: LineageNode[], selectedColumn: S
     selected: { column: selected, node: selectedNode },
     sources: dedupeInspectorColumns(sources),
     upstream: dedupeInspectorColumns(upstream),
+    upstreamGroups,
     downstream: dedupeInspectorColumns(downstream),
   };
+}
+
+function buildEdgeAliasIndex(edges: LineageEdge[]) {
+  const aliasByNodePair = new Map<string, string | undefined>();
+  for (const edge of edges) {
+    if (edge.type !== 'dataFlow') {
+      continue;
+    }
+    aliasByNodePair.set(edgeKey(edge.source, edge.target), edge.sourceAlias);
+  }
+  return aliasByNodePair;
 }
 
 function buildDownstreamColumnIndex(nodes: LineageNode[]) {
@@ -618,6 +702,56 @@ function collectUpstreamColumns(nodesById: Map<string, LineageNode>, nodeId: str
 
   visit(nodeId, columnName);
   return result;
+}
+
+function collectUpstreamColumnGroups(
+  nodesById: Map<string, LineageNode>,
+  edgeAliasByNodePair: Map<string, string | undefined>,
+  nodeId: string,
+  columnName: string,
+) {
+  const groups: InspectorColumnGroup[] = [];
+  const visited = new Set<string>();
+
+  const visit = (currentNodeId: string, currentColumnName: string) => {
+    const node = nodesById.get(currentNodeId);
+    const column = node?.columns.find((item) => item.name === currentColumnName);
+    if (!node || !column || visited.has(column.id)) {
+      return;
+    }
+
+    visited.add(column.id);
+    const refs = column.upstream ?? [];
+    const groupItemsByAlias = new Map<string, InspectorColumnItem[]>();
+    const aliasByKey = new Map<string, string | undefined>();
+
+    for (const ref of refs) {
+      const upstreamNode = nodesById.get(ref.nodeId);
+      const upstreamColumn = upstreamNode?.columns.find((item) => item.name === ref.columnName);
+      if (!upstreamNode || !upstreamColumn) {
+        continue;
+      }
+
+      const alias = edgeAliasByNodePair.get(edgeKey(ref.nodeId, currentNodeId));
+      const key = alias ?? '';
+      aliasByKey.set(key, alias);
+      groupItemsByAlias.set(key, [...(groupItemsByAlias.get(key) ?? []), { column: upstreamColumn, node: upstreamNode }]);
+    }
+
+    for (const [key, items] of groupItemsByAlias) {
+      const dedupedItems = dedupeInspectorColumns(items);
+      if (dedupedItems.length > 0) {
+        groups.push({ alias: aliasByKey.get(key), items: dedupedItems });
+      }
+    }
+
+    for (const ref of refs) {
+      visit(ref.nodeId, ref.columnName);
+    }
+  };
+
+  visit(nodeId, columnName);
+  return groups;
 }
 
 function collectDownstreamColumns(

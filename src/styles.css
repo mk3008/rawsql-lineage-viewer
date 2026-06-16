@@ -569,12 +569,25 @@ textarea {
 
 .lineage-inspector-column-name {
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
   color: #0f172a;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 13px;
   font-weight: 800;
+  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lineage-inspector-focus-button {
+  cursor: pointer;
+}
+
+.lineage-inspector-focus-button:hover {
+  color: #1d4ed8;
+  text-decoration: underline;
 }
 
 .lineage-inspector-column-meta,
@@ -587,8 +600,14 @@ textarea {
   font-size: 12px;
 }
 
-.lineage-inspector-column-meta span:last-child {
+.lineage-inspector-column-meta span:last-child,
+.lineage-inspector-node-link {
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

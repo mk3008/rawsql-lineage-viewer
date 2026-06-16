@@ -550,8 +550,13 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Selected');
   await expect(inspector).toContainText('Sources');
   await expect(inspector).toContainText('Upstream');
+  await expect(inspector).toContainText('Upstream ot');
+  await expect(inspector).toContainText('Upstream oi');
   await expect(inspector).toContainText('Downstream');
   await expect(inspector).toContainText('coalesce(ot.total_amount, 0)');
+  await expect(inspector.locator('.lineage-inspector-section h3', { hasText: 'Expression' })).toHaveCount(0);
+  await expect(inspector).toContainText('Total ordered amount per customer.');
+  await expect(inspector).toContainText('Extended line amount.');
 
   await page.getByRole('tab', { name: 'SQL' }).click();
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).toBeVisible();
@@ -564,6 +569,27 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Recent order line items used as the base sales fact.');
   await expect(inspector).toContainText('Open in viewer');
   await expect(inspector).toContainText('Copy SQL');
+});
+
+test('focuses the graph node when inspector column or table names are clicked', async ({ page }) => {
+  await page.setViewportSize({ width: 1000, height: 720 });
+  await page.goto('/');
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  const sourceCard = inspector.locator('.lineage-inspector-column-card').filter({ hasText: 'order_items' }).first();
+
+  await sourceCard.getByRole('button', { name: 'order_items' }).click();
+  await page.waitForTimeout(550);
+
+  const graphBox = await page.getByTestId('lineage-graph').boundingBox();
+  const nodeBox = await page.getByTestId('rf__node-table_order_items').boundingBox();
+  expect(graphBox).not.toBeNull();
+  expect(nodeBox).not.toBeNull();
+  expect(nodeBox!.x).toBeGreaterThanOrEqual(graphBox!.x);
+  expect(nodeBox!.x + nodeBox!.width).toBeLessThanOrEqual(graphBox!.x + graphBox!.width);
+  expect(nodeBox!.y).toBeGreaterThanOrEqual(graphBox!.y);
+  expect(nodeBox!.y + nodeBox!.height).toBeLessThanOrEqual(graphBox!.y + graphBox!.height);
 });
 
 test('records analyzed SQL in the history tab and can reopen it', async ({ page }) => {
