@@ -31,7 +31,9 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toBeChecked();
-  await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toBeVisible();
+  await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toBeVisible();
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
@@ -198,16 +200,19 @@ test('does not show column callouts for simple column references', async ({ page
 test('compresses passthrough columns by default and can show them again', async ({ page }) => {
   await page.goto('/');
 
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
   const toggle = page.getByRole('checkbox', { name: 'Compress passthrough' });
   await expect(toggle).toBeChecked();
-  await expect(outputNode.getByText('Passthrough')).toBeVisible();
-  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveCount(0);
+  await expect(outputNode.getByText('Passthrough')).toHaveCount(0);
+  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
+  await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 
   await toggle.uncheck();
 
-  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
-  await expect(outputNode.getByText('Passthrough')).toHaveCount(0);
+  await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(recentOrdersNode.getByText('Passthrough')).toHaveCount(0);
 });
 
 test('shows column callouts for literal expressions', async ({ page }) => {

@@ -138,7 +138,7 @@ function LineageColumnList({
   data: GraphNode['data'];
   nodeId: string;
 }) {
-  const shouldCompress = data.compressPassthroughColumns ?? true;
+  const shouldCompress = (data.compressPassthroughColumns ?? true) && data.lineageNode.type !== 'output';
   const visibleColumns = shouldCompress ? columns.filter((column) => !isCompressedPassthroughColumn(column, data)) : columns;
   const compressedCount = shouldCompress ? columns.length - visibleColumns.length : 0;
 
