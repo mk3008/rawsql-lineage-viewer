@@ -50,4 +50,23 @@ describe('buildGraphModel', () => {
     expect(orders?.position.x).toBe(orderItems?.position.x);
     expect(Math.abs((orders?.position.y ?? 0) - (orderItems?.position.y ?? 0))).toBeGreaterThanOrEqual(230);
   });
+
+  it('can render upstream direction from output back to source tables', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const downstream = buildGraphModel(lineage, 'downstream');
+    const upstream = buildGraphModel(lineage, 'upstream');
+
+    const downstreamCustomers = downstream.nodes.find((node) => node.id === 'table_customers');
+    const downstreamOutput = downstream.nodes.find((node) => node.id === 'main_output');
+    const upstreamCustomers = upstream.nodes.find((node) => node.id === 'table_customers');
+    const upstreamOutput = upstream.nodes.find((node) => node.id === 'main_output');
+    const upstreamCustomerEdge = upstream.edges.find((edge) => edge.id === 'table_customers-main_output');
+
+    expect(downstreamCustomers?.position.x).toBeLessThan(downstreamOutput?.position.x ?? 0);
+    expect(upstreamOutput?.position.x).toBeLessThan(upstreamCustomers?.position.x ?? 0);
+    expect(upstreamCustomerEdge).toMatchObject({
+      source: 'main_output',
+      target: 'table_customers',
+    });
+  });
 });

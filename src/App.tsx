@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { AlertTriangle, Cat, CheckCircle2, Code2, Eraser, PanelLeftClose, PanelLeftOpen, Play, Share2 } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
+import type { GraphFlowDirection } from './graph/buildGraphModel';
 import { analyzeSql } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
@@ -12,6 +13,7 @@ export function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
+  const [flowDirection, setFlowDirection] = useState<GraphFlowDirection>('downstream');
 
   const analysis = useMemo(() => {
     try {
@@ -147,6 +149,24 @@ export function App() {
 
         <section className="canvas-area">
           <div className="canvas-toolbar">
+            <div className="flow-direction-toggle" role="group" aria-label="Flow direction">
+              <button
+                aria-pressed={flowDirection === 'downstream'}
+                className={flowDirection === 'downstream' ? 'active' : ''}
+                type="button"
+                onClick={() => setFlowDirection('downstream')}
+              >
+                Downstream
+              </button>
+              <button
+                aria-pressed={flowDirection === 'upstream'}
+                className={flowDirection === 'upstream' ? 'active' : ''}
+                type="button"
+                onClick={() => setFlowDirection('upstream')}
+              >
+                Upstream
+              </button>
+            </div>
             <div className="legend">
               <span><i className="legend-dot table" />Table</span>
               <span><i className="legend-dot cte" />CTE</span>
@@ -159,7 +179,7 @@ export function App() {
 
           {adapterResult ? (
             <>
-              <LineageGraph lineage={adapterResult.lineage} />
+              <LineageGraph flowDirection={flowDirection} lineage={adapterResult.lineage} />
               <div className="graph-info" data-testid="graph-info">
                 <span>Tables <strong>{graphStats?.tables}</strong></span>
                 <span>CTEs <strong>{graphStats?.ctes}</strong></span>

@@ -64,6 +64,6 @@ export interface WorkspaceModel {
   sql: string;
   lineage: LineageModel;
   view: {
-    flowDirection: 'downstream';
+    flowDirection: 'downstream' | 'upstream';
   };
 }

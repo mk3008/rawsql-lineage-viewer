@@ -13,7 +13,7 @@ import {
 import { Eye, EyeOff } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
-import { buildGraphModel } from '../graph/buildGraphModel';
+import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { LineageNodeCard } from './LineageNodeCard';
 
@@ -31,14 +31,15 @@ interface SelectedColumn {
   nodeId: string;
 }
 
-export function LineageGraph({ lineage }: { lineage: LineageModel }) {
+export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphFlowDirection; lineage: LineageModel }) {
   const previousLineageRef = useRef(lineage);
+  const previousFlowDirectionRef = useRef(flowDirection);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
   const viewLineage = collapsedLineage.lineage;
-  const graph = useMemo(() => buildGraphModel(viewLineage), [viewLineage]);
+  const graph = useMemo(() => buildGraphModel(viewLineage, flowDirection), [flowDirection, viewLineage]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => new Set());
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
@@ -244,8 +245,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
 
   useEffect(() => {
-    if (previousLineageRef.current !== lineage) {
+    if (previousLineageRef.current !== lineage || previousFlowDirectionRef.current !== flowDirection) {
       previousLineageRef.current = lineage;
+      previousFlowDirectionRef.current = flowDirection;
       nodePositionsRef.current = new Map(graphNodes.map((node) => [node.id, node.position]));
       setNodes(graphNodes);
       return;
@@ -271,7 +273,7 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
         };
       });
     });
-  }, [graphNodes, lineage, setNodes]);
+  }, [flowDirection, graphNodes, lineage, setNodes]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -308,6 +310,9 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
           Header callouts
         </label>
+        <span className="graph-zoom-indicator" aria-label="Graph zoom" data-testid="graph-zoom">
+          {Math.round(viewportZoom * 100)}%
+        </span>
       </div>
       <ReactFlowProvider>
         <ReactFlow
@@ -317,12 +322,11 @@ export function LineageGraph({ lineage }: { lineage: LineageModel }) {
           edgeTypes={edgeTypes}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
-          onInit={(instance) => setViewportZoom(instance.getZoom())}
+          defaultViewport={{ x: 16, y: 72, zoom: 1 }}
+          onInit={() => setViewportZoom(1)}
           onMove={(_, viewport) => setViewportZoom(viewport.zoom)}
           nodesDraggable
           nodesConnectable={false}
-          fitView
-          fitViewOptions={{ padding: 0.2 }}
           minZoom={0.35}
           maxZoom={1.6}
           proOptions={{ hideAttribution: true }}

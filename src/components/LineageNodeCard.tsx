@@ -11,11 +11,13 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const nodeRef = useRef<HTMLDivElement>(null);
   const canTogglePassthrough = node.type !== 'output' && node.columns.some(isPassthroughColumn);
   const passthroughCompressed = data.passthroughColumnsCompressed ?? false;
+  const isPassthroughOnly =
+    columnsVisible && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
 
   return (
     <div
       ref={nodeRef}
-      className={`lineage-node lineage-node-${node.type} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'}`}
+      className={`lineage-node lineage-node-${node.type} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
       data-testid={`lineage-node-${node.type}`}
     >
       <Handle type="target" position={Position.Left} />

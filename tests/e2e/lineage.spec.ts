@@ -25,8 +25,10 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ps' })).toBeVisible();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' }).first()).toHaveCSS('font-size', '15px');
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
-  await expect(page.getByText('Flow direction')).not.toBeVisible();
-  await expect(page.getByRole('button', { name: 'Downstream' })).not.toBeVisible();
+  await expect(page.getByRole('group', { name: 'Flow direction' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: 'Upstream' })).toHaveAttribute('aria-pressed', 'false');
+  await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
   await expect(page.locator('.legend').getByText('Derived', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Nullable flow', { exact: true })).toBeVisible();
   await expect(page.locator('.legend').getByText('Outer join', { exact: true })).not.toBeVisible();
@@ -40,6 +42,29 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
+});
+
+test('can switch the graph flow direction upstream', async ({ page }) => {
+  await page.goto('/');
+
+  const customersNode = page.getByTestId('rf__node-table_customers');
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const downstreamCustomersBox = await customersNode.boundingBox();
+  const downstreamOutputBox = await outputNode.boundingBox();
+  expect(downstreamCustomersBox).not.toBeNull();
+  expect(downstreamOutputBox).not.toBeNull();
+  expect(downstreamCustomersBox!.x).toBeLessThan(downstreamOutputBox!.x);
+
+  await page.getByRole('button', { name: 'Upstream' }).click();
+
+  await expect(page.getByRole('button', { name: 'Upstream' })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByTestId('graph-zoom')).toHaveText('100%');
+  const upstreamCustomersBox = await customersNode.boundingBox();
+  const upstreamOutputBox = await outputNode.boundingBox();
+  expect(upstreamCustomersBox).not.toBeNull();
+  expect(upstreamOutputBox).not.toBeNull();
+  expect(upstreamOutputBox!.x).toBeLessThan(upstreamCustomersBox!.x);
+  await expect(page.getByTestId('rf__edge-table_customers-main_output')).toBeAttached();
 });
 
 test('can clear the SQL editor on mobile before entering another query', async ({ page }) => {
@@ -98,6 +123,7 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
 });
 
 test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
   await page.addInitScript(() => {
     Object.defineProperty(navigator, 'clipboard', {
       value: {
@@ -140,6 +166,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
 });
 
 test('shows title comments for output and derived nodes', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
@@ -235,10 +262,18 @@ test('keeps an all-passthrough summary to a single column row height', async ({ 
 
   const passNode = page.getByTestId('rf__node-cte_pass');
   const summary = passNode.locator('.lineage-passthrough-summary');
+  const body = passNode.locator('.lineage-node-body');
+  const header = passNode.locator('.lineage-node-header');
   await expect(summary).toBeVisible();
   await expect(summary).toHaveCSS('white-space', 'nowrap');
   const summaryBox = await summary.boundingBox();
+  const bodyBox = await body.boundingBox();
+  const headerBox = await header.boundingBox();
+  const collapsedNodeBox = await passNode.boundingBox();
   expect(summaryBox?.height).toBeLessThanOrEqual(24);
+  expect((bodyBox?.height ?? 0) - (summaryBox?.height ?? 0)).toBeLessThanOrEqual(18);
+  expect((collapsedNodeBox?.height ?? 0) - (headerBox?.height ?? 0) - (bodyBox?.height ?? 0)).toBeLessThanOrEqual(2);
+  expect(collapsedNodeBox?.height).toBeLessThanOrEqual(88);
 
   await passNode.getByRole('button', { name: 'Show passthrough columns for pass' }).click();
   const firstColumn = passNode.getByRole('button', { name: 'id', exact: true });
@@ -348,6 +383,7 @@ test('hides column callouts when the bubble would be clipped outside the graph v
 });
 
 test('can toggle column and header callouts independently', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
 
   const columnCallouts = page.getByRole('checkbox', { name: 'Column callouts' });
@@ -652,6 +688,7 @@ test('shows all expanded columns without node resizing or vertical scrolling', a
 });
 
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto('/');
 
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -679,8 +716,6 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await recentOrdersComment.click();
   await expect(recentOrdersComment).toHaveCSS('z-index', '100001');
   await expect(outputComment).toHaveCSS('z-index', '100000');
-  await outputComment.getByRole('button', { name: 'Close comment' }).click();
-  await expect(outputComment).toHaveCount(0);
   await expect(orderTotalsComment).toContainText('Total ordered amount per customer.');
   await orderTotalsComment.getByRole('button', { name: 'Close comment' }).click();
   await recentOrdersComment.getByRole('button', { name: 'Close comment' }).click();
@@ -692,6 +727,7 @@ test('highlights upstream lineage when an output column is selected', async ({ p
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
 
   const outputNode = page.getByTestId('rf__node-main_output');

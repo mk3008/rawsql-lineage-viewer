@@ -1,6 +1,8 @@
 import type { GraphEdge, GraphModel } from '../domain/graph';
 import type { LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
+export type GraphFlowDirection = 'downstream' | 'upstream';
+
 const nodeSize = {
   width: 220,
   height: 120,
@@ -11,9 +13,10 @@ const layoutSpacing = {
   y: 300,
 };
 
-export function buildGraphModel(lineage: LineageModel): GraphModel {
+export function buildGraphModel(lineage: LineageModel, flowDirection: GraphFlowDirection = 'downstream'): GraphModel {
   const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
-  const positioned = layoutNodes(lineage.nodes, visibleEdges);
+  const layoutEdges = flowDirection === 'upstream' ? visibleEdges.map(reverseLineageEdge) : visibleEdges;
+  const positioned = layoutNodes(lineage.nodes, layoutEdges);
 
   return {
     nodes: positioned.map((node) => ({
@@ -25,7 +28,7 @@ export function buildGraphModel(lineage: LineageModel): GraphModel {
         lineageNode: node.lineageNode,
       },
     })),
-    edges: visibleEdges.map(toGraphEdge),
+    edges: visibleEdges.map((edge) => toGraphEdge(edge, flowDirection)),
   };
 }
 
@@ -106,12 +109,22 @@ function calculateDepths(nodes: LineageNode[], edges: LineageEdge[]): Map<string
   return depthByNode;
 }
 
-function toGraphEdge(edge: LineageEdge): GraphEdge {
+function reverseLineageEdge(edge: LineageEdge): LineageEdge {
+  return {
+    ...edge,
+    source: edge.target,
+    target: edge.source,
+  };
+}
+
+function toGraphEdge(edge: LineageEdge, flowDirection: GraphFlowDirection): GraphEdge {
   const isNullableByOuterJoin = edge.joinNullability?.reason === 'outerJoin';
+  const source = flowDirection === 'upstream' ? edge.target : edge.source;
+  const target = flowDirection === 'upstream' ? edge.source : edge.target;
   return {
     id: edge.id,
-    source: edge.source,
-    target: edge.target,
+    source,
+    target,
     type: 'lineageDataFlow',
     label: edge.sourceAlias,
     labelBgPadding: edge.sourceAlias ? [6, 3] : undefined,
