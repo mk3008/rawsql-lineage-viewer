@@ -220,6 +220,30 @@ test('compresses passthrough columns by default and can show them per node', asy
   await expect(recentOrdersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 });
 
+test('keeps an all-passthrough summary to a single column row height', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH pass AS (
+      SELECT c.id, c.name, c.email
+      FROM customers c
+    )
+    SELECT p.id, p.name, p.email
+    FROM pass p
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const passNode = page.getByTestId('rf__node-cte_pass');
+  const summary = passNode.locator('.lineage-passthrough-summary');
+  await expect(summary).toBeVisible();
+  await expect(summary).toHaveCSS('white-space', 'nowrap');
+  const summaryBox = await summary.boundingBox();
+  expect(summaryBox?.height).toBeLessThanOrEqual(24);
+
+  await passNode.getByRole('button', { name: 'Show passthrough columns for pass' }).click();
+  await expect(passNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
+});
+
 test('shows column callouts for literal expressions', async ({ page }) => {
   await page.goto('/');
 

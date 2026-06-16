@@ -740,19 +740,22 @@ textarea {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  box-sizing: border-box;
   border: 1px dashed rgb(71 85 105 / 30%);
   border-radius: 5px;
   padding: 2px 5px;
   background: rgb(255 255 255 / 48%);
   color: #475569;
-  font-size: 12px;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
   font-weight: 750;
   line-height: 1.3;
+  white-space: nowrap;
 }
 
 .lineage-passthrough-summary strong {
   color: #0f172a;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .lineage-group-summary {
