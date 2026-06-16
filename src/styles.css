@@ -97,6 +97,12 @@ textarea {
   font-weight: 650;
 }
 
+.github-mark {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+}
+
 .header-actions {
   display: inline-flex;
   align-items: center;
@@ -170,19 +176,44 @@ textarea {
   border-bottom: 1px solid #e8edf5;
 }
 
-.panel-heading span {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-weight: 750;
-}
-
 .panel-heading-actions {
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
   min-width: 0;
+}
+
+.panel-tabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.panel-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.panel-tabs button + button {
+  border-left: 1px solid #d8e2ef;
+}
+
+.panel-tabs button.active {
+  background: #2563eb;
+  color: #fff;
 }
 
 .text-button {
@@ -365,11 +396,6 @@ textarea {
   background: #fbfdff;
 }
 
-.graph-shell .react-flow {
-  position: relative;
-  z-index: 1;
-}
-
 .graph-display-controls {
   position: absolute;
   z-index: 8;
@@ -429,33 +455,11 @@ textarea {
 }
 
 .lineage-inspector {
-  position: absolute;
-  z-index: 50000;
-  top: 58px;
-  right: 12px;
-  bottom: 12px;
   display: grid;
   grid-template-rows: auto 1fr;
-  width: min(360px, calc(100% - 24px));
+  min-height: 0;
   overflow: hidden;
-  border: 1px solid #d8e2ef;
-  border-radius: 8px;
-  background: rgb(255 255 255 / 96%);
-  box-shadow: 0 18px 40px rgb(15 23 42 / 18%);
-  visibility: visible;
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    opacity 140ms ease,
-    transform 140ms ease,
-    visibility 140ms ease;
-}
-
-.lineage-inspector-closed {
-  visibility: hidden;
-  pointer-events: none;
-  opacity: 0;
-  transform: translateX(16px);
+  background: #fff;
 }
 
 .lineage-inspector-header {
@@ -485,25 +489,6 @@ textarea {
   line-height: 1.25;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.lineage-inspector-close {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  place-items: center;
-  border: 1px solid transparent;
-  border-radius: 6px;
-  background: transparent;
-  color: #64748b;
-  cursor: pointer;
-}
-
-.lineage-inspector-close:hover {
-  border-color: #bfdbfe;
-  background: #eff6ff;
-  color: #1d4ed8;
 }
 
 .lineage-inspector-body {
@@ -673,6 +658,107 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.sql-history {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  overflow: hidden;
+  background: #fff;
+}
+
+.sql-history-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 14px;
+  border-bottom: 1px solid #e4ebf5;
+}
+
+.sql-history-heading h2 {
+  margin: 0;
+  color: #0f172a;
+  font-size: 15px;
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.sql-history-list {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 14px;
+}
+
+.sql-history-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+  border: 1px solid #e4ebf5;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.sql-history-main {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 0;
+  padding: 9px 10px;
+  background: transparent;
+  color: #0f172a;
+  cursor: pointer;
+  text-align: left;
+}
+
+.sql-history-main:hover {
+  background: #f8fafc;
+}
+
+.sql-history-title {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-history-time {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.sql-history-main code {
+  overflow: hidden;
+  color: #475569;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sql-history-remove {
+  display: inline-grid;
+  width: 32px;
+  min-height: 100%;
+  place-items: center;
+  border: 0;
+  border-left: 1px solid #e4ebf5;
+  border-radius: 0 7px 7px 0;
+  background: #f8fafc;
+  color: #64748b;
+  cursor: pointer;
+}
+
+.sql-history-remove:hover {
+  background: #fee2e2;
+  color: #b91c1c;
 }
 
 .lineage-node {
@@ -1290,16 +1376,4 @@ textarea {
     justify-content: flex-start;
   }
 
-  .lineage-inspector {
-    top: auto;
-    right: 10px;
-    bottom: 10px;
-    left: 10px;
-    width: auto;
-    max-height: 42%;
-  }
-
-  .lineage-inspector-closed {
-    transform: translateY(16px);
-  }
 }

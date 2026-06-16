@@ -539,8 +539,11 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
 
+  await expect(page.getByRole('tab', { name: 'SQL' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'false');
   const outputNode = page.getByTestId('rf__node-main_output');
   await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+  await expect(page.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true');
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText('total_amount');
@@ -550,9 +553,9 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Downstream');
   await expect(inspector).toContainText('coalesce(ot.total_amount, 0)');
 
-  await inspector.getByRole('button', { name: 'Close inspector' }).click();
-  await expect(inspector).not.toBeVisible();
-  await page.getByRole('button', { name: 'Inspector' }).click();
+  await page.getByRole('tab', { name: 'SQL' }).click();
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toBeVisible();
+  await page.getByRole('tab', { name: 'Inspector' }).click();
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText('total_amount');
 
@@ -561,6 +564,30 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Recent order line items used as the base sales fact.');
   await expect(inspector).toContainText('Open in viewer');
   await expect(inspector).toContainText('Copy SQL');
+});
+
+test('records analyzed SQL in the history tab and can reopen it', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill('SELECT u.id, u.name FROM users u');
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await expect(page.getByTestId('rf__node-table_users')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'History' }).click();
+  const history = page.getByTestId('sql-history');
+  await expect(history).toBeVisible();
+  await expect(history).toContainText('SELECT u.id, u.name FROM users u');
+
+  await page.getByRole('tab', { name: 'SQL' }).click();
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill('SELECT a.id FROM accounts a');
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await expect(page.getByTestId('rf__node-table_accounts')).toBeVisible();
+
+  await page.getByRole('tab', { name: 'History' }).click();
+  await history.locator('.sql-history-main').filter({ hasText: 'SELECT u.id, u.name FROM users u' }).click();
+  await expect(page.getByTestId('rf__node-table_users')).toBeVisible();
+  await page.getByRole('tab', { name: 'SQL' }).click();
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).toHaveValue('SELECT u.id, u.name FROM users u');
 });
 
 test('opens SQL from the sql hash parameter on first load', async ({ page }) => {

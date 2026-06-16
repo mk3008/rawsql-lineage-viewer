@@ -11,7 +11,7 @@ import {
   type EdgeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Copy, ExternalLink, Eye, EyeOff, PanelRightClose, PanelRightOpen, RotateCcw, X } from 'lucide-react';
+import { Copy, ExternalLink, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageColumn, LineageModel, LineageNode } from '../domain/lineage';
@@ -36,7 +36,7 @@ interface SelectedColumn {
   nodeId: string;
 }
 
-type InspectorSelection =
+export type InspectorSelection =
   | {
       kind: 'column';
       selected: InspectorColumnItem;
@@ -55,7 +55,15 @@ interface InspectorColumnItem {
   node: LineageNode;
 }
 
-export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphFlowDirection; lineage: LineageModel }) {
+export function LineageGraph({
+  flowDirection,
+  lineage,
+  onInspectorSelectionChange,
+}: {
+  flowDirection: GraphFlowDirection;
+  lineage: LineageModel;
+  onInspectorSelectionChange?: (selection: InspectorSelection) => void;
+}) {
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
@@ -73,7 +81,6 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   const [showColumnCallouts, setShowColumnCallouts] = useState(true);
   const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
   const [showUnusedColumns, setShowUnusedColumns] = useState(true);
-  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const resetZoom = useCallback(() => {
@@ -128,7 +135,6 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
     const targetId = nodeCommentTargetId(nodeId);
     setSelectedNodeCommentTargetId((current) => {
       const next = current === targetId ? null : targetId;
-      setInspectorOpen(next !== null);
       setActiveCommentTargetId(next);
       return next;
     });
@@ -139,12 +145,10 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
     const targetId = columnCommentTargetId(column.id);
     setSelectedColumn((current) => {
       if (current?.columnId === column.id) {
-        setInspectorOpen(false);
         setActiveCommentTargetId(null);
         return null;
       }
 
-      setInspectorOpen(true);
       setActiveCommentTargetId(targetId);
       return {
         columnId: column.id,
@@ -180,6 +184,9 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
 
     return null;
   }, [selectedColumn, selectedNodeCommentTargetId, viewLineage.nodes]);
+  useEffect(() => {
+    onInspectorSelectionChange?.(inspectorSelection);
+  }, [inspectorSelection, onInspectorSelectionChange]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
       if (!showColumnCallouts) {
@@ -337,7 +344,6 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   useEffect(() => {
     setSelectedColumn(null);
     setSelectedNodeCommentTargetId(null);
-    setInspectorOpen(false);
     setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(new Set());
@@ -368,21 +374,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
           <RotateCcw size={14} />
           {Math.round(viewportZoom * 100)}%
         </button>
-        <button
-          className="graph-column-toggle"
-          type="button"
-          aria-pressed={inspectorOpen}
-          onClick={() => setInspectorOpen((value) => !value)}
-        >
-          {inspectorOpen ? <PanelRightClose size={15} /> : <PanelRightOpen size={15} />}
-          Inspector
-        </button>
       </div>
-      <LineageInspector
-        open={inspectorOpen}
-        selection={inspectorSelection}
-        onClose={() => setInspectorOpen(false)}
-      />
       <ReactFlowProvider>
         <ReactFlow
           nodes={nodes}
@@ -422,15 +414,7 @@ export function LineageGraph({ flowDirection, lineage }: { flowDirection: GraphF
   );
 }
 
-function LineageInspector({
-  open,
-  selection,
-  onClose,
-}: {
-  open: boolean;
-  selection: InspectorSelection;
-  onClose: () => void;
-}) {
+export function LineageInspector({ selection }: { selection: InspectorSelection }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   const copyCteSql = async () => {
@@ -450,15 +434,12 @@ function LineageInspector({
   };
 
   return (
-    <aside className={`lineage-inspector ${open ? 'lineage-inspector-open' : 'lineage-inspector-closed'}`} data-testid="lineage-inspector">
+    <div className="lineage-inspector" data-testid="lineage-inspector">
       <div className="lineage-inspector-header">
         <div>
           <div className="lineage-inspector-kicker">Inspector</div>
           <h2>{selection ? (selection.kind === 'column' ? selection.selected.column.name : selection.node.label) : 'No selection'}</h2>
         </div>
-        <button className="lineage-inspector-close" type="button" aria-label="Close inspector" onClick={onClose}>
-          <X size={15} />
-        </button>
       </div>
       {selection ? (
         selection.kind === 'column' ? (
@@ -469,7 +450,7 @@ function LineageInspector({
       ) : (
         <div className="lineage-inspector-empty">Select a column or node title to inspect lineage details.</div>
       )}
-    </aside>
+    </div>
   );
 }
 
