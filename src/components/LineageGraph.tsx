@@ -520,7 +520,10 @@ export function LineageInspector({ onFocusNode, selection }: { onFocusNode?: (no
 function ColumnInspector({ onFocusNode, selection }: { onFocusNode?: (nodeId: string) => void; selection: Extract<InspectorSelection, { kind: 'column' }> }) {
   return (
     <div className="lineage-inspector-body">
-      <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} title="Selected" />
+      <section className="lineage-inspector-section">
+        <h3>Selected</h3>
+        <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} />
+      </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
       <InspectorColumnList emptyText="No unresolved source columns." items={selection.sources} onFocusNode={onFocusNode} title="Sources" />
       <InspectorUpstreamGroups groups={selection.upstreamGroups} onFocusNode={onFocusNode} />
@@ -615,12 +618,11 @@ function InspectorUpstreamGroups({ groups, onFocusNode }: { groups: InspectorCol
   );
 }
 
-function InspectorColumnCard({ item, onFocusNode, title }: { item: InspectorColumnItem; onFocusNode?: (nodeId: string) => void; title?: string }) {
+function InspectorColumnCard({ item, onFocusNode }: { item: InspectorColumnItem; onFocusNode?: (nodeId: string) => void }) {
   const expressionSql = item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
   const focusNode = () => onFocusNode?.(item.node.id);
   return (
     <div className="lineage-inspector-column-card">
-      {title ? <div className="lineage-inspector-card-title">{title}</div> : null}
       <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
         {item.column.name}
       </button>

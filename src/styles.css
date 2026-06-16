@@ -560,13 +560,6 @@ textarea {
   background: #fff;
 }
 
-.lineage-inspector-card-title {
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
 .lineage-inspector-column-name {
   overflow: hidden;
   border: 0;
