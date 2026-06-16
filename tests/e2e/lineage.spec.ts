@@ -35,6 +35,22 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
 
+test('can clear the SQL editor on mobile before entering another query', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  const editor = page.getByRole('textbox', { name: 'SQL editor' });
+  await expect(editor).toHaveValue(/recent_orders AS/);
+
+  await page.getByRole('button', { name: 'Clear SQL editor' }).click();
+
+  await expect(editor).toHaveValue('');
+  await expect(page.getByRole('button', { name: 'Clear SQL editor' })).toBeDisabled();
+
+  await editor.fill('select id from users');
+  await expect(page.getByRole('button', { name: 'Clear SQL editor' })).toBeEnabled();
+});
+
 test('renders outer join nullability context on data flows without separate join edges', async ({ page }) => {
   await page.goto('/');
 

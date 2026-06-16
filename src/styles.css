@@ -177,6 +177,14 @@ textarea {
   font-weight: 750;
 }
 
+.panel-heading-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
 .text-button {
   min-height: 32px;
   padding: 0 10px;
@@ -184,6 +192,11 @@ textarea {
   color: #1d4ed8;
   font-size: 12px;
   font-weight: 700;
+}
+
+.text-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 .sql-editor {

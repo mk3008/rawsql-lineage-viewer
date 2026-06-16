@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Code2, GitBranch, Menu, Play, Share2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Code2, Eraser, GitBranch, Menu, Play, Share2, X } from 'lucide-react';
 import { LineageGraph } from './components/LineageGraph';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { analyzeSql } from './lineage/rawsqlAdapter';
@@ -85,16 +85,31 @@ export function App() {
               <Code2 size={16} />
               SQL
             </span>
-            <button
-              className="text-button"
-              type="button"
-              onClick={() => {
-                setSql(salesSummarySql);
-                setShareStatus('idle');
-              }}
-            >
-              Load example
-            </button>
+            <div className="panel-heading-actions">
+              <button
+                className="text-button"
+                type="button"
+                onClick={() => {
+                  setSql(salesSummarySql);
+                  setShareStatus('idle');
+                }}
+              >
+                Load example
+              </button>
+              <button
+                aria-label="Clear SQL editor"
+                className="text-button"
+                type="button"
+                disabled={sql.length === 0}
+                onClick={() => {
+                  setSql('');
+                  setShareStatus('idle');
+                }}
+              >
+                <Eraser size={13} />
+                Clear
+              </button>
+            </div>
           </div>
           <textarea
             aria-label="SQL editor"
