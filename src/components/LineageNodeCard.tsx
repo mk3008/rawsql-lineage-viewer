@@ -34,58 +34,60 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           {node.label}
         </button>
         <div className="lineage-node-actions">
-          <button
-            aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
-            className="node-icon-button nodrag"
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation();
-              data.onToggleColumns?.(node.id);
-            }}
-          >
-            {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
-          </button>
-          {canTogglePassthrough ? (
+          <div className="lineage-node-action-buttons">
             <button
-              aria-label={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns for ${node.label}`}
+              aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
               className="node-icon-button nodrag"
-              title={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns`}
               type="button"
               onClick={(event) => {
                 event.stopPropagation();
-                data.onTogglePassthroughColumns?.(node.id);
+                data.onToggleColumns?.(node.id);
               }}
             >
-              {passthroughCompressed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
             </button>
-          ) : null}
-          {data.collapsedGroup ? (
-            <button
-              aria-label={`Expand ${data.collapsedGroup.label}`}
-              className="node-icon-button nodrag"
-              title="Expand group"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onExpandGroup?.(node.id);
-              }}
-            >
-              <Maximize2 size={13} />
-            </button>
-          ) : data.canCollapseUpstream ? (
-            <button
-              aria-label={`Collapse inner query for ${node.label}`}
-              className="node-icon-button nodrag"
-              title="Collapse inner query"
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                data.onCollapseUpstream?.(node.id);
-              }}
-            >
-              <Minimize2 size={13} />
-            </button>
-          ) : null}
+            {canTogglePassthrough ? (
+              <button
+                aria-label={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns for ${node.label}`}
+                className="node-icon-button nodrag"
+                title={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns`}
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onTogglePassthroughColumns?.(node.id);
+                }}
+              >
+                {passthroughCompressed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+              </button>
+            ) : null}
+            {data.collapsedGroup ? (
+              <button
+                aria-label={`Expand ${data.collapsedGroup.label}`}
+                className="node-icon-button nodrag"
+                title="Expand group"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onExpandGroup?.(node.id);
+                }}
+              >
+                <Maximize2 size={13} />
+              </button>
+            ) : data.canCollapseUpstream ? (
+              <button
+                aria-label={`Collapse inner query for ${node.label}`}
+                className="node-icon-button nodrag"
+                title="Collapse inner query"
+                type="button"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  data.onCollapseUpstream?.(node.id);
+                }}
+              >
+                <Minimize2 size={13} />
+              </button>
+            ) : null}
+          </div>
           <span className="lineage-node-kind">{data.collapsedGroup ? 'Group' : node.type}</span>
         </div>
       </div>

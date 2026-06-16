@@ -501,6 +501,7 @@ textarea {
 }
 
 .lineage-node-header {
+  position: relative;
   display: flex;
   flex: 0 0 auto;
   align-items: center;
@@ -524,6 +525,7 @@ textarea {
 }
 
 .lineage-node-title-button {
+  flex: 1 1 auto;
   border: 1px solid transparent;
   border-radius: 5px;
   padding: 2px 3px;
@@ -552,7 +554,16 @@ textarea {
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
+}
+
+.lineage-node-action-buttons {
+  position: absolute;
+  top: 50%;
+  right: 56px;
+  display: inline-flex;
+  align-items: center;
   gap: 6px;
+  transform: translateY(-50%);
 }
 
 .node-icon-button {
