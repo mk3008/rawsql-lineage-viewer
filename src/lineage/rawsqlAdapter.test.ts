@@ -221,6 +221,60 @@ describe('rawsqlAdapter', () => {
     expect(expressionSql?.split('\n').every((line) => line.length <= 42)).toBe(true);
   });
 
+  it('classifies condition-only and unused CTE columns', () => {
+    const { lineage } = analyzeSql(`
+      WITH recent_orders AS (
+        SELECT id, customer_id, status, created_at
+        FROM orders
+      )
+      SELECT ro.customer_id
+      FROM recent_orders ro
+      WHERE ro.status = 'open'
+    `);
+    const recentOrders = lineage.nodes.find((node) => node.id === 'cte_recent_orders');
+
+    expect(recentOrders?.columns.find((column) => column.name === 'customer_id')?.usage).toBeUndefined();
+    expect(recentOrders?.columns.find((column) => column.name === 'status')?.usage).toEqual({
+      role: 'condition',
+      reasons: ['where'],
+    });
+    expect(recentOrders?.columns.find((column) => column.name === 'id')?.usage).toEqual({ role: 'unused' });
+    expect(recentOrders?.columns.find((column) => column.name === 'created_at')?.usage).toEqual({ role: 'unused' });
+  });
+
+  it('adds scalar subquery sources and condition columns to lineage', () => {
+    const { lineage } = analyzeSql(`
+      WITH ranked_customers AS (
+        SELECT c.id AS customer_id
+        FROM customers c
+      )
+      SELECT
+        rc.customer_id,
+        (
+          SELECT count(*)
+          FROM orders AS o2
+          WHERE o2.customer_id = rc.customer_id
+            AND o2.created_at >= :recent_order_from
+            AND o2.status <> :refunded_status
+        ) AS recent_order_count
+      FROM ranked_customers rc
+    `);
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const recentOrderCount = output?.columns.find((column) => column.name === 'recent_order_count');
+
+    expect(lineage.edges).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o2' })]));
+    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id', 'created_at', 'status']);
+    expect(orders?.columns.every((column) => column.usage?.role === 'condition')).toBe(true);
+    expect(recentOrderCount?.upstream).toEqual(
+      expect.arrayContaining([
+        { nodeId: 'table_orders', columnName: 'customer_id' },
+        { nodeId: 'table_orders', columnName: 'created_at' },
+        { nodeId: 'table_orders', columnName: 'status' },
+      ]),
+    );
+  });
+
   it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {
     const { lineage } = analyzeSql(`
       SELECT q.customer_id, q.total_amount

@@ -12,7 +12,15 @@ import {
   TableSource,
 } from 'rawsql-ts';
 import type { CommonTable, JoinClause, SourceExpression } from 'rawsql-ts';
-import type { AnalysisWarning, LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
+import type {
+  AnalysisWarning,
+  LineageColumn,
+  LineageColumnRef,
+  LineageColumnUsageReason,
+  LineageEdge,
+  LineageModel,
+  LineageNode,
+} from '../domain/lineage';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -140,6 +148,8 @@ export function analyzeSql(sql: string): ParserAdapterResult {
     derivedCounter,
   });
 
+  classifyColumnUsage(nodes);
+
   const lineage: LineageModel = {
     kind: 'sql-lineage-model',
     modelVersion: 1,
@@ -180,7 +190,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
   if (query instanceof SimpleSelectQuery) {
     const fromClause = query.fromClause;
     if (!fromClause) {
-      setNodeColumns(nodes, targetId, collectOutputColumns(query, []));
+      setNodeColumns(nodes, targetId, collectOutputColumns(query, [], options));
       warnings.push({
         code: 'select-without-source',
         message: `${targetLabel} has no FROM source, so no upstream lineage edge was created.`,
@@ -219,7 +229,9 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       });
     }
 
-    setNodeColumns(nodes, targetId, collectOutputColumns(query, sources));
+    const outputColumns = collectOutputColumns(query, sources, options);
+    setNodeColumns(nodes, targetId, outputColumns);
+    setValueSourceColumns(outputColumns, nodes);
     setReferencedSourceColumns(query, sources, nodes);
 
     return;
@@ -435,9 +447,9 @@ function resolveSourceExpression(
   };
 }
 
-function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[]): LineageColumn[] {
+function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
   return query.selectClause.items.map((item, index) => {
-    const upstream = resolveColumnReferences(item.value, sources);
+    const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     const comments = extractSelectItemComments(query.selectClause.items, index);
     const name = (() => {
     if (item.identifier) {
@@ -459,13 +471,25 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
 }
 
 function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
-  const columnsByNode = new Map<string, string[]>();
-  for (const reference of resolveColumnReferences(collectQueryColumnReferences(query), sources)) {
-    columnsByNode.set(reference.nodeId, [...(columnsByNode.get(reference.nodeId) ?? []), reference.columnName]);
+  const references = collectQueryConditionReferences(query);
+  for (const { reason, refs } of references) {
+    for (const reference of resolveColumnReferences(refs, sources)) {
+      setNodeColumns(nodes, reference.nodeId, [
+        {
+          id: '',
+          name: reference.columnName,
+          usage: { role: 'condition', reasons: [reason] },
+        },
+      ]);
+    }
   }
+}
 
-  for (const [nodeId, columns] of columnsByNode) {
-    setNodeColumns(nodes, nodeId, columns);
+function setValueSourceColumns(columns: LineageColumn[], nodes: Map<string, LineageNode>): void {
+  for (const column of columns) {
+    for (const upstream of column.upstream ?? []) {
+      setNodeColumns(nodes, upstream.nodeId, [upstream.columnName]);
+    }
   }
 }
 
@@ -503,16 +527,104 @@ function resolveColumnReferences(value: unknown, sources: ResolvedSource[]): Lin
   return refs;
 }
 
-function collectQueryColumnReferences(query: SimpleSelectQuery): ColumnReference[] {
-  const roots: unknown[] = [
-    ...query.selectClause.items.map((item) => item.value),
-    query.whereClause?.condition,
-    ...(query.groupByClause?.grouping ?? []),
-    query.havingClause?.condition,
-    ...(query.orderByClause?.order ?? []),
-    ...(query.fromClause?.joins ?? []).map((join) => join.condition),
+function collectQueryConditionReferences(query: SimpleSelectQuery): Array<{ reason: LineageColumnUsageReason; refs: ColumnReference[] }> {
+  const references: Array<{ reason: LineageColumnUsageReason; refs: ColumnReference[] }> = [
+    { reason: 'join', refs: collectColumnReferences((query.fromClause?.joins ?? []).map((join) => join.condition)) },
+    { reason: 'where', refs: collectColumnReferences(query.whereClause?.condition) },
+    { reason: 'groupBy', refs: collectColumnReferences(query.groupByClause?.grouping ?? []) },
+    { reason: 'having', refs: collectColumnReferences(query.havingClause?.condition) },
+    { reason: 'orderBy', refs: collectColumnReferences(query.orderByClause?.order ?? []) },
   ];
-  return collectColumnReferences(roots);
+  return references.filter((item) => item.refs.length > 0);
+}
+
+function collectNestedExpressionLineage(value: unknown, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+  const refs: LineageColumnRef[] = [];
+  for (const query of collectNestedSimpleSelectQueries(value)) {
+    refs.push(...collectNestedQueryLineage(query, options));
+  }
+  return refs;
+}
+
+function collectNestedQueryLineage(query: SimpleSelectQuery, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+  const { cteNames, nodes, edges, warnings, derivedCounter, targetId } = options;
+  const fromClause = query.fromClause;
+  if (!fromClause) {
+    return [];
+  }
+
+  const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter)];
+  addLineageEdge(edges, {
+    source: sources[0].node.id,
+    target: targetId,
+    type: 'dataFlow',
+    sourceAlias: sources[0].sourceAlias,
+    confidence: 'medium',
+  });
+
+  for (const join of fromClause.joins ?? []) {
+    const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+    sources.push(joinedSource);
+    addLineageEdge(edges, {
+      source: joinedSource.node.id,
+      target: targetId,
+      type: 'dataFlow',
+      sourceAlias: joinedSource.sourceAlias,
+      joinNullability: toJoinNullability(normalizeJoinType(join)),
+      confidence: 'medium',
+    });
+  }
+
+  setReferencedSourceColumns(query, sources, nodes);
+  for (const source of sources) {
+    for (const reference of resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sources)) {
+      if (reference.nodeId === source.node.id) {
+        setNodeColumns(nodes, reference.nodeId, [reference.columnName]);
+      }
+    }
+  }
+
+  const nestedRefs = query.selectClause.items.flatMap((item) => collectNestedExpressionLineage(item.value, options));
+  const localRefs = resolveColumnReferences(collectColumnReferences(query), sources);
+  for (const ref of localRefs) {
+    setNodeColumns(nodes, ref.nodeId, [
+      {
+        id: '',
+        name: ref.columnName,
+        usage: { role: 'condition', reasons: ['subquery'] },
+      },
+    ]);
+  }
+
+  return mergeColumnRefs(localRefs, nestedRefs);
+}
+
+function collectNestedSimpleSelectQueries(value: unknown): SimpleSelectQuery[] {
+  const queries: SimpleSelectQuery[] = [];
+  const visited = new Set<unknown>();
+
+  const visit = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || visited.has(current)) {
+      return;
+    }
+    visited.add(current);
+
+    if (current instanceof SimpleSelectQuery) {
+      queries.push(current);
+      return;
+    }
+
+    for (const nested of Object.values(current)) {
+      if (Array.isArray(nested)) {
+        nested.forEach(visit);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(value);
+  return queries;
 }
 
 function collectColumnReferences(value: unknown): ColumnReference[] {
@@ -555,6 +667,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     const comments = typeof column === 'string' ? undefined : column.comments;
     const expressionSql = typeof column === 'string' ? undefined : column.expressionSql;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
+    const usage = typeof column === 'string' ? undefined : column.usage;
     if (!seen.has(name)) {
       seen.add(name);
       nextColumns.push({
@@ -563,6 +676,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         comments,
         expressionSql,
         upstream,
+        usage,
       });
     } else {
       const existing = nextColumns.find((item) => item.name === name);
@@ -575,9 +689,86 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
       if (existing && expressionSql) {
         existing.expressionSql = expressionSql;
       }
+      if (existing && usage) {
+        existing.usage = mergeColumnUsage(existing.usage, usage);
+      }
     }
   }
   node.columns = nextColumns;
+}
+
+function classifyColumnUsage(nodes: Map<string, LineageNode>): void {
+  const valueUsed = new Set<string>();
+  const conditionUsed = new Set<string>();
+
+  for (const node of nodes.values()) {
+    for (const column of node.columns) {
+      for (const upstream of column.upstream ?? []) {
+        valueUsed.add(columnKey(upstream.nodeId, upstream.columnName));
+      }
+      if (column.usage?.role === 'condition') {
+        conditionUsed.add(columnKey(node.id, column.name));
+      }
+    }
+  }
+
+  for (const node of nodes.values()) {
+    if (node.type === 'output') {
+      continue;
+    }
+
+    node.columns = node.columns.map((column) => {
+      const key = columnKey(node.id, column.name);
+      if (column.usage?.role === 'condition' && column.usage.reasons?.includes('subquery')) {
+        return column;
+      }
+      if (valueUsed.has(key)) {
+        return { ...column, usage: undefined };
+      }
+      if (conditionUsed.has(key)) {
+        return {
+          ...column,
+          usage: {
+            role: 'condition',
+            reasons: column.usage?.reasons,
+          },
+        };
+      }
+      if (node.type !== 'table') {
+        return {
+          ...column,
+          usage: {
+            role: 'unused',
+          },
+        };
+      }
+      return column;
+    });
+  }
+}
+
+function mergeColumnUsage(left: LineageColumn['usage'], right: LineageColumn['usage']): LineageColumn['usage'] {
+  if (!left) {
+    return right;
+  }
+  if (!right) {
+    return left;
+  }
+  if (left.role === 'unused' || right.role === 'unused') {
+    return left.role === 'unused' ? left : right;
+  }
+  return {
+    role: 'condition',
+    reasons: dedupeUsageReasons([...(left.reasons ?? []), ...(right.reasons ?? [])]),
+  };
+}
+
+function dedupeUsageReasons(reasons: LineageColumnUsageReason[]): LineageColumnUsageReason[] {
+  return [...new Set(reasons)];
+}
+
+function columnKey(nodeId: string, columnName: string): string {
+  return `${nodeId}.${columnName}`;
 }
 
 function formatExpressionSql(value: unknown): string | undefined {

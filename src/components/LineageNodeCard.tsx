@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
+import type { LineageColumnUsageReason } from '../domain/lineage';
 import { hasColumnCalloutContent, isPassthroughColumn } from '../lineage/columnDisplay';
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
@@ -157,16 +158,44 @@ function LineageColumnList({
   nodeId: string;
 }) {
   const shouldCompress = data.passthroughColumnsCompressed ?? false;
-  const visibleColumns = shouldCompress ? columns.filter((column) => !isCompressedPassthroughColumn(column, data)) : columns;
-  const compressedCount = shouldCompress ? columns.length - visibleColumns.length : 0;
+  const valueColumns = columns.filter((column) => !column.usage);
+  const conditionColumns = columns.filter((column) => column.usage?.role === 'condition');
+  const unusedColumns = columns.filter((column) => column.usage?.role === 'unused');
+  const visibleValueColumns = shouldCompress ? valueColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : valueColumns;
+  const compressedCount = shouldCompress ? valueColumns.length - visibleValueColumns.length : 0;
 
   return (
     <>
-      {visibleColumns.map((column) => (
+      {visibleValueColumns.map((column) => (
         <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
       ))}
       {compressedCount > 0 ? <PassthroughSummary count={compressedCount} /> : null}
+      {conditionColumns.length > 0 ? (
+        <LineageColumnSection columns={conditionColumns} data={data} label="Condition" nodeId={nodeId} />
+      ) : null}
+      {unusedColumns.length > 0 ? <LineageColumnSection columns={unusedColumns} data={data} label="Unused" nodeId={nodeId} /> : null}
     </>
+  );
+}
+
+function LineageColumnSection({
+  columns,
+  data,
+  label,
+  nodeId,
+}: {
+  columns: GraphNode['data']['lineageNode']['columns'];
+  data: GraphNode['data'];
+  label: string;
+  nodeId: string;
+}) {
+  return (
+    <div className="lineage-column-section">
+      <div className="lineage-column-section-title">{label}</div>
+      {columns.map((column) => (
+        <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
+      ))}
+    </div>
   );
 }
 
@@ -202,12 +231,14 @@ function LineageColumnRow({
   const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
   const isSource = data.sourceColumnIds?.has(column.id) ?? false;
   const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
+  const usageClass =
+    column.usage?.role === 'condition' ? 'lineage-column-condition' : column.usage?.role === 'unused' ? 'lineage-column-unused' : '';
 
   return (
     <div className="lineage-column-group">
       <button
         ref={columnRef}
-        className={`lineage-column ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+        className={`lineage-column ${usageClass} ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
         onClick={(event) => {
           event.stopPropagation();
           data.onColumnSelect?.(nodeId, column);
@@ -221,6 +252,7 @@ function LineageColumnRow({
           anchorRef={columnRef}
           comments={column.comments}
           expressionSql={column.expressionSql}
+          usageText={formatUsageText(column)}
           isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
           onFocus={() => data.onCommentFocus?.(columnCommentTargetId(column.id))}
@@ -237,6 +269,7 @@ function CommentBubble({
   comments,
   expressionSql,
   cteExecutableSql,
+  usageText,
   isActive,
   onClose,
   onFocus,
@@ -247,6 +280,7 @@ function CommentBubble({
   comments?: string[];
   expressionSql?: string;
   cteExecutableSql?: string;
+  usageText?: string;
   isActive?: boolean;
   onClose?: () => void;
   onFocus?: () => void;
@@ -359,6 +393,7 @@ function CommentBubble({
           ))}
         </div>
       ) : null}
+      {usageText ? <div className="lineage-comment-section">{usageText}</div> : null}
       {expressionSql ? (
         <div className="lineage-comment-section">
           <code className="lineage-expression">{expressionSql}</code>
@@ -387,6 +422,20 @@ function CommentBubble({
     </div>,
     document.body,
   );
+}
+
+function formatUsageText(column: GraphNode['data']['lineageNode']['columns'][number]): string | undefined {
+  if (column.usage?.role !== 'condition') {
+    return undefined;
+  }
+  const reasons = column.usage.reasons?.map(formatUsageReason) ?? ['Condition'];
+  return `Used by: ${[...new Set(reasons)].join(', ')}`;
+}
+
+function formatUsageReason(reason: LineageColumnUsageReason): string {
+  if (reason === 'groupBy') return 'GROUP BY';
+  if (reason === 'orderBy') return 'ORDER BY';
+  return reason.toUpperCase();
 }
 
 type RectLike = Pick<DOMRect, 'bottom' | 'left' | 'right' | 'top'>;

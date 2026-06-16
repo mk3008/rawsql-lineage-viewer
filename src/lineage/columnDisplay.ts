@@ -8,11 +8,14 @@ export function hasColumnCalloutContent(column: LineageColumn) {
   if (column.comments?.length) {
     return true;
   }
+  if (column.usage?.role === 'condition') {
+    return true;
+  }
   return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));
 }
 
 export function isPassthroughColumn(column: LineageColumn) {
-  return Boolean(column.expressionSql && !column.comments?.length && isSimpleColumnReference(column.expressionSql));
+  return Boolean(!column.usage && column.expressionSql && !column.comments?.length && isSimpleColumnReference(column.expressionSql));
 }
 
 export function isSimpleColumnReference(sql: string) {

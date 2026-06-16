@@ -631,6 +631,37 @@ textarea {
   font-weight: 800;
 }
 
+.lineage-column-section {
+  display: grid;
+  gap: 3px;
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid rgb(15 23 42 / 10%);
+}
+
+.lineage-column-section-title {
+  padding: 0 5px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  line-height: 1.3;
+  text-transform: uppercase;
+}
+
+.lineage-column-condition {
+  color: #475569;
+}
+
+.lineage-column-unused {
+  background: #fef2f2;
+  color: #b91c1c;
+}
+
+.lineage-column-unused:hover {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .lineage-comment-selected {
   box-shadow: 0 0 0 2px rgb(37 99 235 / 18%);
 }

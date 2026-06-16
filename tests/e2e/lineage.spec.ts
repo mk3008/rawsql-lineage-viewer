@@ -127,6 +127,70 @@ test('shows referenced columns and can hide columns per node', async ({ page }) 
   await expect(ordersNode.getByText('order_date')).toBeVisible();
 });
 
+test('groups condition-only and unused CTE columns into sections', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH recent_orders AS (
+      SELECT id, customer_id, status, created_at
+      FROM orders
+    )
+    SELECT ro.customer_id
+    FROM recent_orders ro
+    WHERE ro.status = 'open'
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  await expect(recentOrdersNode.getByText('Passthrough')).toBeVisible();
+  await expect(recentOrdersNode.getByText('Condition')).toBeVisible();
+  await expect(recentOrdersNode.getByRole('button', { name: 'status', exact: true })).toBeVisible();
+  await expect(recentOrdersNode.getByText('Unused')).toBeVisible();
+  await expect(recentOrdersNode.getByRole('button', { name: 'id', exact: true })).toHaveCSS('color', 'rgb(185, 28, 28)');
+  await expect(recentOrdersNode.getByRole('button', { name: 'created_at', exact: true })).toHaveCSS('color', 'rgb(185, 28, 28)');
+
+  await recentOrdersNode.getByRole('button', { name: 'status', exact: true }).click();
+  await expect(page.getByTestId('lineage-comment').filter({ hasText: 'Used by: WHERE' })).toBeVisible();
+});
+
+test('renders scalar subquery table sources and condition columns', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH ranked_customers AS (
+      SELECT c.id AS customer_id
+      FROM customers c
+    )
+    SELECT
+      rc.customer_id,
+      (
+        SELECT count(*)
+        FROM orders AS o2
+        WHERE o2.customer_id = rc.customer_id
+          AND o2.created_at >= :recent_order_from
+          AND o2.status <> :refunded_status
+      ) AS recent_order_count
+    FROM ranked_customers rc
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await expect(ordersNode).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_orders-main_output')).toBeAttached();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'o2' })).toBeVisible();
+  await expect(ordersNode.getByText('Condition')).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'created_at', exact: true })).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toBeVisible();
+
+  await outputNode.getByRole('button', { name: 'recent_order_count', exact: true }).click();
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(ordersNode.getByRole('button', { name: 'created_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toHaveClass(/lineage-column-highlighted/);
+});
+
 test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.addInitScript(() => {

@@ -7,12 +7,20 @@ export interface LineageColumnRef {
   columnName: string;
 }
 
+export type LineageColumnUsageReason = 'join' | 'where' | 'having' | 'groupBy' | 'orderBy' | 'subquery';
+
+export interface LineageColumnUsage {
+  role: 'condition' | 'unused';
+  reasons?: LineageColumnUsageReason[];
+}
+
 export interface LineageColumn {
   id: string;
   name: string;
   comments?: string[];
   expressionSql?: string;
   upstream?: LineageColumnRef[];
+  usage?: LineageColumnUsage;
 }
 
 export interface LineageNode {
