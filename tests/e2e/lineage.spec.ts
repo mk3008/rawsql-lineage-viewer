@@ -241,7 +241,10 @@ test('keeps an all-passthrough summary to a single column row height', async ({ 
   expect(summaryBox?.height).toBeLessThanOrEqual(24);
 
   await passNode.getByRole('button', { name: 'Show passthrough columns for pass' }).click();
-  await expect(passNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
+  const firstColumn = passNode.getByRole('button', { name: 'id', exact: true });
+  await expect(firstColumn).toBeVisible();
+  const firstColumnBox = await firstColumn.boundingBox();
+  expect(Math.abs((summaryBox?.height ?? 0) - (firstColumnBox?.height ?? 0))).toBeLessThanOrEqual(2);
 });
 
 test('shows column callouts for literal expressions', async ({ page }) => {
