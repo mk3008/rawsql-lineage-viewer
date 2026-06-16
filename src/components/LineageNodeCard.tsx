@@ -296,24 +296,21 @@ function CommentBubble({
       ) : null}
       {cteExecutableSql ? (
         <div className="lineage-comment-section">
-          <div className="lineage-comment-heading">
-            <div className="lineage-comment-label">CTE SQL</div>
-            <div className="lineage-comment-actions">
-              <a
-                className="lineage-open-link nodrag"
-                href={buildViewerSqlUrl(cteExecutableSql)}
-                target="_blank"
-                rel="noreferrer"
-                onClick={(event) => event.stopPropagation()}
-              >
-                <ExternalLink size={12} aria-hidden="true" />
-                Open in viewer
-              </a>
-              <button className="lineage-copy-button nodrag" type="button" onClick={copyCteSql}>
-                {copyState === 'copied' ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
-                {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
-              </button>
-            </div>
+          <div className="lineage-comment-actions">
+            <a
+              className="lineage-open-link nodrag"
+              href={buildViewerSqlUrl(cteExecutableSql)}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => event.stopPropagation()}
+            >
+              <ExternalLink size={12} aria-hidden="true" />
+              Open in viewer
+            </a>
+            <button className="lineage-copy-button nodrag" type="button" onClick={copyCteSql}>
+              {copyState === 'copied' ? <Check size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+              {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
+            </button>
           </div>
         </div>
       ) : null}

@@ -106,7 +106,8 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
   const cteComment = page.getByTestId('lineage-comment').filter({ hasText: 'Recent order line items used as the base sales fact.' });
   await expect(cteComment).toContainText('Recent order line items used as the base sales fact.');
-  await expect(cteComment).toContainText('CTE SQL');
+  await expect(cteComment).not.toContainText('CTE SQL');
+  await expect(cteComment).not.toContainText('Comment');
   await expect(cteComment.locator('.lineage-sql-preview')).toHaveCount(0);
   await expect(cteComment).toHaveCSS('position', 'fixed');
   await expect(cteComment).toHaveCSS('z-index', '100001');

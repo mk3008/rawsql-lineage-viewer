@@ -612,29 +612,10 @@ textarea {
   border-top: 1px solid #dbeafe;
 }
 
-.lineage-comment-label {
-  margin-bottom: 3px;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 850;
-  text-transform: uppercase;
-}
-
-.lineage-comment-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 6px;
-}
-
-.lineage-comment-heading .lineage-comment-label {
-  margin-bottom: 0;
-}
-
 .lineage-comment-actions {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-start;
   gap: 6px;
 }
 
