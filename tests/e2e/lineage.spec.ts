@@ -407,6 +407,9 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
 
   await expect(rankedCustomersNode).toContainText('Build ranked_customers');
   await expect(rankedCustomersNode).toContainText('Group');
+  const collapsedCard = rankedCustomersNode.locator('.lineage-node').first();
+  await expect(collapsedCard).toHaveClass(/lineage-node-collapsed-group/);
+  await expect(collapsedCard).toHaveCSS('border-top-width', '2px');
   await expect(rankedCustomersNode).toContainText('Output');
   await expect(rankedCustomersNode).toContainText('Input');
   await expect(rankedCustomersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();

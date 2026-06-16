@@ -423,6 +423,33 @@ textarea {
   background: #faf5ff;
 }
 
+.lineage-node-collapsed-group {
+  border-width: 2px;
+  box-shadow:
+    0 0 0 3px rgb(15 23 42 / 8%),
+    0 14px 30px rgb(15 23 42 / 16%);
+}
+
+.lineage-node-collapsed-group.lineage-node-cte {
+  border-color: #059669;
+  background: #d1fae5;
+}
+
+.lineage-node-collapsed-group.lineage-node-derived {
+  border-color: #d97706;
+  background: #fef3c7;
+}
+
+.lineage-node-collapsed-group .lineage-node-header {
+  background: rgb(15 23 42 / 7%);
+  border-bottom-color: rgb(15 23 42 / 18%);
+}
+
+.lineage-node-collapsed-group .lineage-node-kind {
+  background: #0f172a;
+  color: #fff;
+}
+
 .lineage-node-header {
   display: flex;
   flex: 0 0 auto;
@@ -722,7 +749,7 @@ textarea {
 }
 
 .lineage-group-summary-title {
-  color: #64748b;
+  color: #334155;
   font-size: 10px;
   font-weight: 850;
   line-height: 1.2;

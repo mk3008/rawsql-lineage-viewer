@@ -12,7 +12,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   return (
     <div
       ref={nodeRef}
-      className={`lineage-node lineage-node-${node.type} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'}`}
+      className={`lineage-node lineage-node-${node.type} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'}`}
       data-testid={`lineage-node-${node.type}`}
     >
       <Handle type="target" position={Position.Left} />
