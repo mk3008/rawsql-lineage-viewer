@@ -568,7 +568,11 @@ function ColumnInspector({
     <div className="lineage-inspector-body">
       <section className="lineage-inspector-section">
         <h3>Selected</h3>
-        <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} />
+        <InspectorColumnCard
+          hideExpression={Boolean(selection.selected.column.caseRules?.length)}
+          item={selection.selected}
+          onFocusNode={onFocusNode}
+        />
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
       <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
@@ -796,8 +800,17 @@ function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
   );
 }
 
-function InspectorColumnCard({ item, onFocusNode }: { item: InspectorColumnItem; onFocusNode?: (nodeId: string) => void }) {
-  const expressionSql = item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
+function InspectorColumnCard({
+  hideExpression,
+  item,
+  onFocusNode,
+}: {
+  hideExpression?: boolean;
+  item: InspectorColumnItem;
+  onFocusNode?: (nodeId: string) => void;
+}) {
+  const expressionSql =
+    !hideExpression && item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
   const focusNode = () => onFocusNode?.(item.node.id);
   return (
     <div className="lineage-inspector-column-card">

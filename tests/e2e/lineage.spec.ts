@@ -1040,6 +1040,75 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   );
 });
 
+test('shows CASE rules for a commented output CASE in a monthly report query', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    /* Monthly customer health report. */
+    with order_base as (
+      select o.id,o.customer_id,o.status,o.total_amount,o.created_at
+      from orders o
+      where o.created_at >= :report_from
+        and o.status in (:paid_status,:shipped_status,:refunded_status)
+    ),
+    customer_order_summary as(
+      select c.id customer_id,c.name,c.email,c.tier,
+        count(ob.id) order_count,
+        sum(case
+          /* Refunds are operational noise for this score, but the row still proves the customer came back. */
+          when ob.status = :refunded_status then 0
+          /* Paid and shipped share the same business meaning here. */
+          else ob.total_amount
+        end) gross_amount,
+        max(ob.created_at) last_order_at
+      from customers c
+      left join order_base ob on ob.customer_id = c.id
+      where c.deleted_at is null
+      group by c.id,c.name,c.email,c.tier
+    ),
+    support_pressure as (
+      select st.customer_id, count(st.id) open_ticket_count
+      from support_tickets st
+      where st.status <> 'closed'
+      group by st.customer_id
+    ),
+    ranked_customers as(
+      select cos.customer_id,cos.name,cos.email,cos.tier,cos.order_count,cos.gross_amount,cos.last_order_at,
+        coalesce(sp.open_ticket_count,0) open_ticket_count,
+        row_number() over(partition by cos.tier order by cos.gross_amount desc,cos.customer_id) tier_rank
+      from customer_order_summary cos
+      left join support_pressure sp on sp.customer_id = cos.customer_id
+      where cos.order_count > 0
+    )
+    select rc.customer_id,rc.name,rc.email,rc.tier,
+      case
+        /* Enterprise names asked for this bucket in 2023; do not merge with repeat yet. */
+        when rc.tier = :enterprise_tier and rc.gross_amount >= :strategic_amount then :strategic_label
+        /* Support wants open-ticket customers to stay visible even below revenue threshold. */
+        when rc.open_ticket_count > :open_ticket_threshold then :attention_label
+        /* Three or more orders is the old retention definition. Still used by exports. */
+        when rc.order_count >= :repeat_order_count then :repeat_label
+        else :standard_label
+      end customer_segment,
+      rc.order_count,rc.gross_amount,rc.open_ticket_count,rc.last_order_at
+    from ranked_customers rc
+    where rc.tier_rank <= :tier_rank_limit
+      and (rc.gross_amount >= :minimum_amount or rc.open_ticket_count > :open_ticket_threshold)
+    order by rc.tier asc, rc.gross_amount desc, rc.customer_id
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_segment', exact: true }).click();
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector).toContainText('Rules');
+  await expect(inspector).toContainText('when rc.tier = :enterprise_tier');
+  await expect(inspector).toContainText('when rc.open_ticket_count > :open_ticket_threshold');
+  await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).not.toContainText('case');
+});
+
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
