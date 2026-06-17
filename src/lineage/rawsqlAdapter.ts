@@ -561,7 +561,12 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
 }
 
 function isCaseExpressionLike(value: unknown): value is { condition?: unknown; switchCase?: { cases?: unknown[]; elseValue?: unknown } } {
-  return Boolean(value && typeof value === 'object' && value.constructor?.name === 'CaseExpression' && 'switchCase' in value);
+  if (!value || typeof value !== 'object' || !('switchCase' in value)) {
+    return false;
+  }
+
+  const switchCase = (value as { switchCase?: unknown }).switchCase;
+  return Boolean(switchCase && typeof switchCase === 'object' && Array.isArray((switchCase as { cases?: unknown }).cases));
 }
 
 function formatCaseConditionSql(condition: unknown, key: unknown): string | undefined {
