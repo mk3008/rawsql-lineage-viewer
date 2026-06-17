@@ -3,15 +3,18 @@ import {
   CTECollector,
   CTEQueryDecomposer,
   ColumnReference,
+  CreateTableQuery,
   FunctionSource,
   ParenSource,
   SelectQueryParser,
   SimpleSelectQuery,
+  SqlParser,
   SqlFormatter,
   SubQuerySource,
   TableSource,
+  ValuesQuery,
 } from 'rawsql-ts';
-import type { CommonTable, JoinClause, SourceExpression } from 'rawsql-ts';
+import type { CommonTable, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
@@ -66,18 +69,37 @@ const appSqlFormatterOptions = {
   sourceAliasStyle: 'explicit',
   castStyle: 'standard',
 } as const;
-const expressionLineMaxLength = appSqlFormatterOptions.oneLineMaxLength;
-const expressionIndent = ' '.repeat(appSqlFormatterOptions.indentSize);
 const expressionFormatterOptions = {
   ...appSqlFormatterOptions,
   sourceAliasStyle: appSqlFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : appSqlFormatterOptions.sourceAliasStyle,
 };
 const expressionFormatter = new SqlFormatter(expressionFormatterOptions as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
-const cteExecutableSqlFormatter = new SqlFormatter({
+const nodeSqlFormatter = new SqlFormatter({
   ...appSqlFormatterOptions,
+  exportComment: 'full',
   sourceAliasStyle: appSqlFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : appSqlFormatterOptions.sourceAliasStyle,
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
+
+function parseLineageSelectQuery(sql: string): SelectQuery {
+  const statement = SqlParser.parse(sql);
+  if (statement instanceof CreateTableQuery) {
+    if (!statement.asSelectQuery) {
+      throw new Error('CREATE TABLE lineage requires an AS SELECT query.');
+    }
+    return statement.asSelectQuery;
+  }
+
+  if (isSelectQuery(statement)) {
+    return statement;
+  }
+
+  throw new Error('Only SELECT and CREATE TABLE AS SELECT statements are supported.');
+}
+
+function isSelectQuery(value: unknown): value is SelectQuery {
+  return value instanceof SimpleSelectQuery || value instanceof BinarySelectQuery || value instanceof ValuesQuery;
+}
 
 export function analyzeSql(sql: string): ParserAdapterResult {
   const warnings: AnalysisWarning[] = [];
@@ -85,9 +107,9 @@ export function analyzeSql(sql: string): ParserAdapterResult {
   const edges: LineageEdge[] = [];
   const derivedCounter = { value: 0 };
 
-  let query;
+  let query: SelectQuery;
   try {
-    query = SelectQueryParser.parse(sql);
+    query = parseLineageSelectQuery(sql);
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
@@ -118,6 +140,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       comments: cteCommentsByName.get(cteName),
       cteExecutableSql: cteExecutableSqlByName.get(cteName),
       materializationHint: normalizeMaterializationHint(cte.materialized),
+      querySql: cteExecutableSqlByName.get(cteName),
     });
   }
 
@@ -236,6 +259,22 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
 
   if (query instanceof BinarySelectQuery) {
     const operator = query.operator.value.toUpperCase();
+    const parts = collectBinaryParts(query, operator);
+    if (parts.length > 2) {
+      const partIds = parts.map((part, index) => collectBinaryPart(part, `part_${index + 1}`, operator, options));
+      for (const partId of partIds) {
+        addLineageEdge(edges, {
+          source: partId,
+          target: targetId,
+          type: 'dataFlow',
+          label: operator,
+          confidence: 'medium',
+        });
+      }
+      setNodeColumns(nodes, targetId, collectBinaryOutputColumnsFromParts(query, partIds, nodes));
+      return;
+    }
+
     const leftId = collectBinaryPart(query.left, 'left', operator, options);
     const rightId = collectBinaryPart(query.right, 'right', operator, options);
     addLineageEdge(edges, {
@@ -272,9 +311,18 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
     label: `${operator} ${side}`,
     columns: [],
     comments: extractQueryNodeComments(query),
+    querySql: formatNodeQuerySql(query),
   });
   collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
   return id;
+}
+
+function collectBinaryParts(query: SelectQuery, operator: string): SelectQuery[] {
+  if (query instanceof BinarySelectQuery && query.operator.value.toUpperCase() === operator) {
+    return [...collectBinaryParts(query.left, operator), ...collectBinaryParts(query.right, operator)];
+  }
+
+  return [query];
 }
 
 function collectBinaryOutputColumns(query: BinarySelectQuery, leftId: string, rightId: string, nodes: Map<string, LineageNode>): LineageColumn[] {
@@ -289,6 +337,23 @@ function collectBinaryOutputColumns(query: BinarySelectQuery, leftId: string, ri
       rightColumns[index] ? [{ nodeId: rightId, columnName: rightColumns[index].name }] : [],
     ),
   }));
+}
+
+function collectBinaryOutputColumnsFromParts(query: BinarySelectQuery, partIds: string[], nodes: Map<string, LineageNode>): LineageColumn[] {
+  const partColumns = partIds.map((partId) => nodes.get(partId)?.columns ?? []);
+  const names = collectQueryOutputColumnNames(query);
+  const maxLength = Math.max(names.length, ...partColumns.map((columns) => columns.length));
+  return Array.from({ length: maxLength }, (_, index) => {
+    const upstream = partIds.flatMap((partId, partIndex) => {
+      const column = partColumns[partIndex]?.[index];
+      return column ? [{ nodeId: partId, columnName: column.name }] : [];
+    });
+    return {
+      id: '',
+      name: names[index] ?? partColumns.find((columns) => columns[index])?.[index]?.name ?? `column_${index + 1}`,
+      upstream,
+    };
+  });
 }
 
 function collectBinaryOutputColumnNames(query: BinarySelectQuery, leftColumns: LineageColumn[], rightColumns: LineageColumn[]): string[] {
@@ -373,9 +438,17 @@ function collectExecutableSqlComments(
 function formatCteExecutableSql(sql: string, comments?: string[]): string {
   const trimmedSql = sql.trim();
   try {
-    return prependSqlComments(cteExecutableSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim(), comments);
+    return nodeSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim();
   } catch {
     return prependSqlComments(trimmedSql, comments);
+  }
+}
+
+function formatNodeQuerySql(query: unknown): string | undefined {
+  try {
+    return nodeSqlFormatter.format(query as Parameters<SqlFormatter['format']>[0]).formattedSql.trim();
+  } catch {
+    return undefined;
   }
 }
 
@@ -424,6 +497,7 @@ function resolveSourceExpression(
       label: alias,
       columns: [],
       comments: extractQueryNodeComments(datasource.query),
+      querySql: formatNodeQuerySql(datasource.query),
     };
     nodes.set(id, node);
     collectQueryEdges({
@@ -631,10 +705,10 @@ function isCaseExpressionLike(value: unknown): value is { condition?: unknown; s
 
 function formatCaseRuleDisplaySql(conditionSql: string | undefined, resultSql: string | undefined): string {
   if (conditionSql) {
-    return resultSql ? `${conditionSql} then\n${expressionIndent}${resultSql}` : conditionSql;
+    return resultSql ? `${conditionSql} then ${resultSql}` : conditionSql;
   }
 
-  return resultSql ? `else\n${expressionIndent}${resultSql}` : 'else';
+  return resultSql ? `else ${resultSql}` : 'else';
 }
 
 function formatCaseConditionSql(condition: unknown, key: unknown): string | undefined {
@@ -985,60 +1059,10 @@ function columnKey(nodeId: string, columnName: string): string {
 function formatExpressionSql(value: unknown): string | undefined {
   try {
     const formatted = expressionFormatter.format(value as Parameters<SqlFormatter['format']>[0]).formattedSql.trim();
-    const wrapped = wrapLongExpressionSql(formatted);
-    return wrapped.length > 0 ? wrapped : undefined;
+    return formatted.length > 0 ? formatted : undefined;
   } catch {
     return undefined;
   }
-}
-
-function wrapLongExpressionSql(sql: string): string {
-  if (!sql.split('\n').some((line) => line.length > expressionLineMaxLength)) {
-    return sql;
-  }
-
-  return sql
-    .replace(/\bcase\s+when\b/gi, `case\n${expressionIndent}when`)
-    .replace(/\s+when\s+/gi, `\n${expressionIndent}when `)
-    .replace(/\s+then\s+/gi, ` then\n${expressionIndent}${expressionIndent}`)
-    .replace(/\s+else\s+/gi, `\n${expressionIndent}else\n${expressionIndent}${expressionIndent}`)
-    .replace(/\s+end\b/gi, '\nend')
-    .split('\n')
-    .flatMap((line) => wrapExpressionLine(line, expressionLineMaxLength))
-    .join('\n');
-}
-
-function wrapExpressionLine(line: string, maxLength: number): string[] {
-  if (line.length <= maxLength) {
-    return [line];
-  }
-
-  if (line.includes('--')) {
-    return [line];
-  }
-
-  const indent = line.match(/^\s*/)?.[0] ?? '';
-  const continuationIndent = `${indent}    `;
-  const tokens = line.trim().split(/\s+/);
-  const lines: string[] = [];
-  let current = indent;
-
-  for (const token of tokens) {
-    const separator = current.trim().length === 0 ? '' : ' ';
-    if (current.length + separator.length + token.length > maxLength && current.trim().length > 0) {
-      lines.push(current);
-      current = continuationIndent + token;
-      continue;
-    }
-
-    current += separator + token;
-  }
-
-  if (current.trim().length > 0) {
-    lines.push(current);
-  }
-
-  return lines;
 }
 
 function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['items'], index: number): string[] | undefined {

@@ -1,6 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Play, Share2, Trash2 } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorSelection } from './components/LineageGraph';
+import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
 import type { GraphFlowDirection } from './graph/buildGraphModel';
 import { analyzeSql } from './lineage/rawsqlAdapter';
@@ -184,13 +185,14 @@ export function App() {
           </div>
           {panelTab === 'sql' ? (
             <>
-              <textarea
-                aria-label="SQL editor"
+              <SqlCodeMirror
+                ariaLabel="SQL editor"
                 className="sql-editor"
+                editable
+                minHeight="340px"
                 value={sql}
-                spellCheck={false}
-                onChange={(event) => {
-                  setSql(event.target.value);
+                onChange={(value) => {
+                  setSql(value);
                   setShareStatus('idle');
                 }}
               />
@@ -333,7 +335,7 @@ function SqlHistoryPanel({
               <button className="sql-history-main" type="button" onClick={() => onOpen(item.sql)}>
                 <span className="sql-history-title">{item.title}</span>
                 <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
-                <code>{compactSql(item.sql)}</code>
+                <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
               </button>
               <button className="sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
                 <Trash2 size={13} />

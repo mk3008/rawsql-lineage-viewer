@@ -233,9 +233,7 @@ textarea {
 .sql-editor {
   width: 100%;
   min-height: 0;
-  resize: none;
   border: 0;
-  padding: 18px 18px 14px;
   outline: none;
   color: #152033;
   background:
@@ -245,6 +243,15 @@ textarea {
   font-size: 12px;
   line-height: 1.65;
   tab-size: 2;
+}
+
+.sql-editor .cm-editor {
+  height: 100%;
+  padding: 18px 18px 14px;
+}
+
+.sql-editor .cm-scroller {
+  min-height: 340px;
 }
 
 .panel-actions {
@@ -678,24 +685,11 @@ textarea {
   gap: 3px;
 }
 
-.lineage-inspector-rule-sql span {
+.lineage-inspector-rule-label-text {
   color: #64748b;
   font-size: 10px;
   font-weight: 850;
   text-transform: uppercase;
-}
-
-.lineage-inspector-rule-sql code {
-  display: block;
-  overflow: auto;
-  border-radius: 6px;
-  padding: 6px 7px;
-  background: #f8fafc;
-  color: #0f172a;
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: pre;
 }
 
 .lineage-inspector-column-card {
@@ -719,6 +713,40 @@ textarea {
 .lineage-inspector-column-card-active {
   border-color: #60a5fa;
   background: #eff6ff;
+}
+
+.lineage-inspector-tree {
+  display: grid;
+  gap: 8px;
+  margin-left: calc(var(--lineage-inspector-tree-depth, 0) * 16px);
+}
+
+.lineage-inspector-tree .lineage-inspector-tree {
+  margin-top: 8px;
+  padding-left: 12px;
+  border-left: 2px solid #dbeafe;
+}
+
+.lineage-inspector-tree-node {
+  position: relative;
+}
+
+.lineage-inspector-tree .lineage-inspector-tree .lineage-inspector-tree-node::before {
+  position: absolute;
+  top: 18px;
+  left: -12px;
+  width: 10px;
+  border-top: 2px solid #dbeafe;
+  content: "";
+}
+
+.lineage-inspector-upstream-rules {
+  display: grid;
+  gap: 8px;
+}
+
+.lineage-inspector-upstream-rules + .lineage-inspector-tree {
+  margin-top: 10px;
 }
 
 .lineage-inspector-column-name {
@@ -804,7 +832,8 @@ textarea {
 }
 
 .lineage-inspector-code,
-.lineage-inspector-inline-code {
+.lineage-inspector-inline-code,
+.lineage-inspector-rule-code {
   display: block;
   overflow: auto;
   border-radius: 6px;
@@ -821,9 +850,24 @@ textarea {
   padding: 9px 10px;
 }
 
-.lineage-inspector-inline-code {
+.lineage-inspector-inline-code,
+.lineage-inspector-rule-code {
   max-height: 120px;
   padding: 7px 8px;
+}
+
+.lineage-inspector-code .cm-editor,
+.lineage-inspector-inline-code .cm-editor,
+.lineage-inspector-rule-code .cm-editor,
+.lineage-expression .cm-editor {
+  background: transparent;
+}
+
+.lineage-inspector-code .cm-scroller,
+.lineage-inspector-inline-code .cm-scroller,
+.lineage-inspector-rule-code .cm-scroller,
+.lineage-expression .cm-scroller {
+  overflow: auto;
 }
 
 .lineage-inspector-actions {
@@ -906,12 +950,20 @@ textarea {
   font-weight: 750;
 }
 
-.sql-history-main code {
+.sql-history-code {
   overflow: hidden;
   color: #475569;
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 11px;
   line-height: 1.35;
+}
+
+.sql-history-code .cm-scroller {
+  overflow: hidden;
+}
+
+.sql-history-code .cm-content {
+  overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }

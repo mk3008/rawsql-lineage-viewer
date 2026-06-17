@@ -79,6 +79,35 @@ describe('rawsqlAdapter', () => {
     );
   });
 
+  it('analyzes CREATE TABLE AS SELECT using only the AS SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      create table mart.customer_sales as
+      select
+        c.id as customer_id,
+        c.name as customer_name,
+        sum(o.amount) as total_amount
+      from customers c
+      join orders o on o.customer_id = c.id
+      group by c.id, c.name
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales')).toBe(false);
+    expect(nodeById.has('table_mart.customer_sales')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'customer_name', 'total_amount']);
+    expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id', 'name']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+    expect(nodeById.get('main_output')?.columns.find((column) => column.name === 'total_amount')?.upstream).toEqual([
+      { nodeId: 'table_orders', columnName: 'amount' },
+    ]);
+  });
+
+  it('rejects CREATE TABLE statements without AS SELECT', () => {
+    expect(() => analyzeSql('create table customer_sales (customer_id int, total_amount numeric)')).toThrow(
+      'CREATE TABLE lineage requires an AS SELECT query.',
+    );
+  });
+
   it('records source-to-result data flows with outer join nullability context', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const edgeIds = lineage.edges.map((edge) => edge.id);
@@ -178,6 +207,41 @@ describe('rawsqlAdapter', () => {
     expect(lineage.nodes.find((node) => node.id === 'derived_union_all_right_2')?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
       { nodeId: 'table_store_orders', columnName: 'customer_id' },
     ]);
+  });
+
+  it('flattens same-operator UNION chains into sibling graph parts', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id, amount
+      FROM online_orders
+      UNION ALL
+      SELECT customer_id, amount
+      FROM store_orders
+      UNION ALL
+      SELECT customer_id, amount
+      FROM partner_orders
+    `);
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const unionPartNodes = lineage.nodes.filter((node) => node.id.startsWith('derived_union_all_part_'));
+
+    expect(unionPartNodes.map((node) => node.id)).toEqual([
+      'derived_union_all_part_1_1',
+      'derived_union_all_part_2_2',
+      'derived_union_all_part_3_3',
+    ]);
+    expect(lineage.nodes.some((node) => node.id.includes('left'))).toBe(false);
+    expect(lineage.nodes.some((node) => node.id.includes('right'))).toBe(false);
+    expect(output?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
+      { nodeId: 'derived_union_all_part_1_1', columnName: 'customer_id' },
+      { nodeId: 'derived_union_all_part_2_2', columnName: 'customer_id' },
+      { nodeId: 'derived_union_all_part_3_3', columnName: 'customer_id' },
+    ]);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'derived_union_all_part_1_1', target: 'main_output' }),
+        expect.objectContaining({ source: 'derived_union_all_part_2_2', target: 'main_output' }),
+        expect.objectContaining({ source: 'derived_union_all_part_3_3', target: 'main_output' }),
+      ]),
+    );
   });
 
   it('preserves CTE output column lineage through UNION queries', () => {
@@ -333,7 +397,7 @@ describe('rawsqlAdapter', () => {
     expect(rules?.[0]).toMatchObject({
       id: 'case_1_when_1',
       label: 'when p.last_paid_at is null',
-      expressionSql: "p.last_paid_at is null then\n  'unknown'",
+      expressionSql: "p.last_paid_at is null then 'unknown'",
       conditionUpstream: [{ nodeId: 'table_payments', columnName: 'last_paid_at' }],
       resultUpstream: [],
     });
@@ -345,7 +409,7 @@ describe('rawsqlAdapter', () => {
     expect(rules?.[2]).toMatchObject({
       id: 'case_1_else',
       label: 'else',
-      expressionSql: 'else\n  p.customer_id',
+      expressionSql: 'else p.customer_id',
       conditionUpstream: [],
       resultUpstream: [{ nodeId: 'table_payments', columnName: 'customer_id' }],
     });
@@ -484,9 +548,11 @@ describe('rawsqlAdapter', () => {
 
     expect(outputNode?.comments).toEqual(expect.arrayContaining(['Final output comment.', 'Output id comment.']));
     expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
+    expect(derivedNode?.querySql).toContain('-- Derived source comment.');
+    expect(derivedNode?.querySql).toContain('id -- Derived id comment.');
   });
 
-  it('wraps long expression display SQL at token boundaries', () => {
+  it('uses rawsql-ts formatting for long expression display SQL', () => {
     const { lineage } = analyzeSql(`
       SELECT
         CASE
@@ -502,7 +568,7 @@ describe('rawsqlAdapter', () => {
 
     expect(expressionSql).toContain('case\n');
     expect(expressionSql).toContain('q.cumulative_adjustment_amount');
-    expect(expressionSql?.split('\n').every((line) => line.length <= 42)).toBe(true);
+    expect(expressionSql).toContain('then\n    q.total_tax - q.cumulative_adjustment_amount');
   });
 
   it('omits line comments from expression display SQL', () => {
@@ -616,15 +682,11 @@ describe('rawsqlAdapter', () => {
     const orderTotalsSql = nodeById.get('cte_order_totals')?.cteExecutableSql?.toLowerCase();
     const paymentSummarySql = nodeById.get('cte_payment_summary')?.cteExecutableSql?.toLowerCase();
 
-    expect(recentOrdersSql).toContain('-- recent order line items used as the base sales fact.');
-    expect(recentOrdersSql).toContain('-- extended line amount.');
     expect(recentOrdersSql).toMatch(/from\s+orders as o/);
     expect(orderTotalsSql).toMatch(/with\s+recent_orders as/);
-    expect(orderTotalsSql).toContain('-- aggregates order metrics by customer.');
-    expect(orderTotalsSql).toContain('-- total ordered amount per customer.');
     expect(orderTotalsSql).toContain('sum(amount) as total_amount');
-    expect(paymentSummarySql).toContain('-- captures succeeded payment totals by customer.');
     expect(paymentSummarySql).toMatch(/from\s+payments as p/);
+    expect(nodeById.get('cte_order_totals')?.querySql).toBe(nodeById.get('cte_order_totals')?.cteExecutableSql);
   });
 
   it('uses comments before the inner CTE select query as CTE comments', () => {

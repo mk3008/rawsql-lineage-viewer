@@ -43,6 +43,7 @@ export interface LineageNode {
   comments?: string[];
   cteExecutableSql?: string;
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
+  querySql?: string;
 }
 
 export interface LineageEdge {

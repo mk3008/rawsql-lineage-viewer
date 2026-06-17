@@ -5,6 +5,7 @@ import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Maxi
 import type { GraphNode } from '../domain/graph';
 import type { LineageColumnUsageReason } from '../domain/lineage';
 import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference } from '../lineage/columnDisplay';
+import { SqlCodeMirror } from './SqlCodeMirror';
 
 export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
@@ -96,11 +97,11 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
           <span className="lineage-node-kind">{data.collapsedGroup ? 'Group' : node.type}</span>
         </div>
       </div>
-      {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || node.cteExecutableSql) ? (
+      {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || getNodeSql(node)) ? (
         <CommentBubble
           anchorRef={nodeRef}
           comments={node.comments}
-          cteExecutableSql={node.cteExecutableSql}
+          cteExecutableSql={getNodeSql(node)}
           isActive={data.activeCommentTargetId === nodeCommentTargetId(node.id)}
           onClose={() => data.onCommentClose?.(nodeCommentTargetId(node.id))}
           onFocus={() => data.onCommentFocus?.(nodeCommentTargetId(node.id))}
@@ -410,7 +411,7 @@ function CommentBubble({
       {usageText ? <div className="lineage-comment-section">{usageText}</div> : null}
       {expressionSql ? (
         <div className="lineage-comment-section">
-          <code className="lineage-expression">{expressionSql}</code>
+          <SqlCodeMirror className="lineage-expression" value={expressionSql} />
         </div>
       ) : null}
       {cteExecutableSql ? (
@@ -482,6 +483,10 @@ function buildViewerSqlUrl(sql: string) {
   url.search = '';
   url.hash = new URLSearchParams({ sql }).toString();
   return url.toString();
+}
+
+function getNodeSql(node: GraphNode['data']['lineageNode']): string | undefined {
+  return node.querySql ?? node.cteExecutableSql;
 }
 
 async function copyText(text: string) {
