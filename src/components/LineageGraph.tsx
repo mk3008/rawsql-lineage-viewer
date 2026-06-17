@@ -13,6 +13,7 @@ import {
 } from '@xyflow/react';
 import { Copy, ExternalLink, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
@@ -495,12 +496,14 @@ export function LineageGraph({
 export function LineageInspector({
   activeCaseRule,
   flowDirection,
+  onClearCaseRule,
   onFocusNode,
   onSelectCaseRule,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
+  onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
   onSelectCaseRule?: (selection: CaseRuleSelection) => void;
   selection: InspectorSelection;
@@ -536,6 +539,7 @@ export function LineageInspector({
           <ColumnInspector
             activeCaseRule={activeCaseRule}
             flowDirection={flowDirection}
+            onClearCaseRule={onClearCaseRule}
             onFocusNode={onFocusNode}
             onSelectCaseRule={onSelectCaseRule}
             selection={selection}
@@ -553,12 +557,14 @@ export function LineageInspector({
 function ColumnInspector({
   activeCaseRule,
   flowDirection,
+  onClearCaseRule,
   onFocusNode,
   onSelectCaseRule,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
+  onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
   onSelectCaseRule?: (selection: CaseRuleSelection) => void;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
@@ -571,15 +577,18 @@ function ColumnInspector({
 
   return (
     <div className="lineage-inspector-body">
-      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
       <section className="lineage-inspector-section">
         <h3>Selected</h3>
         <InspectorColumnCard
+          active={Boolean(selection.selected.column.caseRules?.length) && !activeCaseRule}
           hideExpression={Boolean(selection.selected.column.caseRules?.length)}
           item={selection.selected}
+          onClearCaseRule={onClearCaseRule}
           onFocusNode={onFocusNode}
+          selectable={Boolean(selection.selected.column.caseRules?.length)}
         />
       </section>
+      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
       <InspectorSourceGroups items={selection.sources} onFocusNode={onFocusNode} />
       <section className="lineage-inspector-section">
@@ -793,7 +802,6 @@ function InspectorCaseRules({
               onClick={() => onSelectCaseRule?.({ columnId: item.column.id, nodeId: item.node.id, ruleId: rule.id })}
             >
               {rule.caseLabel ? <span className="lineage-inspector-rule-case">{rule.caseLabel}</span> : null}
-              <span className="lineage-inspector-rule-label">{rule.label}</span>
               {rule.conditionSql ? <InspectorRuleSql label="Condition" sql={rule.conditionSql} /> : null}
               {rule.resultSql ? <InspectorRuleSql label="Result" sql={rule.resultSql} /> : null}
             </button>
@@ -814,19 +822,49 @@ function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
 }
 
 function InspectorColumnCard({
+  active,
   hideExpression,
   item,
+  onClearCaseRule,
   onFocusNode,
+  selectable,
 }: {
+  active?: boolean;
   hideExpression?: boolean;
   item: InspectorColumnItem;
+  onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
+  selectable?: boolean;
 }) {
   const expressionSql =
     !hideExpression && item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
-  const focusNode = () => onFocusNode?.(item.node.id);
+  const focusNode = (event?: { stopPropagation: () => void }) => {
+    event?.stopPropagation();
+    onFocusNode?.(item.node.id);
+  };
+  const selectWholeColumn = () => {
+    if (selectable) {
+      onClearCaseRule?.();
+    }
+  };
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (!selectable) {
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectWholeColumn();
+    }
+  };
   return (
-    <div className="lineage-inspector-column-card">
+    <div
+      aria-label={selectable ? `Select full column lineage for ${item.column.name}` : undefined}
+      className={`lineage-inspector-column-card ${selectable ? 'lineage-inspector-column-card-selectable' : ''} ${active ? 'lineage-inspector-column-card-active' : ''}`}
+      role={selectable ? 'button' : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      onClick={selectWholeColumn}
+      onKeyDown={handleKeyDown}
+    >
       <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
         {item.column.name}
       </button>

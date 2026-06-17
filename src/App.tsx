@@ -215,6 +215,7 @@ export function App() {
             <LineageInspector
               activeCaseRule={caseRuleSelection}
               flowDirection={flowDirection}
+              onClearCaseRule={() => setCaseRuleSelection(null)}
               onFocusNode={(nodeId) => {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
               }}

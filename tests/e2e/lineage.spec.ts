@@ -1027,13 +1027,26 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
 
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Rules');
-  await expect(inspector).toContainText('when ps.last_paid_at is null');
-  await expect(inspector).toContainText("Result'unknown'");
+  const firstRuleCard = inspector.locator('.lineage-inspector-rule-card').first();
+  await expect(firstRuleCard.locator('.lineage-inspector-rule-label')).toHaveCount(0);
+  await expect(firstRuleCard.locator('code').first()).toContainText('ps.last_paid_at is null');
+  await expect(firstRuleCard.locator('code').first()).not.toContainText('when');
+  await expect(firstRuleCard.locator('code').last()).toContainText("'unknown'");
+  await expect
+    .poll(() =>
+      inspector.evaluate((element) => {
+        const headings = Array.from(element.querySelectorAll('.lineage-inspector-section h3')).map((heading) =>
+          heading.textContent?.trim().replace(/\s+/g, ' '),
+        );
+        return headings.slice(0, 2);
+      }),
+    )
+    .toEqual(['Selected', 'Rules 3']);
   await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
 
-  await inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ }).click();
+  await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
 
-  await expect(inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ has: page.locator('h3', { hasText: 'Sources' }) });
   await expect(sourcesSection).toContainText('Sources 1');
   await expect(sourcesSection).toContainText('payments');
@@ -1052,6 +1065,14 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute(
     'style',
     /stroke-width: 5/,
+  );
+
+  await inspector.getByRole('button', { name: /Select full column lineage for payment_status/ }).click();
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).not.toHaveClass(
+    /lineage-inspector-rule-card-active/,
+  );
+  await expect(inspector.getByRole('button', { name: /Select full column lineage for payment_status/ })).toHaveClass(
+    /lineage-inspector-column-card-active/,
   );
 });
 
@@ -1141,8 +1162,9 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
 
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Rules');
-  await expect(inspector).toContainText('when rc.tier = :enterprise_tier');
-  await expect(inspector).toContainText('when rc.open_ticket_count > :open_ticket_threshold');
+  await expect(inspector).toContainText('rc.tier = :enterprise_tier');
+  await expect(inspector).toContainText('rc.open_ticket_count > :open_ticket_threshold');
+  await expect(inspector.locator('.lineage-inspector-rule-label')).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).not.toContainText('case');
   await expect
     .poll(() =>
@@ -1153,7 +1175,7 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
         return headings.slice(0, 2);
       }),
     )
-    .toEqual(['Rules 4', 'Selected']);
+    .toEqual(['Selected', 'Rules 4']);
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {
