@@ -29,9 +29,8 @@ export interface ParserAdapterResult {
 }
 
 const parserVersion = 'rawsql-ts';
-const expressionLineMaxLength = 38;
-const rawsqlDemoFormatterOptions = {
-  indentSize: 4,
+const appSqlFormatterOptions = {
+  indentSize: 2,
   indentChar: 'space',
   newline: 'lf',
   keywordCase: 'lower',
@@ -42,7 +41,7 @@ const rawsqlDemoFormatterOptions = {
   orBreak: 'before',
   joinOnBreak: 'before',
   joinConditionContinuationIndent: true,
-  exportComment: 'full',
+  exportComment: 'none',
   commentStyle: 'smart',
   withClauseStyle: 'standard',
   parenthesesOneLine: true,
@@ -55,31 +54,28 @@ const rawsqlDemoFormatterOptions = {
   subqueryOneLine: true,
   insertColumnsOneLine: true,
   whenOneLine: true,
-  oneLineMaxLength: 100,
+  oneLineMaxLength: 40,
   joinConditionOrderByDeclaration: true,
   orderByDefaultDirectionStyle: 'omit',
   columnAliasStyle: 'explicit',
   constraintStyle: 'postgres',
   identifierEscape: 'none',
-  identifierEscapeTarget: 'all',
+  identifierEscapeTarget: 'minimal',
   parameterSymbol: ':',
-  parameterStyle: 'named',
+  parameterStyle: 'original',
   sourceAliasStyle: 'explicit',
   castStyle: 'standard',
 } as const;
+const expressionLineMaxLength = appSqlFormatterOptions.oneLineMaxLength;
+const expressionIndent = ' '.repeat(appSqlFormatterOptions.indentSize);
 const expressionFormatterOptions = {
-  ...rawsqlDemoFormatterOptions,
-  caseOneLine: false,
-  oneLineMaxLength: expressionLineMaxLength,
-  whenOneLine: false,
-  sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
+  ...appSqlFormatterOptions,
+  sourceAliasStyle: appSqlFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : appSqlFormatterOptions.sourceAliasStyle,
 };
 const expressionFormatter = new SqlFormatter(expressionFormatterOptions as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 const cteExecutableSqlFormatter = new SqlFormatter({
-  ...rawsqlDemoFormatterOptions,
-  identifierEscape: 'quote',
-  identifierEscapeTarget: 'minimal',
-  sourceAliasStyle: rawsqlDemoFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : rawsqlDemoFormatterOptions.sourceAliasStyle,
+  ...appSqlFormatterOptions,
+  sourceAliasStyle: appSqlFormatterOptions.sourceAliasStyle === 'explicit' ? 'as' : appSqlFormatterOptions.sourceAliasStyle,
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
@@ -602,6 +598,7 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
       label: conditionSql ? `when ${conditionSql}` : `when ${branchIndex + 1}`,
       caseLabel,
       conditionSql,
+      expressionSql: formatCaseRuleDisplaySql(conditionSql, resultSql),
       resultSql,
       conditionUpstream: mergeColumnRefs(conditionRefs, resolveColumnReferences(key, sources)),
       resultUpstream: resolveColumnReferences(result, sources),
@@ -613,6 +610,7 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
       id: `case_${caseIndex + 1}_else`,
       label: 'else',
       caseLabel,
+      expressionSql: formatCaseRuleDisplaySql(undefined, formatExpressionSql(switchCase.elseValue)),
       resultSql: formatExpressionSql(switchCase.elseValue),
       conditionUpstream: [],
       resultUpstream: resolveColumnReferences(switchCase.elseValue, sources),
@@ -629,6 +627,14 @@ function isCaseExpressionLike(value: unknown): value is { condition?: unknown; s
 
   const switchCase = (value as { switchCase?: unknown }).switchCase;
   return Boolean(switchCase && typeof switchCase === 'object' && Array.isArray((switchCase as { cases?: unknown }).cases));
+}
+
+function formatCaseRuleDisplaySql(conditionSql: string | undefined, resultSql: string | undefined): string {
+  if (conditionSql) {
+    return resultSql ? `${conditionSql} then\n${expressionIndent}${resultSql}` : conditionSql;
+  }
+
+  return resultSql ? `else\n${expressionIndent}${resultSql}` : 'else';
 }
 
 function formatCaseConditionSql(condition: unknown, key: unknown): string | undefined {
@@ -992,10 +998,10 @@ function wrapLongExpressionSql(sql: string): string {
   }
 
   return sql
-    .replace(/\bcase\s+when\b/gi, 'case\n    when')
-    .replace(/\s+when\s+/gi, '\n    when ')
-    .replace(/\s+then\s+/gi, ' then\n        ')
-    .replace(/\s+else\s+/gi, '\n    else\n        ')
+    .replace(/\bcase\s+when\b/gi, `case\n${expressionIndent}when`)
+    .replace(/\s+when\s+/gi, `\n${expressionIndent}when `)
+    .replace(/\s+then\s+/gi, ` then\n${expressionIndent}${expressionIndent}`)
+    .replace(/\s+else\s+/gi, `\n${expressionIndent}else\n${expressionIndent}${expressionIndent}`)
     .replace(/\s+end\b/gi, '\nend')
     .split('\n')
     .flatMap((line) => wrapExpressionLine(line, expressionLineMaxLength))

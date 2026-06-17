@@ -214,11 +214,11 @@ export function LineageGraph({
     }
 
     const rule = resolveSelectedCaseRule(viewLineage.nodes, selectedColumn, caseRuleSelection);
-    if (!rule) {
+    if (!rule?.expressionSql) {
       return undefined;
     }
 
-    return new Map([[selectedColumn.columnId, formatCaseRuleExpressionSql(rule)]]);
+    return new Map([[selectedColumn.columnId, rule.expressionSql]]);
   }, [caseRuleSelection, selectedColumn, viewLineage.nodes]);
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
@@ -925,15 +925,15 @@ function InspectorColumnCard({
       onClick={selectWholeColumn}
       onKeyDown={handleKeyDown}
     >
-      <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
-        {item.column.name}
-      </button>
       <div className="lineage-inspector-column-meta">
         <span className={`lineage-inspector-type lineage-inspector-type-${item.node.type}`}>{item.node.type}</span>
         <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
           {item.node.label}
         </button>
       </div>
+      <button className="lineage-inspector-column-name lineage-inspector-focus-button" type="button" onClick={focusNode}>
+        {item.column.name}
+      </button>
       {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
       {expressionSql ? <code className="lineage-inspector-inline-code">{expressionSql}</code> : null}
     </div>
@@ -1315,14 +1315,6 @@ function resolveSelectedCaseRule(
   const node = nodes.find((item) => item.id === selectedColumn.nodeId);
   const column = node?.columns.find((item) => item.id === selectedColumn.columnId);
   return column?.caseRules?.find((item) => item.id === caseRuleSelection.ruleId);
-}
-
-function formatCaseRuleExpressionSql(rule: LineageCaseRule) {
-  if (rule.conditionSql) {
-    return rule.resultSql ? `${rule.conditionSql} then\n    ${rule.resultSql}` : rule.conditionSql;
-  }
-
-  return rule.resultSql ? `else\n    ${rule.resultSql}` : 'else';
 }
 
 function mergeInspectorColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {

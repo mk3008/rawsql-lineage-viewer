@@ -19,6 +19,7 @@ export interface LineageCaseRule {
   label: string;
   caseLabel?: string;
   conditionSql?: string;
+  expressionSql?: string;
   resultSql?: string;
   conditionUpstream: LineageColumnRef[];
   resultUpstream: LineageColumnRef[];

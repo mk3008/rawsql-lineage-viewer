@@ -308,7 +308,7 @@ describe('rawsqlAdapter', () => {
       'oi.quantity * oi.unit_price',
     );
     expect(nodeById.get('main_output')?.columns.find((column) => column.name === 'payment_status')?.expressionSql).toContain(
-      "\n    when ps.last_paid_at is null then\n        'unknown'",
+      "\n  when ps.last_paid_at is null then\n    'unknown'",
     );
     expect(nodeById.get('cte_order_totals')?.comments).toEqual(['Aggregates order metrics by customer.']);
     expect(nodeById.get('cte_order_totals')?.columns.find((column) => column.name === 'total_amount')?.comments).toEqual([
@@ -333,6 +333,7 @@ describe('rawsqlAdapter', () => {
     expect(rules?.[0]).toMatchObject({
       id: 'case_1_when_1',
       label: 'when p.last_paid_at is null',
+      expressionSql: "p.last_paid_at is null then\n  'unknown'",
       conditionUpstream: [{ nodeId: 'table_payments', columnName: 'last_paid_at' }],
       resultUpstream: [],
     });
@@ -344,6 +345,7 @@ describe('rawsqlAdapter', () => {
     expect(rules?.[2]).toMatchObject({
       id: 'case_1_else',
       label: 'else',
+      expressionSql: 'else\n  p.customer_id',
       conditionUpstream: [],
       resultUpstream: [{ nodeId: 'table_payments', columnName: 'customer_id' }],
     });
@@ -503,7 +505,7 @@ describe('rawsqlAdapter', () => {
     expect(expressionSql?.split('\n').every((line) => line.length <= 42)).toBe(true);
   });
 
-  it('does not wrap line comments inside expression display SQL', () => {
+  it('omits line comments from expression display SQL', () => {
     const { lineage } = analyzeSql(`
       SELECT
         CASE
@@ -515,10 +517,8 @@ describe('rawsqlAdapter', () => {
     const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
     const rule = outputNode?.columns.find((column) => column.name === 'customer_segment')?.caseRules?.[0];
 
-    expect(rule?.resultSql).toContain('-- Support wants open-ticket customers to stay visible even below revenue threshold.');
-    expect(rule?.resultSql?.split('\n').filter((line) => line.includes('--'))).toEqual([
-      ':attention_label -- Support wants open-ticket customers to stay visible even below revenue threshold.',
-    ]);
+    expect(rule?.resultSql).toBe(':attention_label');
+    expect(rule?.resultSql).not.toContain('--');
   });
 
   it('classifies condition-only and unused CTE columns', () => {

@@ -576,6 +576,9 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText('total_amount');
   await expect(inspector).toContainText('Selected');
+  const selectedCard = inspector.locator('.lineage-inspector-column-card').first();
+  await expect(selectedCard.locator('.lineage-inspector-column-meta')).toContainText('Final Result');
+  await expect(selectedCard.locator('.lineage-inspector-column-name')).toHaveText('total_amount');
   await expect(inspector).toContainText('Sources');
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Sources' });
   await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('quantity');
@@ -1066,6 +1069,7 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await expect(ruleCallout).toBeVisible();
   await expect(ruleCallout).toContainText("'unknown'");
   await expect(ruleCallout).not.toContainText('case');
+  await expect(ruleCallout.locator('.lineage-expression')).toContainText("ps.last_paid_at is null then\n  'unknown'");
 
   await inspector.getByRole('tab', { name: 'Selected' }).click();
   await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(0);
