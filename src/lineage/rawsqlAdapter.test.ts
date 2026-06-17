@@ -372,6 +372,24 @@ describe('rawsqlAdapter', () => {
     expect(expressionSql?.split('\n').every((line) => line.length <= 42)).toBe(true);
   });
 
+  it('does not wrap line comments inside expression display SQL', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        CASE
+          WHEN rc.open_ticket_count > :open_ticket_threshold THEN :attention_label -- Support wants open-ticket customers to stay visible even below revenue threshold.
+          ELSE :standard_label
+        END AS customer_segment
+      FROM ranked_customers rc
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const rule = outputNode?.columns.find((column) => column.name === 'customer_segment')?.caseRules?.[0];
+
+    expect(rule?.resultSql).toContain('-- Support wants open-ticket customers to stay visible even below revenue threshold.');
+    expect(rule?.resultSql?.split('\n').filter((line) => line.includes('--'))).toEqual([
+      ':attention_label -- Support wants open-ticket customers to stay visible even below revenue threshold.',
+    ]);
+  });
+
   it('classifies condition-only and unused CTE columns', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (

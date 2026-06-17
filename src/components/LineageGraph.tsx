@@ -15,7 +15,7 @@ import { Copy, ExternalLink, Eye, EyeOff, RotateCcw } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
-import type { LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
@@ -208,6 +208,18 @@ export function LineageGraph({
     }
     return columnIds;
   }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
+  const selectedRuleExpressionByColumnId = useMemo(() => {
+    if (!selectedColumn) {
+      return undefined;
+    }
+
+    const rule = resolveSelectedCaseRule(viewLineage.nodes, selectedColumn, caseRuleSelection);
+    if (!rule) {
+      return undefined;
+    }
+
+    return new Map([[selectedColumn.columnId, formatCaseRuleExpressionSql(rule)]]);
+  }, [caseRuleSelection, selectedColumn, viewLineage.nodes]);
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
       return resolveInspectorColumnSelection(
@@ -279,6 +291,7 @@ export function LineageGraph({
           onColumnSelect: selectColumn,
           selectedColumnId: selectedColumn?.columnId ?? null,
           selectedCommentTargetIds,
+          selectedRuleExpressionByColumnId,
           activeCommentTargetId,
           viewportZoom,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
@@ -310,6 +323,7 @@ export function LineageGraph({
       activeCommentTargetId,
       viewportZoom,
       selectedColumn?.columnId,
+      selectedRuleExpressionByColumnId,
       selectedCommentTargetIds,
       showUnusedColumns,
       toggleColumns,
@@ -571,24 +585,64 @@ function ColumnInspector({
 }) {
   const defaultTab = flowDirection === 'downstream' ? 'downstream' : 'upstream';
   const [activeTab, setActiveTab] = useState<'upstream' | 'downstream'>(defaultTab);
+  const hasCaseRules = Boolean(selection.selected.column.caseRules?.length);
+  const [activeDetailTab, setActiveDetailTab] = useState<'selected' | 'rules'>(() => (activeCaseRule ? 'rules' : 'selected'));
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab, selection.selected.column.id, selection.selected.node.id]);
+  useEffect(() => {
+    setActiveDetailTab(activeCaseRule ? 'rules' : 'selected');
+  }, [activeCaseRule, selection.selected.column.id, selection.selected.node.id]);
+  const selectWholeColumn = () => {
+    onClearCaseRule?.();
+    setActiveDetailTab('selected');
+  };
 
   return (
     <div className="lineage-inspector-body">
-      <section className="lineage-inspector-section">
-        <h3>Selected</h3>
-        <InspectorColumnCard
-          active={Boolean(selection.selected.column.caseRules?.length) && !activeCaseRule}
-          hideExpression={Boolean(selection.selected.column.caseRules?.length)}
-          item={selection.selected}
-          onClearCaseRule={onClearCaseRule}
-          onFocusNode={onFocusNode}
-          selectable={Boolean(selection.selected.column.caseRules?.length)}
-        />
-      </section>
-      <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} />
+      {hasCaseRules ? (
+        <section className="lineage-inspector-section">
+          <div className="lineage-inspector-tabs" role="tablist" aria-label="Selected column detail">
+            <button
+              aria-selected={activeDetailTab === 'selected'}
+              className={activeDetailTab === 'selected' ? 'lineage-inspector-tab-active' : ''}
+              role="tab"
+              type="button"
+              onClick={selectWholeColumn}
+            >
+              Selected
+            </button>
+            <button
+              aria-selected={activeDetailTab === 'rules'}
+              className={activeDetailTab === 'rules' ? 'lineage-inspector-tab-active' : ''}
+              role="tab"
+              type="button"
+              onClick={() => setActiveDetailTab('rules')}
+            >
+              Rules <span>{selection.selected.column.caseRules?.length ?? 0}</span>
+            </button>
+          </div>
+          <div className="lineage-inspector-tab-panel" role="tabpanel">
+            {activeDetailTab === 'selected' ? (
+              <InspectorColumnCard
+                active={!activeCaseRule}
+                hideExpression
+                item={selection.selected}
+                onClearCaseRule={selectWholeColumn}
+                onFocusNode={onFocusNode}
+                selectable
+              />
+            ) : (
+              <InspectorCaseRules activeCaseRule={activeCaseRule} item={selection.selected} onSelectCaseRule={onSelectCaseRule} showHeading={false} />
+            )}
+          </div>
+        </section>
+      ) : (
+        <section className="lineage-inspector-section">
+          <h3>Selected</h3>
+          <InspectorColumnCard item={selection.selected} onFocusNode={onFocusNode} />
+        </section>
+      )}
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
       <InspectorSourceGroups items={selection.sources} onFocusNode={onFocusNode} />
       <section className="lineage-inspector-section">
@@ -775,21 +829,25 @@ function InspectorCaseRules({
   activeCaseRule,
   item,
   onSelectCaseRule,
+  showHeading = true,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   item: InspectorColumnItem;
   onSelectCaseRule?: (selection: CaseRuleSelection) => void;
+  showHeading?: boolean;
 }) {
   const rules = item.column.caseRules ?? [];
   if (rules.length === 0) {
     return null;
   }
 
-  return (
-    <section className="lineage-inspector-section">
-      <h3>
-        Rules <span>{rules.length}</span>
-      </h3>
+  const content = (
+    <>
+      {showHeading ? (
+        <h3>
+          Rules <span>{rules.length}</span>
+        </h3>
+      ) : null}
       <div className="lineage-inspector-rule-list">
         {rules.map((rule) => {
           const isActive =
@@ -808,8 +866,10 @@ function InspectorCaseRules({
           );
         })}
       </div>
-    </section>
+    </>
   );
+
+  return showHeading ? <section className="lineage-inspector-section">{content}</section> : content;
 }
 
 function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
@@ -1231,14 +1291,38 @@ function resolveSelectedCaseRuleRefs(
     return undefined;
   }
 
-  const node = nodes.find((item) => item.id === selectedColumn.nodeId);
-  const column = node?.columns.find((item) => item.id === selectedColumn.columnId);
-  const rule = column?.caseRules?.find((item) => item.id === caseRuleSelection.ruleId);
+  const rule = resolveSelectedCaseRule(nodes, selectedColumn, caseRuleSelection);
   if (!rule) {
     return undefined;
   }
 
   return mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream);
+}
+
+function resolveSelectedCaseRule(
+  nodes: LineageNode[],
+  selectedColumn: SelectedColumn,
+  caseRuleSelection?: CaseRuleSelection | null,
+): LineageCaseRule | undefined {
+  if (
+    !caseRuleSelection ||
+    caseRuleSelection.nodeId !== selectedColumn.nodeId ||
+    caseRuleSelection.columnId !== selectedColumn.columnId
+  ) {
+    return undefined;
+  }
+
+  const node = nodes.find((item) => item.id === selectedColumn.nodeId);
+  const column = node?.columns.find((item) => item.id === selectedColumn.columnId);
+  return column?.caseRules?.find((item) => item.id === caseRuleSelection.ruleId);
+}
+
+function formatCaseRuleExpressionSql(rule: LineageCaseRule) {
+  if (rule.conditionSql) {
+    return rule.resultSql ? `${rule.conditionSql} then\n    ${rule.resultSql}` : rule.conditionSql;
+  }
+
+  return rule.resultSql ? `else\n    ${rule.resultSql}` : 'else';
 }
 
 function mergeInspectorColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {

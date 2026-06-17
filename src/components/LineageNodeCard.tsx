@@ -242,6 +242,9 @@ function LineageColumnRow({
   const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
   const isSource = data.sourceColumnIds?.has(column.id) ?? false;
   const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
+  const selectedRuleExpressionSql = data.selectedRuleExpressionByColumnId?.get(column.id);
+  const expressionSql =
+    selectedRuleExpressionSql ?? (column.expressionSql && !isSimpleColumnReference(column.expressionSql) ? column.expressionSql : undefined);
   const usageClass =
     column.usage?.role === 'condition' ? 'lineage-column-condition' : column.usage?.role === 'unused' ? 'lineage-column-unused' : '';
 
@@ -258,11 +261,11 @@ function LineageColumnRow({
       >
         {column.name}
       </button>
-      {isCommentSelected && hasColumnCalloutContent(column) ? (
+      {isCommentSelected && (hasColumnCalloutContent(column) || selectedRuleExpressionSql) ? (
         <CommentBubble
           anchorRef={columnRef}
           comments={column.comments}
-          expressionSql={column.expressionSql && !isSimpleColumnReference(column.expressionSql) ? column.expressionSql : undefined}
+          expressionSql={expressionSql}
           usageText={formatUsageText(column)}
           isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}

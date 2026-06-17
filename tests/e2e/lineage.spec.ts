@@ -1027,21 +1027,14 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
 
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Rules');
+  await expect(inspector.getByRole('tab', { name: 'Selected' })).toHaveAttribute('aria-selected', 'true');
+  await inspector.getByRole('tab', { name: /Rules 3/ }).click();
   const firstRuleCard = inspector.locator('.lineage-inspector-rule-card').first();
   await expect(firstRuleCard.locator('.lineage-inspector-rule-label')).toHaveCount(0);
   await expect(firstRuleCard.locator('code').first()).toContainText('ps.last_paid_at is null');
   await expect(firstRuleCard.locator('code').first()).not.toContainText('when');
   await expect(firstRuleCard.locator('code').last()).toContainText("'unknown'");
-  await expect
-    .poll(() =>
-      inspector.evaluate((element) => {
-        const headings = Array.from(element.querySelectorAll('.lineage-inspector-section h3')).map((heading) =>
-          heading.textContent?.trim().replace(/\s+/g, ' '),
-        );
-        return headings.slice(0, 2);
-      }),
-    )
-    .toEqual(['Selected', 'Rules 3']);
+  await expect(inspector.getByRole('tab', { name: /Rules 3/ })).toHaveAttribute('aria-selected', 'true');
   await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
 
   await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
@@ -1052,7 +1045,7 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await expect(sourcesSection).toContainText('payments');
   await expect(sourcesSection).toContainText('paid_at');
   await expect(sourcesSection).not.toContainText('paid_amount');
-  const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel');
+  const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel').last();
   await expect(inspector.getByRole('tab', { name: /Upstream 2/ })).toHaveAttribute('aria-selected', 'true');
   await expect(upstreamPanel).toContainText('payment_summary');
   await expect(upstreamPanel).toContainText('last_paid_at');
@@ -1066,14 +1059,14 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
     'style',
     /stroke-width: 5/,
   );
+  const ruleCallout = page.getByTestId('lineage-comment').filter({ hasText: 'ps.last_paid_at is null' });
+  await expect(ruleCallout).toBeVisible();
+  await expect(ruleCallout).toContainText("'unknown'");
+  await expect(ruleCallout).not.toContainText('case');
 
-  await inspector.getByRole('button', { name: /Select full column lineage for payment_status/ }).click();
-  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).not.toHaveClass(
-    /lineage-inspector-rule-card-active/,
-  );
-  await expect(inspector.getByRole('button', { name: /Select full column lineage for payment_status/ })).toHaveClass(
-    /lineage-inspector-column-card-active/,
-  );
+  await inspector.getByRole('tab', { name: 'Selected' }).click();
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(0);
+  await expect(inspector.getByRole('tab', { name: 'Selected' })).toHaveAttribute('aria-selected', 'true');
 });
 
 test('shows CASE rules for a commented output CASE in a monthly report query', async ({ page }) => {
@@ -1162,20 +1155,13 @@ test('shows CASE rules for a commented output CASE in a monthly report query', a
 
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Rules');
+  await inspector.getByRole('tab', { name: /Rules 4/ }).click();
   await expect(inspector).toContainText('rc.tier = :enterprise_tier');
   await expect(inspector).toContainText('rc.open_ticket_count > :open_ticket_threshold');
   await expect(inspector.locator('.lineage-inspector-rule-label')).toHaveCount(0);
-  await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).not.toContainText('case');
-  await expect
-    .poll(() =>
-      inspector.evaluate((element) => {
-        const headings = Array.from(element.querySelectorAll('.lineage-inspector-section h3')).map((heading) =>
-          heading.textContent?.trim().replace(/\s+/g, ' '),
-        );
-        return headings.slice(0, 2);
-      }),
-    )
-    .toEqual(['Selected', 'Rules 4']);
+  await inspector.getByRole('tab', { name: 'Selected' }).click();
+  await expect(inspector.getByRole('tab', { name: 'Selected' })).toHaveAttribute('aria-selected', 'true');
+  await expect(inspector.locator('.lineage-inspector-column-card')).not.toContainText('case');
 });
 
 test('highlights downstream output lineage when a source column is selected', async ({ page }) => {

@@ -15,6 +15,7 @@ export type GraphNodeData = {
   onNodeSelect?: (nodeId: string) => void;
   selectedColumnId?: string | null;
   selectedCommentTargetIds?: Set<string>;
+  selectedRuleExpressionByColumnId?: Map<string, string>;
   activeCommentTargetId?: string | null;
   viewportZoom?: number;
   highlightedColumnIds?: Set<string>;

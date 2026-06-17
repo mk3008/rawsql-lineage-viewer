@@ -936,6 +936,10 @@ function wrapExpressionLine(line: string, maxLength: number): string[] {
     return [line];
   }
 
+  if (line.includes('--')) {
+    return [line];
+  }
+
   const indent = line.match(/^\s*/)?.[0] ?? '';
   const continuationIndent = `${indent}    `;
   const tokens = line.trim().split(/\s+/);
