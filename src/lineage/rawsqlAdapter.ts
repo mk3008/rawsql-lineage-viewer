@@ -695,7 +695,7 @@ function resolveColumnReferences(value: unknown, sources: ResolvedSource[]): Lin
     }
 
     const namespace = reference.getNamespace();
-    const source = namespace ? sourceByAlias.get(namespace) : sources.length === 1 ? sources[0] : null;
+    const source = namespace ? sourceByAlias.get(namespace) : resolveUnqualifiedColumnSource(columnName, sources);
     if (!source) {
       continue;
     }
@@ -710,6 +710,15 @@ function resolveColumnReferences(value: unknown, sources: ResolvedSource[]): Lin
     }
   }
   return refs;
+}
+
+function resolveUnqualifiedColumnSource(columnName: string, sources: ResolvedSource[]): ResolvedSource | null {
+  if (sources.length === 1) {
+    return sources[0];
+  }
+
+  const candidates = sources.filter((source) => source.node.columns.some((column) => column.name === columnName));
+  return candidates.length === 1 ? candidates[0] : null;
 }
 
 function collectQueryConditionReferences(query: SimpleSelectQuery): Array<{ reason: LineageColumnUsageReason; refs: ColumnReference[] }> {

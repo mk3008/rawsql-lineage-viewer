@@ -239,6 +239,49 @@ describe('rawsqlAdapter', () => {
     expect(output?.columns.map((column) => column.name)).toEqual(['customer_id', 'amount']);
   });
 
+  it('resolves unqualified columns when exactly one source exposes the column', () => {
+    const { lineage } = analyzeSql(`
+      WITH customer_orders AS (
+        SELECT customer_id, order_count
+        FROM orders_by_customer
+      ),
+      customer_profiles AS (
+        SELECT customer_id, customer_name
+        FROM customers
+      )
+      SELECT customer_name, order_count
+      FROM customer_orders co
+      JOIN customer_profiles cp ON cp.customer_id = co.customer_id
+    `);
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(output?.columns.find((column) => column.name === 'customer_name')?.upstream).toEqual([
+      { nodeId: 'cte_customer_profiles', columnName: 'customer_name' },
+    ]);
+    expect(output?.columns.find((column) => column.name === 'order_count')?.upstream).toEqual([
+      { nodeId: 'cte_customer_orders', columnName: 'order_count' },
+    ]);
+  });
+
+  it('does not guess unqualified columns when multiple sources expose the column', () => {
+    const { lineage } = analyzeSql(`
+      WITH customer_orders AS (
+        SELECT customer_id, order_count
+        FROM orders_by_customer
+      ),
+      customer_profiles AS (
+        SELECT customer_id, customer_name
+        FROM customers
+      )
+      SELECT customer_id
+      FROM customer_orders co
+      JOIN customer_profiles cp ON cp.customer_id = co.customer_id
+    `);
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(output?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([]);
+  });
+
   it('records upstream column lineage for output columns through CTEs', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
