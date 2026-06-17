@@ -1040,6 +1040,9 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
 
   await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
+  await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
+  await expect(inspector.getByRole('tab', { name: /Rules 3/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ has: page.locator('h3', { hasText: 'Sources' }) });
   await expect(sourcesSection).toContainText('Sources 1');
   await expect(sourcesSection).toContainText('payments');

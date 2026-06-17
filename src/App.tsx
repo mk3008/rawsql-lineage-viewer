@@ -220,11 +220,7 @@ export function App() {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
               }}
               onSelectCaseRule={(selection) => {
-                setCaseRuleSelection((current) =>
-                  current?.nodeId === selection.nodeId && current.columnId === selection.columnId && current.ruleId === selection.ruleId
-                    ? null
-                    : selection,
-                );
+                setCaseRuleSelection(selection);
               }}
               selection={inspectorSelection}
             />
