@@ -1034,6 +1034,18 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ }).click();
 
   await expect(inspector.getByRole('button', { name: /when ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
+  const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ has: page.locator('h3', { hasText: 'Sources' }) });
+  await expect(sourcesSection).toContainText('Sources 1');
+  await expect(sourcesSection).toContainText('payments');
+  await expect(sourcesSection).toContainText('paid_at');
+  await expect(sourcesSection).not.toContainText('paid_amount');
+  const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel');
+  await expect(inspector.getByRole('tab', { name: /Upstream 2/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(upstreamPanel).toContainText('payment_summary');
+  await expect(upstreamPanel).toContainText('last_paid_at');
+  await expect(upstreamPanel).toContainText('payments');
+  await expect(upstreamPanel).toContainText('paid_at');
+  await expect(upstreamPanel).not.toContainText('paid_amount');
   await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
   await expect(paymentsNode.getByRole('button', { name: 'paid_at', exact: true })).toHaveClass(/lineage-column-source/);
   await expect(paymentSummaryNode.getByRole('button', { name: 'paid_amount', exact: true })).toHaveCount(0);

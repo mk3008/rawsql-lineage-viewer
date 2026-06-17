@@ -209,7 +209,12 @@ export function LineageGraph({
   }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
-      return resolveInspectorColumnSelection(viewLineage.nodes, viewLineage.edges, selectedColumn);
+      return resolveInspectorColumnSelection(
+        viewLineage.nodes,
+        viewLineage.edges,
+        selectedColumn,
+        resolveSelectedCaseRuleRefs(viewLineage.nodes, selectedColumn, caseRuleSelection),
+      );
     }
 
     if (selectedNodeCommentTargetId) {
@@ -219,7 +224,7 @@ export function LineageGraph({
     }
 
     return null;
-  }, [selectedColumn, selectedNodeCommentTargetId, viewLineage.nodes]);
+  }, [caseRuleSelection, selectedColumn, selectedNodeCommentTargetId, viewLineage.edges, viewLineage.nodes]);
   useEffect(() => {
     onInspectorSelectionChange?.(inspectorSelection);
   }, [inspectorSelection, onInspectorSelectionChange]);
@@ -878,6 +883,7 @@ function resolveInspectorColumnSelection(
   nodes: LineageNode[],
   edges: LineageEdge[],
   selectedColumn: SelectedColumn,
+  upstreamRefs?: LineageColumnRef[],
 ): Extract<InspectorSelection, { kind: 'column' }> | null {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const selectedNode = nodesById.get(selectedColumn.nodeId);
@@ -888,8 +894,8 @@ function resolveInspectorColumnSelection(
 
   const downstreamByColumnKey = buildDownstreamColumnIndex(nodes);
   const edgeAliasByNodePair = buildEdgeAliasIndex(edges);
-  const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name);
-  const upstreamGroups = collectUpstreamColumnGroups(nodesById, edgeAliasByNodePair, selectedNode.id, selected.name);
+  const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, upstreamRefs);
+  const upstreamGroups = collectUpstreamColumnGroups(nodesById, edgeAliasByNodePair, selectedNode.id, selected.name, upstreamRefs);
   const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
   const sources = upstream.filter((item) => (item.column.upstream ?? []).length === 0);
   return {
@@ -926,7 +932,12 @@ function buildDownstreamColumnIndex(nodes: LineageNode[]) {
   return downstreamByColumnKey;
 }
 
-function collectUpstreamColumns(nodesById: Map<string, LineageNode>, nodeId: string, columnName: string) {
+function collectUpstreamColumns(
+  nodesById: Map<string, LineageNode>,
+  nodeId: string,
+  columnName: string,
+  upstreamRefs?: LineageColumnRef[],
+) {
   const result: InspectorColumnItem[] = [];
   const visited = new Set<string>();
 
@@ -949,7 +960,19 @@ function collectUpstreamColumns(nodesById: Map<string, LineageNode>, nodeId: str
     }
   };
 
-  visit(nodeId, columnName);
+  if (upstreamRefs) {
+    for (const ref of upstreamRefs) {
+      const upstreamNode = nodesById.get(ref.nodeId);
+      const upstreamColumn = upstreamNode?.columns.find((item) => item.name === ref.columnName);
+      if (!upstreamNode || !upstreamColumn) {
+        continue;
+      }
+      result.push({ column: upstreamColumn, node: upstreamNode });
+      visit(ref.nodeId, ref.columnName);
+    }
+  } else {
+    visit(nodeId, columnName);
+  }
   return result;
 }
 
@@ -958,19 +981,12 @@ function collectUpstreamColumnGroups(
   edgeAliasByNodePair: Map<string, string | undefined>,
   nodeId: string,
   columnName: string,
+  upstreamRefs?: LineageColumnRef[],
 ) {
   const groups: InspectorColumnGroup[] = [];
   const visited = new Set<string>();
 
-  const visit = (currentNodeId: string, currentColumnName: string) => {
-    const node = nodesById.get(currentNodeId);
-    const column = node?.columns.find((item) => item.name === currentColumnName);
-    if (!node || !column || visited.has(column.id)) {
-      return;
-    }
-
-    visited.add(column.id);
-    const refs = column.upstream ?? [];
+  const addGroups = (refs: LineageColumnRef[], currentNodeId: string) => {
     const groupItemsByAlias = new Map<string, InspectorColumnItem[]>();
     const aliasByKey = new Map<string, string | undefined>();
 
@@ -993,13 +1009,34 @@ function collectUpstreamColumnGroups(
         groups.push({ alias: aliasByKey.get(key), items: dedupedItems });
       }
     }
+  };
+
+  const visit = (currentNodeId: string, currentColumnName: string, addCurrentGroups = true) => {
+    const node = nodesById.get(currentNodeId);
+    const column = node?.columns.find((item) => item.name === currentColumnName);
+    if (!node || !column || visited.has(column.id)) {
+      return;
+    }
+
+    visited.add(column.id);
+    const refs = column.upstream ?? [];
+    if (addCurrentGroups) {
+      addGroups(refs, currentNodeId);
+    }
 
     for (const ref of refs) {
       visit(ref.nodeId, ref.columnName);
     }
   };
 
-  visit(nodeId, columnName);
+  if (upstreamRefs) {
+    addGroups(upstreamRefs, nodeId);
+    for (const ref of upstreamRefs) {
+      visit(ref.nodeId, ref.columnName);
+    }
+  } else {
+    visit(nodeId, columnName);
+  }
   return groups;
 }
 
@@ -1129,7 +1166,7 @@ function resolveColumnHighlights(
     }
   };
 
-  if (upstreamRefs && upstreamRefs.length > 0) {
+  if (upstreamRefs) {
     for (const ref of upstreamRefs) {
       highlightedEdgeIds.add(edgeKey(ref.nodeId, selectedColumn.nodeId));
       visitUpstream(ref.nodeId, ref.columnName);

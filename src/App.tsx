@@ -65,8 +65,12 @@ export function App() {
       }
     : null;
   const handleInspectorSelectionChange = useCallback((selection: InspectorSelection) => {
-    setInspectorSelection(selection);
-    setCaseRuleSelection(null);
+    setInspectorSelection((current) => {
+      if (!isSameInspectorSelection(current, selection)) {
+        setCaseRuleSelection(null);
+      }
+      return selection;
+    });
     if (selection) {
       setIsPanelOpen(true);
       setPanelTab('inspector');
@@ -506,6 +510,22 @@ function hashText(text: string) {
     hash = (hash * 31 + text.charCodeAt(index)) >>> 0;
   }
   return hash.toString(36);
+}
+
+function isSameInspectorSelection(left: InspectorSelection, right: InspectorSelection) {
+  if (left?.kind !== right?.kind) {
+    return false;
+  }
+  if (!left || !right) {
+    return left === right;
+  }
+  if (left.kind === 'column' && right.kind === 'column') {
+    return left.selected.node.id === right.selected.node.id && left.selected.column.id === right.selected.column.id;
+  }
+  if (left.kind === 'node' && right.kind === 'node') {
+    return left.node.id === right.node.id;
+  }
+  return false;
 }
 
 function GitHubMark() {
