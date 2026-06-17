@@ -256,6 +256,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       label: operator,
       confidence: 'medium',
     });
+    setNodeColumns(nodes, targetId, collectBinaryOutputColumns(query, leftId, rightId, nodes));
     return;
   }
 
@@ -278,6 +279,39 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
   });
   collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
   return id;
+}
+
+function collectBinaryOutputColumns(query: BinarySelectQuery, leftId: string, rightId: string, nodes: Map<string, LineageNode>): LineageColumn[] {
+  const leftColumns = nodes.get(leftId)?.columns ?? [];
+  const rightColumns = nodes.get(rightId)?.columns ?? [];
+  const names = collectBinaryOutputColumnNames(query, leftColumns, rightColumns);
+  return names.map((name, index) => ({
+    id: '',
+    name,
+    upstream: mergeColumnRefs(
+      leftColumns[index] ? [{ nodeId: leftId, columnName: leftColumns[index].name }] : [],
+      rightColumns[index] ? [{ nodeId: rightId, columnName: rightColumns[index].name }] : [],
+    ),
+  }));
+}
+
+function collectBinaryOutputColumnNames(query: BinarySelectQuery, leftColumns: LineageColumn[], rightColumns: LineageColumn[]): string[] {
+  const leftNames = collectQueryOutputColumnNames(query.left);
+  const rightNames = collectQueryOutputColumnNames(query.right);
+  const maxLength = Math.max(leftColumns.length, rightColumns.length, leftNames.length, rightNames.length);
+  return Array.from({ length: maxLength }, (_, index) => leftNames[index] ?? rightNames[index] ?? leftColumns[index]?.name ?? rightColumns[index]?.name ?? `column_${index + 1}`);
+}
+
+function collectQueryOutputColumnNames(query: unknown): string[] {
+  if (query instanceof SimpleSelectQuery) {
+    return query.selectClause.items.map((item, index) => getSelectItemOutputName(item, index));
+  }
+
+  if (query instanceof BinarySelectQuery) {
+    return collectQueryOutputColumnNames(query.left);
+  }
+
+  return [];
 }
 
 function collectCteExecutableSql(
@@ -449,19 +483,16 @@ function resolveSourceExpression(
 }
 
 function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
-  return query.selectClause.items.map((item, index) => {
+  return query.selectClause.items.flatMap((item, index) => {
+    const wildcardColumns = expandWildcardSelectItem(item, sources);
+    if (wildcardColumns) {
+      return wildcardColumns;
+    }
+
     const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     const comments = extractSelectItemComments(query.selectClause.items, index);
     const caseRules = collectCaseRules(item.value, sources);
-    const name = (() => {
-    if (item.identifier) {
-      return item.identifier.name;
-    }
-    if (item.value instanceof ColumnReference) {
-      return item.value.column.name;
-    }
-    return `expr_${index + 1}`;
-    })();
+    const name = getSelectItemOutputName(item, index);
     return {
       id: '',
       name,
@@ -472,6 +503,37 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
     };
   });
+}
+
+function expandWildcardSelectItem(item: SimpleSelectQuery['selectClause']['items'][number], sources: ResolvedSource[]): LineageColumn[] | null {
+  if (!(item.value instanceof ColumnReference) || item.value.column.name !== '*') {
+    return null;
+  }
+
+  const namespace = item.value.getNamespace();
+  const targetSources = namespace
+    ? sources.filter((source) => source.aliases.includes(namespace))
+    : sources;
+  const columns = targetSources.flatMap((source) =>
+    source.node.columns.map((column) => ({
+      id: '',
+      name: column.name,
+      expressionSql: namespace ? `${namespace}.${column.name}` : column.name,
+      upstream: [{ nodeId: source.node.id, columnName: column.name }],
+    })),
+  );
+
+  return columns.length > 0 ? columns : null;
+}
+
+function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'][number], index: number): string {
+  if (item.identifier) {
+    return item.identifier.name;
+  }
+  if (item.value instanceof ColumnReference) {
+    return item.value.column.name;
+  }
+  return `expr_${index + 1}`;
 }
 
 function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {

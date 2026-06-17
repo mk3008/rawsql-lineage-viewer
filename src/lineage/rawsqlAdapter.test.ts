@@ -151,6 +151,94 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('preserves column lineage through UNION queries', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id, amount
+      FROM online_orders
+      UNION ALL
+      SELECT customer_id, amount
+      FROM store_orders
+    `);
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const customerId = output?.columns.find((column) => column.name === 'customer_id');
+    const amount = output?.columns.find((column) => column.name === 'amount');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['customer_id', 'amount']);
+    expect(customerId?.upstream).toEqual([
+      { nodeId: 'derived_union_all_left_1', columnName: 'customer_id' },
+      { nodeId: 'derived_union_all_right_2', columnName: 'customer_id' },
+    ]);
+    expect(amount?.upstream).toEqual([
+      { nodeId: 'derived_union_all_left_1', columnName: 'amount' },
+      { nodeId: 'derived_union_all_right_2', columnName: 'amount' },
+    ]);
+    expect(lineage.nodes.find((node) => node.id === 'derived_union_all_left_1')?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
+      { nodeId: 'table_online_orders', columnName: 'customer_id' },
+    ]);
+    expect(lineage.nodes.find((node) => node.id === 'derived_union_all_right_2')?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
+      { nodeId: 'table_store_orders', columnName: 'customer_id' },
+    ]);
+  });
+
+  it('preserves CTE output column lineage through UNION queries', () => {
+    const { lineage } = analyzeSql(`
+      WITH combined_orders AS (
+        SELECT customer_id, amount
+        FROM online_orders
+        UNION
+        SELECT customer_id, amount
+        FROM store_orders
+      )
+      SELECT customer_id, amount
+      FROM combined_orders
+    `);
+    const cte = lineage.nodes.find((node) => node.id === 'cte_combined_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(cte?.columns.map((column) => column.name)).toEqual(['customer_id', 'amount']);
+    expect(output?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
+      { nodeId: 'cte_combined_orders', columnName: 'customer_id' },
+    ]);
+    expect(cte?.columns.find((column) => column.name === 'customer_id')?.upstream).toEqual([
+      { nodeId: 'derived_union_left_1', columnName: 'customer_id' },
+      { nodeId: 'derived_union_right_2', columnName: 'customer_id' },
+    ]);
+  });
+
+  it('expands wildcard columns from subqueries with known output columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT src.*
+      FROM (
+        SELECT id, name
+        FROM customers
+      ) src
+    `);
+    const derived = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'src');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(derived?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(output?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: derived?.id, columnName: 'id' },
+    ]);
+    expect(output?.columns.find((column) => column.name === 'name')?.upstream).toEqual([
+      { nodeId: derived?.id, columnName: 'name' },
+    ]);
+  });
+
+  it('expands unqualified wildcard columns from known derived sources', () => {
+    const { lineage } = analyzeSql(`
+      SELECT *
+      FROM (
+        SELECT customer_id, amount
+        FROM orders
+      ) order_summary
+    `);
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['customer_id', 'amount']);
+  });
+
   it('records upstream column lineage for output columns through CTEs', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
