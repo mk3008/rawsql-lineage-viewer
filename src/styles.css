@@ -765,9 +765,33 @@ textarea {
   text-transform: uppercase;
 }
 
+.lineage-inspector-expression-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 7px;
+  border: 1px solid #e4ebf5;
+  border-radius: 6px;
+  padding: 5px 7px;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lineage-inspector-expression-toggle:hover,
+.lineage-inspector-expression-toggle:focus-visible {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  outline: none;
+}
+
 .lineage-inspector-column-card {
   display: grid;
   gap: 6px;
+  min-width: 0;
   border: 1px solid #e4ebf5;
   border-radius: 7px;
   padding: 9px 10px;
@@ -791,24 +815,25 @@ textarea {
 .lineage-inspector-tree {
   display: grid;
   gap: 8px;
-  margin-left: calc(var(--lineage-inspector-tree-depth, 0) * 16px);
+  min-width: 0;
 }
 
 .lineage-inspector-tree .lineage-inspector-tree {
   margin-top: 8px;
-  padding-left: 12px;
+  padding-left: 8px;
   border-left: 2px solid #dbeafe;
 }
 
 .lineage-inspector-tree-node {
   position: relative;
+  min-width: 0;
 }
 
 .lineage-inspector-tree .lineage-inspector-tree .lineage-inspector-tree-node::before {
   position: absolute;
   top: 18px;
-  left: -12px;
-  width: 10px;
+  left: -8px;
+  width: 6px;
   border-top: 2px solid #dbeafe;
   content: "";
 }
@@ -929,6 +954,37 @@ textarea {
   color: #1d4ed8;
 }
 
+.lineage-inspector-type-expression {
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.lineage-inspector-type-expression-table {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.lineage-inspector-type-expression-cte {
+  border-color: #86efac;
+  color: #047857;
+}
+
+.lineage-inspector-type-expression-derived {
+  border-color: #fcd34d;
+  color: #b45309;
+}
+
+.lineage-inspector-type-expression-output {
+  border-color: #c4b5fd;
+  color: #6d28d9;
+}
+
+.lineage-inspector-type-expression-recursive {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
 .lineage-inspector-type-recursive {
   background: #dbeafe;
   color: #1d4ed8;
@@ -960,6 +1016,7 @@ textarea {
 .lineage-inspector-inline-code,
 .lineage-inspector-rule-code {
   display: block;
+  min-width: 0;
   overflow: auto;
   border-radius: 6px;
   background: #f8fafc;
@@ -987,6 +1044,7 @@ textarea {
 .lineage-inspector-inline-code .cm-editor,
 .lineage-inspector-rule-code .cm-editor,
 .lineage-expression .cm-editor {
+  min-width: 0;
   background: transparent;
 }
 
@@ -1055,7 +1113,8 @@ textarea {
   background: #fff;
 }
 
-.sql-history-main {
+.sql-history-main,
+.sql-history-edit {
   display: grid;
   gap: 5px;
   min-width: 0;
@@ -1067,8 +1126,36 @@ textarea {
   text-align: left;
 }
 
+.sql-history-edit {
+  cursor: default;
+}
+
 .sql-history-main:hover {
   background: #f8fafc;
+}
+
+.sql-history-edit-label {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.sql-history-title-input {
+  min-width: 0;
+  border: 1px solid #bfdbfe;
+  border-radius: 6px;
+  padding: 6px 7px;
+  color: #0f172a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 850;
+  outline: none;
+}
+
+.sql-history-title-input:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 .sql-history-title {
@@ -1103,17 +1190,49 @@ textarea {
   white-space: nowrap;
 }
 
-.sql-history-remove {
-  display: inline-grid;
-  width: 32px;
-  min-height: 100%;
-  place-items: center;
+.sql-history-actions {
+  display: grid;
+  grid-auto-rows: 1fr;
   border: 0;
   border-left: 1px solid #e4ebf5;
-  border-radius: 0 7px 7px 0;
+}
+
+.sql-history-action {
+  display: inline-grid;
+  width: 32px;
+  min-height: 32px;
+  place-items: center;
+  border: 0;
+  border-bottom: 1px solid #e4ebf5;
   background: #f8fafc;
   color: #64748b;
   cursor: pointer;
+}
+
+.sql-history-action:first-child {
+  border-radius: 0 7px 7px 0;
+}
+
+.sql-history-action:last-child {
+  border-bottom: 0;
+}
+
+.sql-history-actions .sql-history-action:first-child:not(:last-child) {
+  border-radius: 0 7px 0 0;
+}
+
+.sql-history-actions .sql-history-action:last-child:not(:first-child) {
+  border-radius: 0 0 7px 0;
+}
+
+.sql-history-action:hover {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.sql-history-save:hover {
+  background: #dcfce7;
+  color: #047857;
 }
 
 .sql-history-remove:hover {

@@ -1,5 +1,5 @@
 import { useCallback, useMemo, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Play, Share2, Trash2 } from 'lucide-react';
+import { AlertTriangle, Check, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -24,6 +24,8 @@ export function App() {
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
+  const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
+  const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(() => readSqlHistory(initialSql));
@@ -77,12 +79,26 @@ export function App() {
       setPanelTab('inspector');
     }
   }, []);
+  const toggleExpressionBreakdown = useCallback((columnId: string) => {
+    setCaseRuleSelection(null);
+    setExpandedExpressionColumnIds((current) => {
+      const next = new Set(current);
+      if (next.has(columnId)) {
+        next.delete(columnId);
+      } else {
+        next.add(columnId);
+      }
+      return next;
+    });
+  }, []);
   const openSql = useCallback((nextSql: string) => {
     setSql(nextSql);
     setLastAnalyzedSql(nextSql);
     setCaseRuleSelection(null);
+    setExpandedExpressionColumnIds(new Set());
     setInspectorSelection(null);
     setShareStatus('idle');
+    setAutoInspectOutputNonce((current) => current + 1);
     setSqlHistory((current) => saveSqlHistory(nextSql, current));
   }, []);
 
@@ -220,6 +236,7 @@ export function App() {
               activeCaseRule={caseRuleSelection}
               flowDirection={flowDirection}
               onClearCaseRule={() => setCaseRuleSelection(null)}
+              onToggleExpressionBreakdown={toggleExpressionBreakdown}
               onFocusNode={(nodeId) => {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
               }}
@@ -233,6 +250,13 @@ export function App() {
                 writeSqlHistory([]);
               }}
               onOpen={openSql}
+              onRename={(id, title) => {
+                setSqlHistory((current) => {
+                  const next = current.map((item) => (item.id === id ? { ...item, title: normalizeSqlHistoryTitle(title, item.sql) } : item));
+                  writeSqlHistory(next);
+                  return next;
+                });
+              }}
               onRemove={(id) => {
                 setSqlHistory((current) => {
                   const next = current.filter((item) => item.id !== id);
@@ -277,7 +301,9 @@ export function App() {
           {adapterResult ? (
             <>
               <LineageGraph
+                autoInspectOutputNonce={autoInspectOutputNonce}
                 caseRuleSelection={caseRuleSelection}
+                expandedExpressionColumnIds={expandedExpressionColumnIds}
                 flowDirection={flowDirection}
                 focusTarget={graphFocusTarget}
                 lineage={adapterResult.lineage}
@@ -308,13 +334,33 @@ function SqlHistoryPanel({
   history,
   onClear,
   onOpen,
+  onRename,
   onRemove,
 }: {
   history: SqlHistoryItem[];
   onClear: () => void;
   onOpen: (sql: string) => void;
+  onRename: (id: string, title: string) => void;
   onRemove: (id: string) => void;
 }) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingTitle, setEditingTitle] = useState('');
+  const startRename = (item: SqlHistoryItem) => {
+    setEditingId(item.id);
+    setEditingTitle(item.title);
+  };
+  const handleRenameStart = (item: SqlHistoryItem) => {
+    startRename(item);
+  };
+  const cancelRename = () => {
+    setEditingId(null);
+    setEditingTitle('');
+  };
+  const saveRename = (item: SqlHistoryItem) => {
+    onRename(item.id, editingTitle);
+    cancelRename();
+  };
+
   return (
     <div className="sql-history" data-testid="sql-history">
       <div className="sql-history-heading">
@@ -329,18 +375,82 @@ function SqlHistoryPanel({
       </div>
       {history.length > 0 ? (
         <div className="sql-history-list">
-          {history.map((item) => (
-            <article className="sql-history-item" key={item.id}>
-              <button className="sql-history-main" type="button" onClick={() => onOpen(item.sql)}>
-                <span className="sql-history-title">{item.title}</span>
-                <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
-                <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
-              </button>
-              <button className="sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
-                <Trash2 size={13} />
-              </button>
-            </article>
-          ))}
+          {history.map((item) => {
+            const editing = editingId === item.id;
+            return (
+              <article className={`sql-history-item ${editing ? 'sql-history-item-editing' : ''}`} key={item.id}>
+                {editing ? (
+                  <form
+                    className="sql-history-edit"
+                    id={`sql-history-form-${item.id}`}
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      saveRename(item);
+                    }}
+                  >
+                    <label className="sql-history-edit-label" htmlFor={`sql-history-title-${item.id}`}>
+                      History item name
+                    </label>
+                    <input
+                      autoFocus
+                      aria-label="History item name"
+                      className="sql-history-title-input"
+                      id={`sql-history-title-${item.id}`}
+                      value={editingTitle}
+                      onChange={(event) => setEditingTitle(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelRename();
+                        }
+                      }}
+                    />
+                    <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
+                    <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
+                  </form>
+                ) : (
+                  <button className="sql-history-main" type="button" onClick={() => onOpen(item.sql)}>
+                    <span className="sql-history-title">{item.title}</span>
+                    <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
+                    <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
+                  </button>
+                )}
+                <div className="sql-history-actions">
+                  {editing ? (
+                    <>
+                      <button className="sql-history-action sql-history-save" type="submit" form={`sql-history-form-${item.id}`} aria-label={`Save ${item.title} history name`}>
+                        <Check size={13} />
+                      </button>
+                      <button className="sql-history-action" type="button" aria-label={`Cancel renaming ${item.title}`} onClick={cancelRename}>
+                        <X size={13} />
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button
+                        className="sql-history-action"
+                        type="button"
+                        aria-label={`Rename ${item.title}`}
+                        onPointerDown={(event) => {
+                          event.stopPropagation();
+                          handleRenameStart(item);
+                        }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleRenameStart(item);
+                        }}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button className="sql-history-action sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
+                        <Trash2 size={13} />
+                      </button>
+                    </>
+                  )}
+                </div>
+              </article>
+            );
+          })}
         </div>
       ) : (
         <div className="lineage-inspector-empty">Analyzed SQL will appear here.</div>
@@ -481,6 +591,14 @@ function inferSqlTitle(sql: string) {
       .map((line) => line.trim())
       .find((line) => line.length > 0 && !line.startsWith('--')) ?? 'Untitled SQL';
   return firstMeaningfulLine.length > 48 ? `${firstMeaningfulLine.slice(0, 45)}...` : firstMeaningfulLine;
+}
+
+function normalizeSqlHistoryTitle(title: string, sql: string) {
+  const normalized = title.replace(/\s+/g, ' ').trim();
+  if (!normalized) {
+    return inferSqlTitle(sql);
+  }
+  return normalized.length > 80 ? `${normalized.slice(0, 77)}...` : normalized;
 }
 
 function compactSql(sql: string) {

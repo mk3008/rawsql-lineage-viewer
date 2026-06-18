@@ -745,7 +745,7 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.get('cte_order_totals')?.querySql).toBe(nodeById.get('cte_order_totals')?.cteExecutableSql);
   });
 
-  it('keeps CTE header comments in executable SQL', () => {
+  it('keeps CTE comments in their owning CTE query when building executable SQL', () => {
     const { lineage } = analyzeSql(`
       /* Monthly customer health report.
          Top-level header comment for comment export mode comparison. */
@@ -767,11 +767,19 @@ describe('rawsqlAdapter', () => {
     `);
     const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
 
-    expect(nodeById.get('cte_order_base')?.cteExecutableSql).toContain('Pull only order rows that affect monthly customer health.');
-    expect(nodeById.get('cte_customer_order_summary')?.cteExecutableSql).toContain(
+    const orderBaseSql = nodeById.get('cte_order_base')?.cteExecutableSql ?? '';
+    const customerOrderSummarySql = nodeById.get('cte_customer_order_summary')?.cteExecutableSql ?? '';
+
+    expect(orderBaseSql).toContain('/*\n  Pull only order rows that affect monthly customer health.');
+    expect(orderBaseSql).not.toContain('-- Pull only order rows');
+    expect(customerOrderSummarySql).toMatch(/^with\s+order_base as \(/);
+    expect(customerOrderSummarySql).toContain('/*\n      Pull only order rows that affect monthly customer health.');
+    expect(customerOrderSummarySql).toContain(
       'Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names.',
     );
-    expect(nodeById.get('cte_customer_order_summary')?.cteExecutableSql).toContain('Pull only order rows that affect monthly customer health.');
+    expect(customerOrderSummarySql).not.toMatch(/^-- Pull only order rows/);
+    expect(customerOrderSummarySql.indexOf('Pull only order rows')).toBeGreaterThan(customerOrderSummarySql.indexOf('order_base as ('));
+    expect(customerOrderSummarySql.indexOf('Keep the lifetime-ish')).toBeGreaterThan(customerOrderSummarySql.indexOf(')'));
   });
 
   it('uses comments before the inner CTE select query as CTE comments', () => {

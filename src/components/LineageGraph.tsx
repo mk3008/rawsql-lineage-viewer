@@ -53,6 +53,8 @@ export type InspectorSelection =
       upstreamTree: InspectorColumnTreeNode[];
       downstream: InspectorColumnItem[];
       downstreamTree: InspectorColumnTreeNode[];
+      expressionExpanded: boolean;
+      hasExpressionBreakdown: boolean;
     }
   | {
       kind: 'node';
@@ -86,13 +88,17 @@ interface InspectorColumnTreeRuleNode {
 }
 
 export function LineageGraph({
+  autoInspectOutputNonce,
   caseRuleSelection,
+  expandedExpressionColumnIds,
   focusTarget,
   flowDirection,
   lineage,
   onInspectorSelectionChange,
 }: {
+  autoInspectOutputNonce?: number;
   caseRuleSelection?: CaseRuleSelection | null;
+  expandedExpressionColumnIds?: Set<string>;
   focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
   lineage: LineageModel;
@@ -101,6 +107,7 @@ export function LineageGraph({
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
+  const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
@@ -180,6 +187,13 @@ export function LineageGraph({
       return next;
     });
   }, []);
+  const inspectNode = useCallback((nodeId: string) => {
+    const targetId = nodeCommentTargetId(nodeId);
+    setSelectedColumn(null);
+    setDismissedCommentTargetIds(new Set());
+    setSelectedNodeCommentTargetId(targetId);
+    setActiveCommentTargetId(targetId);
+  }, []);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     setSelectedNodeCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
@@ -242,6 +256,7 @@ export function LineageGraph({
       return resolveInspectorColumnSelection(
         viewLineage.nodes,
         selectedColumn,
+        expandedExpressionColumnIds?.has(selectedColumn.columnId) ?? false,
         resolveSelectedCaseRuleRefs(viewLineage.nodes, selectedColumn, caseRuleSelection),
       );
     }
@@ -253,10 +268,22 @@ export function LineageGraph({
     }
 
     return null;
-  }, [caseRuleSelection, selectedColumn, selectedNodeCommentTargetId, viewLineage.edges, viewLineage.nodes]);
+  }, [caseRuleSelection, expandedExpressionColumnIds, selectedColumn, selectedNodeCommentTargetId, viewLineage.edges, viewLineage.nodes]);
   useEffect(() => {
     onInspectorSelectionChange?.(inspectorSelection);
   }, [inspectorSelection, onInspectorSelectionChange]);
+  useEffect(() => {
+    if (!autoInspectOutputNonce || lastHandledAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
+      return;
+    }
+
+    lastHandledAutoInspectOutputNonceRef.current = autoInspectOutputNonce;
+    const outputNode = viewLineage.nodes.find((node) => node.type === 'output');
+    if (outputNode) {
+      inspectNode(outputNode.id);
+      onInspectorSelectionChange?.({ kind: 'node', node: outputNode });
+    }
+  }, [autoInspectOutputNonce, inspectNode, onInspectorSelectionChange, viewLineage.nodes]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
       const targetIds = new Set<string>();
@@ -370,6 +397,8 @@ export function LineageGraph({
               ? {
                   ...edge.markerEnd,
                   color: '#2563eb',
+                  height: 14,
+                  width: 14,
                 }
               : edge.markerEnd,
         };
@@ -523,12 +552,14 @@ export function LineageInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
+  onToggleExpressionBreakdown,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
+  onToggleExpressionBreakdown?: (columnId: string) => void;
   selection: InspectorSelection;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -564,6 +595,7 @@ export function LineageInspector({
             flowDirection={flowDirection}
             onClearCaseRule={onClearCaseRule}
             onFocusNode={onFocusNode}
+            onToggleExpressionBreakdown={onToggleExpressionBreakdown}
             selection={selection}
           />
         ) : (
@@ -581,12 +613,14 @@ function ColumnInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
+  onToggleExpressionBreakdown,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
+  onToggleExpressionBreakdown?: (columnId: string) => void;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
 }) {
   const defaultTab = flowDirection === 'downstream' ? 'downstream' : 'upstream';
@@ -602,6 +636,11 @@ function ColumnInspector({
     setActiveInspectorCardId(null);
     onFocusNode?.(selection.selected.node.id);
     onClearCaseRule?.();
+  };
+  const toggleExpressionBreakdown = () => {
+    setActiveInspectorCardId(null);
+    onClearCaseRule?.();
+    onToggleExpressionBreakdown?.(selection.selected.column.id);
   };
   const selectInspectorCard = (cardId: string, nodeId?: string) => {
     setActiveInspectorCardId(cardId);
@@ -646,6 +685,9 @@ function ColumnInspector({
               onFocusNode={onFocusNode}
               onSelectRoot={selectWholeColumn}
               onSelectInspectorCard={selectInspectorCard}
+              onToggleExpressionBreakdown={toggleExpressionBreakdown}
+              expressionExpanded={selection.expressionExpanded}
+              hasExpressionBreakdown={selection.hasExpressionBreakdown}
               rootActive={!activeCaseRule && activeInspectorCardId === null}
               rootItem={selection.selected}
               tree={selection.upstreamTree}
@@ -657,6 +699,9 @@ function ColumnInspector({
               onFocusNode={onFocusNode}
               onSelectRoot={selectWholeColumn}
               onSelectInspectorCard={selectInspectorCard}
+              onToggleExpressionBreakdown={toggleExpressionBreakdown}
+              expressionExpanded={selection.expressionExpanded}
+              hasExpressionBreakdown={selection.hasExpressionBreakdown}
               rootActive={!activeCaseRule && activeInspectorCardId === null}
               rootItem={selection.selected}
               title="Downstream"
@@ -800,17 +845,23 @@ function InspectorSourceGroup({
 
 function InspectorUpstreamTree({
   activeInspectorCardId,
+  expressionExpanded,
+  hasExpressionBreakdown,
   onFocusNode,
   onSelectRoot,
   onSelectInspectorCard,
+  onToggleExpressionBreakdown,
   rootActive,
   rootItem,
   tree,
 }: {
   activeInspectorCardId?: string | null;
+  expressionExpanded?: boolean;
+  hasExpressionBreakdown?: boolean;
   onFocusNode?: (nodeId: string) => void;
   onSelectRoot: () => void;
   onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onToggleExpressionBreakdown?: () => void;
   rootActive: boolean;
   rootItem: InspectorColumnItem;
   tree: InspectorColumnTreeNode[];
@@ -827,6 +878,9 @@ function InspectorUpstreamTree({
             item={rootItem}
             onClearCaseRule={onSelectRoot}
             onFocusNode={onFocusNode}
+            onToggleExpressionBreakdown={onToggleExpressionBreakdown}
+            expressionExpanded={expressionExpanded}
+            hasExpressionBreakdown={hasExpressionBreakdown}
             root
             selectable
             showSimpleExpression
@@ -853,9 +907,12 @@ function InspectorUpstreamTree({
 function InspectorColumnTree({
   activeInspectorCardId,
   emptyText,
+  expressionExpanded,
+  hasExpressionBreakdown,
   onFocusNode,
   onSelectRoot,
   onSelectInspectorCard,
+  onToggleExpressionBreakdown,
   rootActive,
   rootItem,
   title,
@@ -863,9 +920,12 @@ function InspectorColumnTree({
 }: {
   activeInspectorCardId?: string | null;
   emptyText: string;
+  expressionExpanded?: boolean;
+  hasExpressionBreakdown?: boolean;
   onFocusNode?: (nodeId: string) => void;
   onSelectRoot: () => void;
   onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onToggleExpressionBreakdown?: () => void;
   rootActive: boolean;
   rootItem: InspectorColumnItem;
   title: string;
@@ -883,6 +943,9 @@ function InspectorColumnTree({
             item={rootItem}
             onClearCaseRule={onSelectRoot}
             onFocusNode={onFocusNode}
+            onToggleExpressionBreakdown={onToggleExpressionBreakdown}
+            expressionExpanded={expressionExpanded}
+            hasExpressionBreakdown={hasExpressionBreakdown}
             root
             selectable
             showSimpleExpression
@@ -1103,7 +1166,7 @@ function InspectorRuleCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-rule-heading">
-        <span className={`lineage-inspector-type lineage-inspector-type-rule lineage-inspector-type-rule-${ownerType}`}>RULE</span>
+        <span className={`lineage-inspector-type lineage-inspector-type-expression lineage-inspector-type-expression-${ownerType}`}>EXPRESSION</span>
       </div>
       {rule.caseLabel ? <span className="lineage-inspector-rule-case">{rule.caseLabel}</span> : null}
       {rule.conditionSql ? <InspectorRuleSql label="Condition" sql={rule.conditionSql} /> : null}
@@ -1124,11 +1187,14 @@ function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
 function InspectorColumnCard({
   active,
   cardId,
+  expressionExpanded,
+  hasExpressionBreakdown,
   hideExpression,
   item,
   onClearCaseRule,
   onFocusNode,
   onSelectInspectorCard,
+  onToggleExpressionBreakdown,
   root,
   selectable,
   showSimpleExpression,
@@ -1136,11 +1202,14 @@ function InspectorColumnCard({
 }: {
   active?: boolean;
   cardId?: string;
+  expressionExpanded?: boolean;
+  hasExpressionBreakdown?: boolean;
   hideExpression?: boolean;
   item: InspectorColumnItem;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onToggleExpressionBreakdown?: () => void;
   root?: boolean;
   selectable?: boolean;
   showSimpleExpression?: boolean;
@@ -1191,6 +1260,19 @@ function InspectorColumnCard({
       {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
+      {hasExpressionBreakdown ? (
+        <button
+          className="lineage-inspector-expression-toggle"
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleExpressionBreakdown?.();
+          }}
+        >
+          <span className="lineage-inspector-type lineage-inspector-type-expression">EXPRESSION</span>
+          {expressionExpanded ? 'Collapse expression' : 'Expand expression'}
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -1239,6 +1321,7 @@ function InspectorTextSection({ title, values }: { title: string; values: string
 function resolveInspectorColumnSelection(
   nodes: LineageNode[],
   selectedColumn: SelectedColumn,
+  expressionExpanded: boolean,
   upstreamRefs?: LineageColumnRef[],
 ): Extract<InspectorSelection, { kind: 'column' }> | null {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
@@ -1251,8 +1334,9 @@ function resolveInspectorColumnSelection(
   const downstreamByColumnKey = buildDownstreamColumnIndex(nodes);
   const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, upstreamRefs);
   const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
+  const hasExpressionBreakdown = Boolean(selected.caseRules?.length);
   const upstreamTree =
-    selected.caseRules?.length && !upstreamRefs
+    expressionExpanded && selected.caseRules?.length && !upstreamRefs
       ? collectCaseRuleUpstreamTree(nodesById, selectedNode.id, selected.name, selected.caseRules)
       : collectUpstreamColumnTree(nodesById, selectedNode.id, selected.name, upstreamRefs);
   const downstreamTree = collectDownstreamColumnTree(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
@@ -1265,6 +1349,8 @@ function resolveInspectorColumnSelection(
     upstreamTree,
     downstream: dedupeInspectorColumns(downstream),
     downstreamTree,
+    expressionExpanded,
+    hasExpressionBreakdown,
   };
 }
 

@@ -125,10 +125,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
   const ctes = new CTECollector().collect(query);
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
   const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
-  const cteSqlCommentsByName = new Map(
-    ctes.map((cte) => [cte.getSourceAliasName(), mergeComments(extractCteComments(cte), extractQueryColumnComments(cte.query))]),
-  );
-  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings, cteSqlCommentsByName);
+  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings);
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -385,7 +382,6 @@ function collectCteExecutableSql(
   query: unknown,
   ctes: CommonTable[],
   warnings: AnalysisWarning[],
-  cteSqlCommentsByName: Map<string, string[] | undefined>,
 ): Map<string, string> {
   const sqlByName = new Map<string, string>();
   if (ctes.length === 0) {
@@ -401,11 +397,12 @@ function collectCteExecutableSql(
   }
 
   const decomposer = new CTEQueryDecomposer();
+  const cteByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), cte]));
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
     try {
       const result = decomposer.extractCTE(query, cteName);
-      sqlByName.set(cteName, formatCteExecutableSql(result.executableSql, collectExecutableSqlComments(cteName, result.executableSql, ctes, cteSqlCommentsByName)));
+      sqlByName.set(cteName, formatCteExecutableSql(cteName, result.executableSql, result.dependencies, cteByName));
       for (const warning of result.warnings) {
         warnings.push({
           code: 'cte-executable-sql-warning',
@@ -423,30 +420,43 @@ function collectCteExecutableSql(
   return sqlByName;
 }
 
-function collectExecutableSqlComments(
+function formatCteExecutableSql(
   cteName: string,
   sql: string,
-  ctes: CommonTable[],
-  cteSqlCommentsByName: Map<string, string[] | undefined>,
-): string[] | undefined {
-  const comments: string[] = [];
-  const lowerSql = sql.toLowerCase();
-  for (const cte of ctes) {
-    const candidateName = cte.getSourceAliasName();
-    if (candidateName !== cteName && !lowerSql.includes(candidateName.toLowerCase())) {
-      continue;
-    }
-    comments.push(...(cteSqlCommentsByName.get(candidateName) ?? []));
-  }
-  return comments.length > 0 ? dedupeComments(comments) : undefined;
-}
+  dependencies: string[],
+  cteByName: Map<string, CommonTable>,
+): string {
+  const targetCte = cteByName.get(cteName);
+  if (targetCte) {
+    const formattedTargetSql = formatNodeQuerySql(targetCte.query);
+    if (formattedTargetSql) {
+      const dependencySql = dependencies
+        .map((dependencyName) => {
+          const dependencyCte = cteByName.get(dependencyName);
+          const formattedDependencySql = dependencyCte ? formatNodeQuerySql(dependencyCte.query) : undefined;
+          return formattedDependencySql ? { name: dependencyName, sql: formattedDependencySql } : null;
+        })
+        .filter((dependency): dependency is { name: string; sql: string } => dependency !== null);
 
-function formatCteExecutableSql(sql: string, comments?: string[]): string {
+      if (dependencySql.length === 0) {
+        return formattedTargetSql;
+      }
+
+      const withSql = dependencySql
+        .map((dependency, index) => {
+          const suffix = index === dependencySql.length - 1 ? '' : ',';
+          return `  ${dependency.name} as (\n${indentSql(dependency.sql)}\n  )${suffix}`;
+        })
+        .join('\n');
+      return `with\n${withSql}\n${formattedTargetSql}`;
+    }
+  }
+
   const trimmedSql = sql.trim();
   try {
-    return prependSqlComments(nodeSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim(), comments);
+    return nodeSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim();
   } catch {
-    return prependSqlComments(trimmedSql, comments);
+    return trimmedSql;
   }
 }
 
@@ -458,11 +468,11 @@ function formatNodeQuerySql(query: unknown): string | undefined {
   }
 }
 
-function prependSqlComments(sql: string, comments?: string[]): string {
-  if (!comments || comments.length === 0) {
-    return sql;
-  }
-  return `${comments.map((comment) => `-- ${comment.replace(/\r?\n/g, ' ')}`).join('\n')}\n${sql}`;
+function indentSql(sql: string): string {
+  return sql
+    .split('\n')
+    .map((line) => `    ${line}`)
+    .join('\n');
 }
 
 function resolveSourceExpression(

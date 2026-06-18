@@ -7,8 +7,9 @@ import type { LineageColumnUsageReason } from '../domain/lineage';
 import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference } from '../lineage/columnDisplay';
 import { SqlCodeMirror } from './SqlCodeMirror';
 
-export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
+export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
+  const graphNodeId = id;
   const columnsVisible = data.columnsVisible ?? true;
   const forcedVisibleColumnIds = data.forcedVisibleColumnIds ?? new Set<string>();
   const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
@@ -46,7 +47,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  data.onToggleColumns?.(node.id);
+                  data.onToggleColumns?.(graphNodeId);
                 }}
               >
                 {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
@@ -60,7 +61,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  data.onTogglePassthroughColumns?.(node.id);
+                  data.onTogglePassthroughColumns?.(graphNodeId);
                 }}
               >
                 {passthroughCompressed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
@@ -74,7 +75,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  data.onExpandGroup?.(node.id);
+                  data.onExpandGroup?.(graphNodeId);
                 }}
               >
                 <Maximize2 size={13} />
@@ -87,7 +88,7 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
                 type="button"
                 onClick={(event) => {
                   event.stopPropagation();
-                  data.onCollapseUpstream?.(node.id);
+                  data.onCollapseUpstream?.(graphNodeId);
                 }}
               >
                 <Minimize2 size={13} />
