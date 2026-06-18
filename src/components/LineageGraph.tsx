@@ -605,11 +605,14 @@ function ColumnInspector({
   }, [selection.selected.column.id, selection.selected.node.id]);
   const selectWholeColumn = () => {
     setActiveInspectorCardId(null);
+    onFocusNode?.(selection.selected.node.id);
     onClearCaseRule?.();
   };
-  const selectInspectorCard = (item: InspectorColumnItem) => {
-    setActiveInspectorCardId(inspectorItemKey(item));
-    onFocusNode?.(item.node.id);
+  const selectInspectorCard = (cardId: string, nodeId?: string) => {
+    setActiveInspectorCardId(cardId);
+    if (nodeId) {
+      onFocusNode?.(nodeId);
+    }
   };
 
   return (
@@ -622,7 +625,7 @@ function ColumnInspector({
           item={selection.selected}
           onClearCaseRule={selectWholeColumn}
           onFocusNode={onFocusNode}
-          selectable={Boolean(selection.selected.column.caseRules?.length)}
+          selectable
         />
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
@@ -724,7 +727,7 @@ function InspectorSourceGroups({
   activeInspectorCardId?: string | null;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
 }) {
   const groups = groupInspectorItemsByNode(items);
   return (
@@ -760,7 +763,7 @@ function InspectorSourceGroup({
   activeInspectorCardId?: string | null;
   group: InspectorColumnGroup;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
 }) {
   const node = group.items[0]?.node;
   if (!node) {
@@ -776,21 +779,22 @@ function InspectorSourceGroup({
         </button>
       </div>
       <div className="lineage-inspector-source-columns">
-        {group.items.map((item) => {
+        {group.items.map((item, index) => {
           const expressionSql =
             item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
-          const active = activeInspectorCardId === inspectorItemKey(item);
+          const cardId = inspectorSourceItemKey(item, index);
+          const active = activeInspectorCardId === cardId;
           return (
             <div
               className={`lineage-inspector-source-column lineage-inspector-source-column-selectable ${active ? 'lineage-inspector-source-column-active' : ''}`}
               key={item.column.id}
               role="button"
               tabIndex={0}
-              onClick={() => onSelectInspectorCard?.(item)}
+              onClick={() => onSelectInspectorCard?.(cardId, item.node.id)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  onSelectInspectorCard?.(item);
+                  onSelectInspectorCard?.(cardId, item.node.id);
                 }
               }}
             >
@@ -813,7 +817,7 @@ function InspectorUpstreamTree({
 }: {
   activeInspectorCardId?: string | null;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
   tree: InspectorColumnTreeNode[];
 }) {
   if (tree.length === 0) {
@@ -851,7 +855,7 @@ function InspectorColumnTree({
   activeInspectorCardId?: string | null;
   emptyText: string;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
   title: string;
   tree: InspectorColumnTreeNode[];
 }) {
@@ -880,39 +884,52 @@ function InspectorColumnTreeNodes({
   nodes,
   onFocusNode,
   onSelectInspectorCard,
+  pathKey,
 }: {
   activeInspectorCardId?: string | null;
   depth?: number;
   nodes: InspectorColumnTreeNode[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  pathKey?: string;
 }) {
   return (
     <div className="lineage-inspector-tree" style={{ '--lineage-inspector-tree-depth': depth } as CSSProperties}>
-      {nodes.map((node, index) => (
-        <div className="lineage-inspector-tree-node" key={inspectorTreeNodeKey(node, depth, index)}>
-          {node.kind === 'rule' ? (
-            <InspectorRuleCard ownerNode={node.ownerNode} rule={node.rule} />
-          ) : (
-            <InspectorColumnCard
-              active={activeInspectorCardId === inspectorItemKey(node.item)}
-              item={node.item}
-              onFocusNode={onFocusNode}
-              onSelectInspectorCard={onSelectInspectorCard}
-              selectable
-            />
-          )}
-          {node.children.length > 0 ? (
-            <InspectorColumnTreeNodes
-              activeInspectorCardId={activeInspectorCardId}
-              depth={depth + 1}
-              nodes={node.children}
-              onFocusNode={onFocusNode}
-              onSelectInspectorCard={onSelectInspectorCard}
-            />
-          ) : null}
-        </div>
-      ))}
+      {nodes.map((node, index) => {
+        const cardId = `${pathKey ?? 'tree'}/${inspectorTreeNodeKey(node, depth, index)}`;
+        return (
+          <div className="lineage-inspector-tree-node" key={cardId}>
+            {node.kind === 'rule' ? (
+              <InspectorRuleCard
+                active={activeInspectorCardId === cardId}
+                cardId={cardId}
+                onSelectInspectorCard={onSelectInspectorCard}
+                ownerNode={node.ownerNode}
+                rule={node.rule}
+              />
+            ) : (
+              <InspectorColumnCard
+                active={activeInspectorCardId === cardId}
+                cardId={cardId}
+                item={node.item}
+                onFocusNode={onFocusNode}
+                onSelectInspectorCard={onSelectInspectorCard}
+                selectable
+              />
+            )}
+            {node.children.length > 0 ? (
+              <InspectorColumnTreeNodes
+                activeInspectorCardId={activeInspectorCardId}
+                depth={depth + 1}
+                nodes={node.children}
+                onFocusNode={onFocusNode}
+                onSelectInspectorCard={onSelectInspectorCard}
+                pathKey={cardId}
+              />
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -923,10 +940,35 @@ function inspectorTreeNodeKey(node: InspectorColumnTreeNode, depth: number, inde
     : `${node.item.node.id}:${node.item.column.id}:${depth}:${index}`;
 }
 
-function InspectorRuleCard({ ownerNode, rule }: { ownerNode: LineageNode; rule: LineageCaseRule }) {
+function InspectorRuleCard({
+  active,
+  cardId,
+  onSelectInspectorCard,
+  ownerNode,
+  rule,
+}: {
+  active?: boolean;
+  cardId: string;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  ownerNode: LineageNode;
+  rule: LineageCaseRule;
+}) {
   const ownerType = ownerNode.recursive ? 'recursive' : ownerNode.type;
+  const selectRule = () => onSelectInspectorCard?.(cardId, ownerNode.id);
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      selectRule();
+    }
+  };
   return (
-    <div className="lineage-inspector-rule-card">
+    <div
+      className={`lineage-inspector-rule-card lineage-inspector-rule-card-selectable ${active ? 'lineage-inspector-rule-card-active' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={selectRule}
+      onKeyDown={handleKeyDown}
+    >
       <div className="lineage-inspector-rule-heading">
         <span className={`lineage-inspector-type lineage-inspector-type-rule lineage-inspector-type-rule-${ownerType}`}>RULE</span>
       </div>
@@ -948,6 +990,7 @@ function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
 
 function InspectorColumnCard({
   active,
+  cardId,
   hideExpression,
   item,
   onClearCaseRule,
@@ -956,11 +999,12 @@ function InspectorColumnCard({
   selectable,
 }: {
   active?: boolean;
+  cardId?: string;
   hideExpression?: boolean;
   item: InspectorColumnItem;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
   selectable?: boolean;
 }) {
   const expressionSql =
@@ -974,7 +1018,7 @@ function InspectorColumnCard({
       if (onClearCaseRule) {
         onClearCaseRule();
       } else {
-        onSelectInspectorCard?.(item);
+        onSelectInspectorCard?.(cardId ?? inspectorItemKey(item), item.node.id);
       }
     }
   };
@@ -1011,6 +1055,10 @@ function InspectorColumnCard({
 
 function inspectorItemKey(item: InspectorColumnItem) {
   return `${item.node.id}:${item.column.id}`;
+}
+
+function inspectorSourceItemKey(item: InspectorColumnItem, index: number) {
+  return `source:${item.node.id}:${item.column.id}:${index}`;
 }
 
 function InspectorTypeBadge({ node }: { node: LineageNode }) {

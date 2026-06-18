@@ -713,6 +713,22 @@ textarea {
   text-align: left;
 }
 
+.lineage-inspector-rule-card-selectable {
+  cursor: pointer;
+}
+
+.lineage-inspector-rule-card-selectable:hover,
+.lineage-inspector-rule-card-selectable:focus-visible {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  outline: none;
+}
+
+.lineage-inspector-rule-card-active {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
 .lineage-inspector-rule-heading {
   display: flex;
   align-items: center;

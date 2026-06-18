@@ -655,6 +655,7 @@ test('focuses the graph node when inspector column or table names are clicked', 
 
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
+  const selectedCard = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' }).locator('.lineage-inspector-column-card');
   const sourceCard = inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
 
   await sourceCard.getByRole('button', { name: 'order_items' }).click();
@@ -668,6 +669,18 @@ test('focuses the graph node when inspector column or table names are clicked', 
   expect(nodeBox!.x + nodeBox!.width).toBeLessThanOrEqual(graphBox!.x + graphBox!.width);
   expect(nodeBox!.y).toBeGreaterThanOrEqual(graphBox!.y);
   expect(nodeBox!.y + nodeBox!.height).toBeLessThanOrEqual(graphBox!.y + graphBox!.height);
+
+  await selectedCard.click();
+  await page.waitForTimeout(550);
+
+  const outputBox = await page.getByTestId('rf__node-main_output').boundingBox();
+  expect(outputBox).not.toBeNull();
+  expect(outputBox!.x).toBeGreaterThanOrEqual(graphBox!.x);
+  expect(outputBox!.x + outputBox!.width).toBeLessThanOrEqual(graphBox!.x + graphBox!.width);
+  expect(outputBox!.y).toBeGreaterThanOrEqual(graphBox!.y);
+  expect(outputBox!.y + outputBox!.height).toBeLessThanOrEqual(graphBox!.y + graphBox!.height);
+  await expect(inspector.locator('.lineage-inspector-column-card-active')).toHaveCount(1);
+  await expect(selectedCard).toHaveClass(/lineage-inspector-column-card-active/);
 
   await page.locator('.react-flow__controls-zoomin').click();
   await expect(page.getByTestId('graph-zoom')).toContainText('120%');
@@ -1081,6 +1094,10 @@ test('shows CASE rules as upstream tree branches in the inspector', async ({ pag
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').first()).toContainText('ps.last_paid_at is null');
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').first()).not.toContainText('when');
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').last()).toContainText("'unknown'");
+  await firstRuleCard.click();
+  await expect(inspector.locator('h2')).toHaveText('payment_status');
+  await expect(inspector.locator('.lineage-inspector-rule-card-active')).toHaveCount(1);
+  await expect(inspector.locator('.lineage-inspector-rule-card-active')).toContainText('ps.last_paid_at is null');
   await expect(inspector.getByRole('tab', { name: /Upstream/ })).toHaveAttribute('aria-selected', 'true');
   await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ has: page.locator('h3', { hasText: 'Sources' }) });
@@ -1116,7 +1133,8 @@ test('shows CASE rules as upstream tree branches in the inspector', async ({ pag
     .filter({ hasText: 'Selected' })
     .getByRole('button', { name: 'Select full column lineage' })
     .click();
-  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(0);
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(1);
+  await expect(inspector.locator('.lineage-inspector-rule-card-active')).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-column-card').first()).toHaveClass(/lineage-inspector-column-card-active/);
 });
 
@@ -1356,6 +1374,10 @@ test('marks recursive CTEs without drawing recursive self-reference lines', asyn
   const inspector = page.getByTestId('lineage-inspector');
   const recursiveInspectorCards = inspector.locator('.lineage-inspector-column-card').filter({ hasText: 'employee_tree' });
   await expect(recursiveInspectorCards.first().locator('.lineage-inspector-type-recursive')).toHaveText('recursive');
+  await recursiveInspectorCards.last().click();
+  await expect(inspector.locator('h2')).toHaveText('path');
+  await expect(inspector.locator('.lineage-inspector-column-card-active')).toHaveCount(1);
+  await expect(inspector.locator('.lineage-inspector-column-card-active')).toContainText('employee_tree');
 });
 
 test('analyzes CREATE TABLE AS SELECT from the SELECT body', async ({ page }) => {
