@@ -1328,15 +1328,28 @@ textarea {
 
 .lineage-column-highlighted {
   border-color: #60a5fa;
-  background: #eff6ff;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgb(96 165 250 / 55%);
   color: #1d4ed8;
-  font-weight: 750;
+  font-weight: 650;
 }
 
 .lineage-column-source {
   border-color: #10b981;
-  background: #ecfdf5;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px rgb(16 185 129 / 55%);
   color: #047857;
+  font-weight: 650;
+}
+
+.lineage-column-selected,
+.lineage-column-selected.lineage-column-highlighted,
+.lineage-column-selected.lineage-column-source,
+.lineage-column-selected:hover {
+  border-color: #8b5cf6;
+  background: #f3e8ff;
+  box-shadow: none;
+  color: #5b21b6;
   font-weight: 800;
 }
 

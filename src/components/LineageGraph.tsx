@@ -115,8 +115,8 @@ export function LineageGraph({
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
-  const [showColumnCallouts, setShowColumnCallouts] = useState(false);
-  const [showHeaderCallouts, setShowHeaderCallouts] = useState(true);
+  const showColumnCallouts = false;
+  const showHeaderCallouts = false;
   const [showUnusedColumns, setShowUnusedColumns] = useState(true);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
@@ -259,14 +259,17 @@ export function LineageGraph({
   }, [inspectorSelection, onInspectorSelectionChange]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
-      const targetIds = new Set<string>([columnCommentTargetId(selectedColumn.columnId)]);
-      if (showColumnCallouts) {
-        for (const columnId of columnHighlights.highlightedColumnIds) {
-          targetIds.add(columnCommentTargetId(columnId));
-        }
-        for (const columnId of columnHighlights.sourceColumnIds) {
-          targetIds.add(columnCommentTargetId(columnId));
-        }
+      const targetIds = new Set<string>();
+      if (!showColumnCallouts) {
+        return targetIds;
+      }
+
+      targetIds.add(columnCommentTargetId(selectedColumn.columnId));
+      for (const columnId of columnHighlights.highlightedColumnIds) {
+        targetIds.add(columnCommentTargetId(columnId));
+      }
+      for (const columnId of columnHighlights.sourceColumnIds) {
+        targetIds.add(columnCommentTargetId(columnId));
       }
       for (const dismissedTargetId of dismissedCommentTargetIds) {
         targetIds.delete(dismissedTargetId);
@@ -468,14 +471,6 @@ export function LineageGraph({
           {allColumnsHidden ? 'Show all columns' : 'Hide all columns'}
         </button>
         <label className="graph-callout-toggle">
-          <input type="checkbox" checked={showColumnCallouts} onChange={(event) => setShowColumnCallouts(event.target.checked)} />
-          Column callouts
-        </label>
-        <label className="graph-callout-toggle">
-          <input type="checkbox" checked={showHeaderCallouts} onChange={(event) => setShowHeaderCallouts(event.target.checked)} />
-          Header callouts
-        </label>
-        <label className="graph-callout-toggle">
           <input type="checkbox" checked={showUnusedColumns} onChange={(event) => setShowUnusedColumns(event.target.checked)} />
           Unused columns
         </label>
@@ -621,10 +616,10 @@ function ColumnInspector({
         <h3>Selected</h3>
         <InspectorColumnCard
           active={!activeCaseRule && activeInspectorCardId === null}
-          hideExpression={Boolean(selection.selected.column.caseRules?.length)}
           item={selection.selected}
           onClearCaseRule={selectWholeColumn}
           onFocusNode={onFocusNode}
+          showSimpleExpression
           selectable
         />
       </section>
@@ -997,6 +992,7 @@ function InspectorColumnCard({
   onFocusNode,
   onSelectInspectorCard,
   selectable,
+  showSimpleExpression,
 }: {
   active?: boolean;
   cardId?: string;
@@ -1006,9 +1002,12 @@ function InspectorColumnCard({
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
   selectable?: boolean;
+  showSimpleExpression?: boolean;
 }) {
   const expressionSql =
-    !hideExpression && item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
+    !hideExpression && item.column.expressionSql && (showSimpleExpression || !isSimpleColumnReference(item.column.expressionSql))
+      ? item.column.expressionSql
+      : undefined;
   const focusNode = (event?: { stopPropagation: () => void }) => {
     event?.stopPropagation();
     onFocusNode?.(item.node.id);
