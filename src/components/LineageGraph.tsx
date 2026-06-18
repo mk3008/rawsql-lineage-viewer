@@ -31,12 +31,27 @@ const edgeTypes = {
 };
 
 const defaultViewport = { x: 16, y: 72, zoom: 1 };
+const selectionHistoryStateKey = 'rawsqlLineageViewerSelection';
 
 interface SelectedColumn {
   columnId: string;
   columnName: string;
   nodeId: string;
 }
+
+export interface GraphHighlightColumnTarget extends SelectedColumn {
+  upstreamRefs?: LineageColumnRef[];
+}
+
+export type GraphHighlightTarget =
+  | { column: GraphHighlightColumnTarget; kind: 'column' }
+  | { columns: GraphHighlightColumnTarget[]; kind: 'columns' }
+  | null;
+
+type GraphSelectionSnapshot =
+  | { kind: 'none' }
+  | { kind: 'node'; nodeId: string }
+  | { columnId: string; columnName: string; kind: 'column'; nodeId: string };
 
 export interface CaseRuleSelection {
   columnId: string;
@@ -72,6 +87,8 @@ interface InspectorColumnGroup {
   items: InspectorColumnItem[];
 }
 
+type SelectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => void;
+
 type InspectorColumnTreeNode = InspectorColumnTreeColumnNode | InspectorColumnTreeRuleNode;
 
 interface InspectorColumnTreeColumnNode {
@@ -93,32 +110,41 @@ export function LineageGraph({
   expandedExpressionColumnIds,
   focusTarget,
   flowDirection,
+  highlightTargetRequest,
   lineage,
   onInspectorSelectionChange,
+  outputTitle,
 }: {
   autoInspectOutputNonce?: number;
   caseRuleSelection?: CaseRuleSelection | null;
   expandedExpressionColumnIds?: Set<string>;
   focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
+  highlightTargetRequest?: { nonce: number; target: GraphHighlightTarget } | null;
   lineage: LineageModel;
   onInspectorSelectionChange?: (selection: InspectorSelection) => void;
+  outputTitle?: string;
 }) {
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
+  const lastHandledHighlightNonceRef = useRef<number | null>(null);
+  const lastCommittedSelectionRef = useRef<GraphSelectionSnapshot>({ kind: 'none' });
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
   const viewLineage = collapsedLineage.lineage;
-  const graph = useMemo(() => buildGraphModel(viewLineage, flowDirection), [flowDirection, viewLineage]);
-  const hideableColumnNodeIds = useMemo(() => new Set(viewLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [flowDirection, viewLineage.nodes]);
-  const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(viewLineage.nodes, flowDirection));
+  const displayLineage = useMemo(() => applyOutputTitle(viewLineage, outputTitle), [outputTitle, viewLineage]);
+  const displayLineageRef = useRef(displayLineage);
+  const graph = useMemo(() => buildGraphModel(displayLineage, flowDirection), [displayLineage, flowDirection]);
+  const hideableColumnNodeIds = useMemo(() => new Set(displayLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [displayLineage.nodes, flowDirection]);
+  const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(displayLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
+  const [highlightTarget, setHighlightTarget] = useState<GraphHighlightTarget>(null);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
   const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
@@ -177,41 +203,89 @@ export function LineageGraph({
       return next;
     });
   }, []);
-  const selectNode = useCallback((nodeId: string) => {
-    setSelectedColumn(null);
-    setDismissedCommentTargetIds(new Set());
-    const targetId = nodeCommentTargetId(nodeId);
-    setSelectedNodeCommentTargetId((current) => {
-      const next = current === targetId ? null : targetId;
-      setActiveCommentTargetId(next);
-      return next;
-    });
-  }, []);
-  const inspectNode = useCallback((nodeId: string) => {
-    const targetId = nodeCommentTargetId(nodeId);
-    setSelectedColumn(null);
-    setDismissedCommentTargetIds(new Set());
-    setSelectedNodeCommentTargetId(targetId);
-    setActiveCommentTargetId(targetId);
-  }, []);
-  const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
-    setSelectedNodeCommentTargetId(null);
-    setDismissedCommentTargetIds(new Set());
-    const targetId = columnCommentTargetId(column.id);
-    setSelectedColumn((current) => {
-      if (current?.columnId === column.id) {
-        setActiveCommentTargetId(null);
-        return null;
-      }
+  const commitSelectionHistory = useCallback((selection: GraphSelectionSnapshot, mode: 'push' | 'replace' = 'push') => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (mode === 'push' && isSameGraphSelectionSnapshot(lastCommittedSelectionRef.current, selection)) {
+      return;
+    }
 
-      setActiveCommentTargetId(targetId);
-      return {
-        columnId: column.id,
-        columnName: column.name,
-        nodeId,
-      };
-    });
+    const currentState = isRecord(window.history.state) ? window.history.state : {};
+    const nextState = {
+      ...currentState,
+      [selectionHistoryStateKey]: selection,
+    };
+    if (mode === 'replace') {
+      window.history.replaceState(nextState, '', window.location.href);
+    } else {
+      window.history.pushState(nextState, '', window.location.href);
+    }
+    lastCommittedSelectionRef.current = selection;
   }, []);
+  const applySelectionSnapshot = useCallback((selection: GraphSelectionSnapshot) => {
+    const currentLineage = displayLineageRef.current;
+    setDismissedCommentTargetIds(new Set());
+
+    if (selection.kind === 'node') {
+      const node = currentLineage.nodes.find((item) => item.id === selection.nodeId);
+      if (node) {
+        const targetId = nodeCommentTargetId(node.id);
+        setSelectedColumn(null);
+        setHighlightTarget(null);
+        setSelectedNodeCommentTargetId(targetId);
+        setActiveCommentTargetId(targetId);
+        return;
+      }
+    }
+
+    if (selection.kind === 'column') {
+      const node = currentLineage.nodes.find((item) => item.id === selection.nodeId);
+      const column = node?.columns.find((item) => item.id === selection.columnId);
+      if (node && column) {
+        const targetId = columnCommentTargetId(column.id);
+        setSelectedNodeCommentTargetId(null);
+        const nextColumn = {
+          columnId: column.id,
+          columnName: column.name,
+          nodeId: node.id,
+        };
+        setSelectedColumn(nextColumn);
+        setHighlightTarget({ column: nextColumn, kind: 'column' });
+        setActiveCommentTargetId(targetId);
+        return;
+      }
+    }
+
+    setSelectedColumn(null);
+    setHighlightTarget(null);
+    setSelectedNodeCommentTargetId(null);
+    setActiveCommentTargetId(null);
+  }, []);
+  const selectNode = useCallback((nodeId: string) => {
+    const targetId = nodeCommentTargetId(nodeId);
+    const nextSelection: GraphSelectionSnapshot = selectedNodeCommentTargetId === targetId ? { kind: 'none' } : { kind: 'node', nodeId };
+    commitSelectionHistory(nextSelection);
+    applySelectionSnapshot(nextSelection);
+  }, [applySelectionSnapshot, commitSelectionHistory, selectedNodeCommentTargetId]);
+  const inspectNode = useCallback((nodeId: string) => {
+    const nextSelection: GraphSelectionSnapshot = { kind: 'node', nodeId };
+    commitSelectionHistory(nextSelection);
+    applySelectionSnapshot(nextSelection);
+  }, [applySelectionSnapshot, commitSelectionHistory]);
+  const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
+    const nextSelection: GraphSelectionSnapshot =
+      selectedColumn?.columnId === column.id
+        ? { kind: 'none' }
+        : {
+            columnId: column.id,
+            columnName: column.name,
+            kind: 'column',
+            nodeId,
+          };
+    commitSelectionHistory(nextSelection);
+    applySelectionSnapshot(nextSelection);
+  }, [applySelectionSnapshot, commitSelectionHistory, selectedColumn?.columnId]);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
     setActiveCommentTargetId((current) => (current === targetId ? null : current));
@@ -220,16 +294,25 @@ export function LineageGraph({
     setActiveCommentTargetId(targetId);
   }, []);
   const columnHighlights = useMemo(
-    () =>
-      selectedColumn
-        ? resolveColumnHighlights(viewLineage.nodes, selectedColumn, resolveSelectedCaseRuleRefs(viewLineage.nodes, selectedColumn, caseRuleSelection))
-        : { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() },
-    [caseRuleSelection, selectedColumn, viewLineage.nodes],
+    () => resolveHighlightTarget(displayLineage.nodes, displayLineage.edges, highlightTarget),
+    [displayLineage.edges, displayLineage.nodes, highlightTarget],
   );
+  const activeLineageRootColumnIds = useMemo(() => {
+    if (!highlightTarget) {
+      return new Set<string>();
+    }
+    if (highlightTarget.kind === 'column') {
+      return new Set([highlightTarget.column.columnId]);
+    }
+    return new Set(highlightTarget.columns.map((column) => column.columnId));
+  }, [highlightTarget]);
   const forcedVisibleColumnIds = useMemo(() => {
     const columnIds = new Set<string>();
     if (selectedColumn) {
       columnIds.add(selectedColumn.columnId);
+    }
+    for (const columnId of activeLineageRootColumnIds) {
+      columnIds.add(columnId);
     }
     for (const columnId of columnHighlights.highlightedColumnIds) {
       columnIds.add(columnId);
@@ -238,37 +321,64 @@ export function LineageGraph({
       columnIds.add(columnId);
     }
     return columnIds;
-  }, [columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
+  }, [activeLineageRootColumnIds, columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
+  const graphSelectedColumnId = activeLineageRootColumnIds.size === 1 ? [...activeLineageRootColumnIds][0] : null;
   const selectedRuleExpressionByColumnId = useMemo(() => {
     if (!selectedColumn) {
       return undefined;
     }
 
-    const rule = resolveSelectedCaseRule(viewLineage.nodes, selectedColumn, caseRuleSelection);
+    const rule = resolveSelectedCaseRule(displayLineage.nodes, selectedColumn, caseRuleSelection);
     if (!rule?.expressionSql) {
       return undefined;
     }
 
     return new Map([[selectedColumn.columnId, rule.expressionSql]]);
-  }, [caseRuleSelection, selectedColumn, viewLineage.nodes]);
+  }, [caseRuleSelection, displayLineage.nodes, selectedColumn]);
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
       return resolveInspectorColumnSelection(
-        viewLineage.nodes,
+        displayLineage.nodes,
+        displayLineage.edges,
         selectedColumn,
         expandedExpressionColumnIds?.has(selectedColumn.columnId) ?? false,
-        resolveSelectedCaseRuleRefs(viewLineage.nodes, selectedColumn, caseRuleSelection),
+        resolveSelectedCaseRuleRefs(displayLineage.nodes, selectedColumn, caseRuleSelection),
       );
     }
 
     if (selectedNodeCommentTargetId) {
       const nodeId = selectedNodeCommentTargetId.replace(/^node:/, '');
-      const node = viewLineage.nodes.find((item) => item.id === nodeId);
+      const node = displayLineage.nodes.find((item) => item.id === nodeId);
       return node ? { kind: 'node', node } : null;
     }
 
     return null;
-  }, [caseRuleSelection, expandedExpressionColumnIds, selectedColumn, selectedNodeCommentTargetId, viewLineage.edges, viewLineage.nodes]);
+  }, [caseRuleSelection, displayLineage.edges, displayLineage.nodes, expandedExpressionColumnIds, selectedColumn, selectedNodeCommentTargetId]);
+  useEffect(() => {
+    displayLineageRef.current = displayLineage;
+  }, [displayLineage]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const currentSelection = readSelectionHistoryState(window.history.state);
+    if (currentSelection) {
+      lastCommittedSelectionRef.current = currentSelection;
+      applySelectionSnapshot(currentSelection);
+    } else {
+      commitSelectionHistory({ kind: 'none' }, 'replace');
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      const selection = readSelectionHistoryState(event.state) ?? { kind: 'none' };
+      lastCommittedSelectionRef.current = selection;
+      applySelectionSnapshot(selection);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [applySelectionSnapshot, commitSelectionHistory]);
   useEffect(() => {
     onInspectorSelectionChange?.(inspectorSelection);
   }, [inspectorSelection, onInspectorSelectionChange]);
@@ -278,12 +388,12 @@ export function LineageGraph({
     }
 
     lastHandledAutoInspectOutputNonceRef.current = autoInspectOutputNonce;
-    const outputNode = viewLineage.nodes.find((node) => node.type === 'output');
+    const outputNode = displayLineage.nodes.find((node) => node.type === 'output');
     if (outputNode) {
       inspectNode(outputNode.id);
       onInspectorSelectionChange?.({ kind: 'node', node: outputNode });
     }
-  }, [autoInspectOutputNonce, inspectNode, onInspectorSelectionChange, viewLineage.nodes]);
+  }, [autoInspectOutputNonce, displayLineage.nodes, inspectNode, onInspectorSelectionChange]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
       const targetIds = new Set<string>();
@@ -335,11 +445,13 @@ export function LineageGraph({
           onToggleColumns: toggleColumns,
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
-          selectedColumnId: selectedColumn?.columnId ?? null,
+          selectedNodeId: selectedNodeCommentTargetId?.replace(/^node:/, '') ?? null,
+          selectedColumnId: graphSelectedColumnId,
           selectedCommentTargetIds,
           selectedRuleExpressionByColumnId,
           activeCommentTargetId,
           viewportZoom,
+          activeLineageRootColumnIds,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
           passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
@@ -367,10 +479,13 @@ export function LineageGraph({
       closeComment,
       focusComment,
       activeCommentTargetId,
+      activeLineageRootColumnIds,
       viewportZoom,
+      graphSelectedColumnId,
       selectedColumn?.columnId,
       selectedRuleExpressionByColumnId,
       selectedCommentTargetIds,
+      selectedNodeCommentTargetId,
       showUnusedColumns,
       toggleColumns,
       togglePassthroughColumns,
@@ -483,14 +598,28 @@ export function LineageGraph({
   }, [focusTarget?.nodeId, focusTarget?.nonce]);
 
   useEffect(() => {
+    if (!highlightTargetRequest) {
+      return;
+    }
+    if (lastHandledHighlightNonceRef.current === highlightTargetRequest.nonce) {
+      return;
+    }
+
+    lastHandledHighlightNonceRef.current = highlightTargetRequest.nonce;
+    setHighlightTarget(highlightTargetRequest.target);
+  }, [highlightTargetRequest?.nonce, highlightTargetRequest?.target]);
+
+  useEffect(() => {
     setSelectedColumn(null);
+    setHighlightTarget(null);
     setSelectedNodeCommentTargetId(null);
     setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(createDefaultHiddenColumnNodeIds(lineage.nodes, flowDirection));
     setCollapsedGroupRootIds(new Set());
     setExpandedPassthroughNodeIds(new Set());
-  }, [flowDirection, lineage]);
+    commitSelectionHistory({ kind: 'none' });
+  }, [commitSelectionHistory, flowDirection, lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph" ref={graphShellRef}>
@@ -552,6 +681,8 @@ export function LineageInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
+  onHighlightTarget,
+  onRenameOutputTitle,
   onToggleExpressionBreakdown,
   selection,
 }: {
@@ -559,6 +690,8 @@ export function LineageInspector({
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
+  onHighlightTarget?: (target: GraphHighlightTarget) => void;
+  onRenameOutputTitle?: (title: string) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
   selection: InspectorSelection;
 }) {
@@ -595,11 +728,12 @@ export function LineageInspector({
             flowDirection={flowDirection}
             onClearCaseRule={onClearCaseRule}
             onFocusNode={onFocusNode}
+            onHighlightTarget={onHighlightTarget}
             onToggleExpressionBreakdown={onToggleExpressionBreakdown}
             selection={selection}
           />
         ) : (
-          <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
+          <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} onRenameOutputTitle={onRenameOutputTitle} />
         )
       ) : (
         <div className="lineage-inspector-empty">Select a column or node title to inspect lineage details.</div>
@@ -613,6 +747,7 @@ function ColumnInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
+  onHighlightTarget,
   onToggleExpressionBreakdown,
   selection,
 }: {
@@ -620,6 +755,7 @@ function ColumnInspector({
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
+  onHighlightTarget?: (target: GraphHighlightTarget) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
 }) {
@@ -635,6 +771,7 @@ function ColumnInspector({
   const selectWholeColumn = () => {
     setActiveInspectorCardId(null);
     onFocusNode?.(selection.selected.node.id);
+    onHighlightTarget?.({ column: inspectorItemToHighlightColumn(selection.selected), kind: 'column' });
     onClearCaseRule?.();
   };
   const toggleExpressionBreakdown = () => {
@@ -642,10 +779,13 @@ function ColumnInspector({
     onClearCaseRule?.();
     onToggleExpressionBreakdown?.(selection.selected.column.id);
   };
-  const selectInspectorCard = (cardId: string, nodeId?: string) => {
+  const selectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => {
     setActiveInspectorCardId(cardId);
     if (nodeId) {
       onFocusNode?.(nodeId);
+    }
+    if (target !== undefined) {
+      onHighlightTarget?.(target);
     }
   };
 
@@ -718,11 +858,34 @@ function NodeInspector({
   copyState,
   node,
   onCopySql,
+  onRenameOutputTitle,
 }: {
   copyState: 'idle' | 'copied' | 'failed';
   node: LineageNode;
   onCopySql: () => void;
+  onRenameOutputTitle?: (title: string) => void;
 }) {
+  const [editingTitle, setEditingTitle] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(node.label);
+  const canRename = node.type === 'output' && Boolean(onRenameOutputTitle);
+  useEffect(() => {
+    if (!editingTitle) {
+      setDraftTitle(node.label);
+    }
+  }, [editingTitle, node.label]);
+  const startEditing = () => {
+    setDraftTitle(node.label);
+    setEditingTitle(true);
+  };
+  const cancelEditing = () => {
+    setDraftTitle(node.label);
+    setEditingTitle(false);
+  };
+  const saveTitle = () => {
+    onRenameOutputTitle?.(draftTitle);
+    setEditingTitle(false);
+  };
+
   return (
     <div className="lineage-inspector-body lineage-inspector-node-body">
       <section className="lineage-inspector-section">
@@ -731,6 +894,37 @@ function NodeInspector({
           <strong>{node.columns.length}</strong>
           <span>columns</span>
         </div>
+        {canRename ? (
+          <div className="lineage-output-title-editor">
+            {editingTitle ? (
+              <form
+                className="lineage-output-title-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  saveTitle();
+                }}
+              >
+                <input
+                  aria-label="Output title"
+                  autoFocus
+                  className="lineage-output-title-input"
+                  value={draftTitle}
+                  onChange={(event) => setDraftTitle(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      event.preventDefault();
+                      cancelEditing();
+                    }
+                  }}
+                />
+                <button className="lineage-copy-button" type="submit">Save title</button>
+                <button className="lineage-copy-button" type="button" onClick={cancelEditing}>Cancel</button>
+              </form>
+            ) : (
+              <button className="lineage-copy-button" type="button" onClick={startEditing}>Edit title</button>
+            )}
+          </div>
+        ) : null}
       </section>
       {node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
       {getNodeSql(node) ? (
@@ -761,7 +955,7 @@ function InspectorSourceGroups({
   activeInspectorCardId?: string | null;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
 }) {
   const groups = groupInspectorItemsByNode(items);
   return (
@@ -797,7 +991,7 @@ function InspectorSourceGroup({
   activeInspectorCardId?: string | null;
   group: InspectorColumnGroup;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
 }) {
   const node = group.items[0]?.node;
   if (!node) {
@@ -824,11 +1018,11 @@ function InspectorSourceGroup({
               key={item.column.id}
               role="button"
               tabIndex={0}
-              onClick={() => onSelectInspectorCard?.(cardId, item.node.id)}
+              onClick={() => onSelectInspectorCard?.(cardId, item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' })}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  onSelectInspectorCard?.(cardId, item.node.id);
+                  onSelectInspectorCard?.(cardId, item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' });
                 }
               }}
             >
@@ -860,7 +1054,7 @@ function InspectorUpstreamTree({
   hasExpressionBreakdown?: boolean;
   onFocusNode?: (nodeId: string) => void;
   onSelectRoot: () => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
   onToggleExpressionBreakdown?: () => void;
   rootActive: boolean;
   rootItem: InspectorColumnItem;
@@ -894,6 +1088,7 @@ function InspectorUpstreamTree({
               onFocusNode={onFocusNode}
               onSelectInspectorCard={onSelectInspectorCard}
               pathKey="root"
+              rootItem={rootItem}
             />
           ) : (
             <div className="lineage-inspector-muted">No upstream columns.</div>
@@ -924,7 +1119,7 @@ function InspectorColumnTree({
   hasExpressionBreakdown?: boolean;
   onFocusNode?: (nodeId: string) => void;
   onSelectRoot: () => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
   onToggleExpressionBreakdown?: () => void;
   rootActive: boolean;
   rootItem: InspectorColumnItem;
@@ -959,6 +1154,7 @@ function InspectorColumnTree({
               onFocusNode={onFocusNode}
               onSelectInspectorCard={onSelectInspectorCard}
               pathKey="root"
+              rootItem={rootItem}
             />
           ) : (
             <div className="lineage-inspector-muted">{emptyText}</div>
@@ -976,13 +1172,15 @@ function InspectorColumnTreeNodes({
   onFocusNode,
   onSelectInspectorCard,
   pathKey,
+  rootItem,
 }: {
   activeInspectorCardId?: string | null;
   depth?: number;
   nodes: InspectorColumnTreeNode[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
   pathKey?: string;
+  rootItem: InspectorColumnItem;
 }) {
   const renderNodes = groupTerminalInspectorTreeNodes(nodes);
   return (
@@ -1005,6 +1203,7 @@ function InspectorColumnTreeNodes({
                 cardId={cardId}
                 onSelectInspectorCard={onSelectInspectorCard}
                 ownerNode={entry.node.ownerNode}
+                rootItem={rootItem}
                 rule={entry.node.rule}
               />
             ) : (
@@ -1025,6 +1224,7 @@ function InspectorColumnTreeNodes({
                 onFocusNode={onFocusNode}
                 onSelectInspectorCard={onSelectInspectorCard}
                 pathKey={cardId}
+                rootItem={rootItem}
               />
             ) : null}
           </div>
@@ -1090,7 +1290,7 @@ function InspectorColumnGroupCard({
   cardId: string;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
 }) {
   const node = items[0]?.node;
   if (!node) {
@@ -1101,7 +1301,11 @@ function InspectorColumnGroupCard({
     event?.stopPropagation();
     onFocusNode?.(node.id);
   };
-  const selectGroup = () => onSelectInspectorCard?.(cardId, node.id);
+  const selectGroup = () =>
+    onSelectInspectorCard?.(cardId, node.id, {
+      columns: items.map((item) => inspectorItemToHighlightColumn(item)),
+      kind: 'columns',
+    });
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -1141,16 +1345,22 @@ function InspectorRuleCard({
   cardId,
   onSelectInspectorCard,
   ownerNode,
+  rootItem,
   rule,
 }: {
   active?: boolean;
   cardId: string;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
   ownerNode: LineageNode;
+  rootItem: InspectorColumnItem;
   rule: LineageCaseRule;
 }) {
   const ownerType = ownerNode.recursive ? 'recursive' : ownerNode.type;
-  const selectRule = () => onSelectInspectorCard?.(cardId, ownerNode.id);
+  const selectRule = () =>
+    onSelectInspectorCard?.(cardId, ownerNode.id, {
+      column: inspectorItemToHighlightColumn(rootItem, mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream)),
+      kind: 'column',
+    });
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -1208,7 +1418,7 @@ function InspectorColumnCard({
   item: InspectorColumnItem;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onSelectInspectorCard?: (cardId: string, nodeId?: string) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
   onToggleExpressionBreakdown?: () => void;
   root?: boolean;
   selectable?: boolean;
@@ -1228,7 +1438,7 @@ function InspectorColumnCard({
       if (onClearCaseRule) {
         onClearCaseRule();
       } else {
-        onSelectInspectorCard?.(cardId ?? inspectorItemKey(item), item.node.id);
+        onSelectInspectorCard?.(cardId ?? inspectorItemKey(item), item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' });
       }
     }
   };
@@ -1281,8 +1491,86 @@ function inspectorItemKey(item: InspectorColumnItem) {
   return `${item.node.id}:${item.column.id}`;
 }
 
+function inspectorItemToHighlightColumn(item: InspectorColumnItem, upstreamRefs?: LineageColumnRef[]): GraphHighlightColumnTarget {
+  return {
+    columnId: item.column.id,
+    columnName: item.column.name,
+    nodeId: item.node.id,
+    upstreamRefs,
+  };
+}
+
 function inspectorSourceItemKey(item: InspectorColumnItem, index: number) {
   return `source:${item.node.id}:${item.column.id}:${index}`;
+}
+
+function applyOutputTitle(lineage: LineageModel, outputTitle: string | undefined): LineageModel {
+  const normalizedTitle = outputTitle?.trim();
+  if (!normalizedTitle) {
+    return lineage;
+  }
+
+  let changed = false;
+  const nodes = lineage.nodes.map((node) => {
+    if (node.type !== 'output' || node.label === normalizedTitle) {
+      return node;
+    }
+    changed = true;
+    return { ...node, label: normalizedTitle };
+  });
+
+  return changed ? { ...lineage, nodes } : lineage;
+}
+
+function isSameGraphSelectionSnapshot(left: GraphSelectionSnapshot, right: GraphSelectionSnapshot) {
+  if (left.kind !== right.kind) {
+    return false;
+  }
+  if (left.kind === 'none' || right.kind === 'none') {
+    return left.kind === right.kind;
+  }
+  if (left.kind === 'node' && right.kind === 'node') {
+    return left.nodeId === right.nodeId;
+  }
+  if (left.kind === 'column' && right.kind === 'column') {
+    return left.nodeId === right.nodeId && left.columnId === right.columnId;
+  }
+  return false;
+}
+
+function readSelectionHistoryState(state: unknown): GraphSelectionSnapshot | null {
+  if (!isRecord(state)) {
+    return null;
+  }
+
+  const value = state[selectionHistoryStateKey];
+  if (!isRecord(value) || typeof value.kind !== 'string') {
+    return null;
+  }
+  if (value.kind === 'none') {
+    return { kind: 'none' };
+  }
+  if (value.kind === 'node' && typeof value.nodeId === 'string') {
+    return { kind: 'node', nodeId: value.nodeId };
+  }
+  if (
+    value.kind === 'column' &&
+    typeof value.nodeId === 'string' &&
+    typeof value.columnId === 'string' &&
+    typeof value.columnName === 'string'
+  ) {
+    return {
+      columnId: value.columnId,
+      columnName: value.columnName,
+      kind: 'column',
+      nodeId: value.nodeId,
+    };
+  }
+  return null;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function InspectorTypeBadge({ node }: { node: LineageNode }) {
@@ -1320,6 +1608,7 @@ function InspectorTextSection({ title, values }: { title: string; values: string
 
 function resolveInspectorColumnSelection(
   nodes: LineageNode[],
+  edges: LineageModel['edges'],
   selectedColumn: SelectedColumn,
   expressionExpanded: boolean,
   upstreamRefs?: LineageColumnRef[],
@@ -1332,13 +1621,15 @@ function resolveInspectorColumnSelection(
   }
 
   const downstreamByColumnKey = buildDownstreamColumnIndex(nodes);
-  const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, upstreamRefs);
+  const nodeConditionRefs = upstreamRefs || selected.caseRules?.length ? [] : collectConditionRefsForTargetNode(nodesById, edges, selectedNode.id);
+  const initialUpstreamRefs = upstreamRefs ?? mergeInspectorColumnRefs(selected.upstream ?? [], nodeConditionRefs);
+  const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, initialUpstreamRefs);
   const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
   const hasExpressionBreakdown = Boolean(selected.caseRules?.length);
   const upstreamTree =
     expressionExpanded && selected.caseRules?.length && !upstreamRefs
       ? collectCaseRuleUpstreamTree(nodesById, selectedNode.id, selected.name, selected.caseRules)
-      : collectUpstreamColumnTree(nodesById, selectedNode.id, selected.name, upstreamRefs);
+      : collectUpstreamColumnTree(nodesById, selectedNode.id, selected.name, initialUpstreamRefs);
   const downstreamTree = collectDownstreamColumnTree(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
   const sources = upstream.filter((item) => (item.column.upstream ?? []).length === 0);
   return {
@@ -1564,8 +1855,39 @@ function formatInspectorUsage(column: LineageColumn) {
   return `Used by: ${[...new Set(reasons)].join(', ')}`;
 }
 
+function collectConditionRefsForTargetNode(
+  nodesById: Map<string, LineageNode>,
+  edges: LineageModel['edges'],
+  targetNodeId: string,
+): LineageColumnRef[] {
+  const refs: LineageColumnRef[] = [];
+  const seen = new Set<string>();
+  for (const edge of edges) {
+    if (edge.type !== 'dataFlow' || edge.target !== targetNodeId || edge.source === targetNodeId) {
+      continue;
+    }
+
+    const sourceNode = nodesById.get(edge.source);
+    if (!sourceNode) {
+      continue;
+    }
+
+    for (const column of sourceNode.columns) {
+      if (column.usage?.role === 'condition') {
+        const key = columnKey(sourceNode.id, column.name);
+        if (!seen.has(key)) {
+          seen.add(key);
+          refs.push({ nodeId: sourceNode.id, columnName: column.name });
+        }
+      }
+    }
+  }
+  return refs;
+}
+
 function resolveColumnHighlights(
   nodes: LineageNode[],
+  edges: LineageModel['edges'],
   selectedColumn: SelectedColumn,
   upstreamRefs?: LineageColumnRef[],
 ): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
@@ -1638,18 +1960,51 @@ function resolveColumnHighlights(
     }
   };
 
-  if (upstreamRefs) {
-    for (const ref of upstreamRefs) {
+  const selectedNode = nodesById.get(selectedColumn.nodeId);
+  const selected = selectedNode?.columns.find((column) => column.id === selectedColumn.columnId);
+  const initialUpstreamRefs =
+    upstreamRefs ??
+    mergeInspectorColumnRefs(
+      selected?.upstream ?? [],
+      selected?.caseRules?.length ? [] : collectConditionRefsForTargetNode(nodesById, edges, selectedColumn.nodeId),
+    );
+  if (initialUpstreamRefs.length > 0) {
+    for (const ref of initialUpstreamRefs) {
       highlightedEdgeIds.add(edgeKey(ref.nodeId, selectedColumn.nodeId));
       visitUpstream(ref.nodeId, ref.columnName);
     }
-  } else {
-    visitUpstream(selectedColumn.nodeId, selectedColumn.columnName);
   }
   visitDownstream(selectedColumn.nodeId, selectedColumn.columnName);
   highlightedColumnIds.delete(selectedColumn.columnId);
   sourceColumnIds.delete(selectedColumn.columnId);
   return { highlightedColumnIds, highlightedEdgeIds, sourceColumnIds };
+}
+
+function resolveHighlightTarget(
+  nodes: LineageNode[],
+  edges: LineageModel['edges'],
+  target: GraphHighlightTarget,
+): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
+  const empty = { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() };
+  if (!target) {
+    return empty;
+  }
+
+  const columns = target.kind === 'column' ? [target.column] : target.columns;
+  const merged = empty;
+  for (const column of columns) {
+    const highlights = resolveColumnHighlights(nodes, edges, column, column.upstreamRefs);
+    for (const columnId of highlights.highlightedColumnIds) {
+      merged.highlightedColumnIds.add(columnId);
+    }
+    for (const edgeId of highlights.highlightedEdgeIds) {
+      merged.highlightedEdgeIds.add(edgeId);
+    }
+    for (const columnId of highlights.sourceColumnIds) {
+      merged.sourceColumnIds.add(columnId);
+    }
+  }
+  return merged;
 }
 
 function resolveSelectedCaseRuleRefs(

@@ -13,11 +13,13 @@ export type GraphNodeData = {
   onCollapseUpstream?: (nodeId: string) => void;
   onExpandGroup?: (nodeId: string) => void;
   onNodeSelect?: (nodeId: string) => void;
+  selectedNodeId?: string | null;
   selectedColumnId?: string | null;
   selectedCommentTargetIds?: Set<string>;
   selectedRuleExpressionByColumnId?: Map<string, string>;
   activeCommentTargetId?: string | null;
   viewportZoom?: number;
+  activeLineageRootColumnIds?: Set<string>;
   highlightedColumnIds?: Set<string>;
   passthroughColumnsCompressed?: boolean;
   showUnusedColumns?: boolean;

@@ -1155,16 +1155,8 @@ function extractSelectItemComments(items: SimpleSelectQuery['selectClause']['ite
   );
 }
 
-function extractQueryColumnComments(query: unknown): string[] | undefined {
-  if (!(query instanceof SimpleSelectQuery)) {
-    return undefined;
-  }
-  const comments = query.selectClause.items.flatMap((_, index) => extractSelectItemComments(query.selectClause.items, index) ?? []);
-  return comments.length > 0 ? dedupeComments(comments) : undefined;
-}
-
 function extractQueryNodeComments(query: unknown): string[] | undefined {
-  return mergeComments(mergeComments(extractComments(query), extractHeaderComments(query)), extractQueryColumnComments(query));
+  return mergeComments(extractComments(query), extractHeaderComments(query));
 }
 
 function extractCteComments(cte: CommonTable): string[] | undefined {

@@ -29,7 +29,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
       <Handle type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
-          className={`lineage-node-title lineage-node-title-button ${data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) ? 'lineage-comment-selected' : ''}`}
+          className={`lineage-node-title lineage-node-title-button ${data.selectedNodeId === node.id ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
             data.onNodeSelect?.(node.id);
@@ -217,6 +217,7 @@ function isCompressedPassthroughColumn(column: GraphNode['data']['lineageNode'][
   return (
     isPassthroughColumn(column) &&
     data.selectedColumnId !== column.id &&
+    !(data.activeLineageRootColumnIds?.has(column.id) ?? false) &&
     !(data.highlightedColumnIds?.has(column.id) ?? false) &&
     !(data.sourceColumnIds?.has(column.id) ?? false) &&
     !(data.forcedVisibleColumnIds?.has(column.id) ?? false) &&
@@ -243,6 +244,7 @@ function LineageColumnRow({
 }) {
   const columnRef = useRef<HTMLButtonElement>(null);
   const isSelected = data.selectedColumnId === column.id;
+  const isActiveRoot = data.activeLineageRootColumnIds?.has(column.id) ?? false;
   const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
   const isSource = data.sourceColumnIds?.has(column.id) ?? false;
   const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
@@ -258,7 +260,7 @@ function LineageColumnRow({
     <div className="lineage-column-group">
       <button
         ref={columnRef}
-        className={`lineage-column ${usageClass} ${isSelected ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+        className={`lineage-column ${usageClass} ${isSelected || isActiveRoot ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
         onClick={(event) => {
           event.stopPropagation();
           data.onColumnSelect?.(nodeId, column);

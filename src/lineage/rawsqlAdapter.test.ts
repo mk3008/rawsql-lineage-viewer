@@ -602,6 +602,7 @@ describe('rawsqlAdapter', () => {
     const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
     const customerSegment = outputNode?.columns.find((column) => column.name === 'customer_segment');
 
+    expect(outputNode?.comments).toEqual(['Monthly customer health report.', 'Top-level header comment for comment export mode comparison.']);
     expect(customerSegment?.caseRules).toHaveLength(4);
     expect(customerSegment?.caseRules?.[0]).toMatchObject({
       conditionUpstream: [
@@ -627,10 +628,12 @@ describe('rawsqlAdapter', () => {
     const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
     const derivedNode = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'src');
 
-    expect(outputNode?.comments).toEqual(expect.arrayContaining(['Final output comment.', 'Output id comment.']));
+    expect(outputNode?.comments).toEqual(['Final output comment.']);
+    expect(outputNode?.columns.find((column) => column.name === 'user_id')?.comments).toEqual(['Output id comment.']);
     expect(outputNode?.querySql).toContain('-- Final output comment.');
     expect(outputNode?.querySql).toContain('id as user_id -- Output id comment.');
-    expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
+    expect(derivedNode?.comments).toEqual(['Derived source comment.']);
+    expect(derivedNode?.columns.find((column) => column.name === 'id')?.comments).toEqual(['Derived id comment.']);
     expect(derivedNode?.querySql).toContain('-- Derived source comment.');
     expect(derivedNode?.querySql).toContain('id -- Derived id comment.');
   });
