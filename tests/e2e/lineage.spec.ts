@@ -17,9 +17,11 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_orders')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_order_items')).toBeVisible();
+  await expect(page.getByTestId('rf__node-table_customer_favorites')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_recent_orders')).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
   await expect(page.getByTestId('rf__edge-table_customers-main_output')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_customer_favorites-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-cte_payment_summary-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_orders-cte_recent_orders')).toBeAttached();
@@ -27,11 +29,12 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
 
   const outerDataFlowStyle = await page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
   expect(outerDataFlowStyle).toContain('stroke-dasharray');
-  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' })).toBeVisible();
-  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'oi' })).toBeVisible();
-  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ot' })).toBeVisible();
-  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'ps' })).toBeVisible();
-  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'c' }).first()).toHaveCSS('font-size', '15px');
+  await expect(page.locator('.react-flow__edge-text').getByText('c', { exact: true })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').getByText('oi', { exact: true })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').getByText('ot', { exact: true })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').getByText('ps', { exact: true })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').getByText('cf', { exact: true })).toBeVisible();
+  await expect(page.locator('.react-flow__edge-text').getByText('c', { exact: true })).toHaveCSS('font-size', '15px');
   await expect(page.getByTestId('lineage-graph').getByText('LEFT JOIN')).not.toBeVisible();
   await expect(page.getByRole('group', { name: 'Flow direction' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Downstream' })).toHaveAttribute('aria-pressed', 'false');
@@ -48,6 +51,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Show all columns' })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
+  await expect(page.getByTestId('rf__node-main_output').getByText('Filter')).toBeVisible();
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'condition 1', exact: true })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: /passthrough columns/ })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'Hide columns for Final Result' })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByText('Passthrough')).toHaveCount(0);
@@ -1307,12 +1312,12 @@ test('expands composite non-CASE expressions in the inspector', async ({ page })
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector.locator('.lineage-inspector-rule-card')).toHaveCount(0);
   await inspector.locator('.lineage-inspector-root-card').getByRole('button', { name: /Expand expression/ }).click();
-  await expect(inspector.locator('.lineage-inspector-expression-tree-card')).toHaveCount(3);
+  await expect(inspector.locator('.lineage-inspector-expression-tree-card')).toHaveCount(1);
   const expressionCard = inspector.locator('.lineage-inspector-expression-tree-card').first();
   await expect(expressionCard.locator('.lineage-inspector-type-expression')).toHaveText('OPERATOR');
   await expect(expressionCard).toContainText('+');
-  await expect(inspector.locator('.lineage-inspector-expression-tree-card').filter({ hasText: 'a.id' })).toContainText('COLUMN');
-  await expect(inspector.locator('.lineage-inspector-expression-tree-card').filter({ hasText: 'b.id' })).toContainText('COLUMN');
+  await expect(inspector.locator('.lineage-inspector-expression-tree-card').filter({ hasText: 'a.id' })).toHaveCount(0);
+  await expect(inspector.locator('.lineage-inspector-expression-tree-card').filter({ hasText: 'b.id' })).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('accounts');
   await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('branches');
 });

@@ -48,5 +48,11 @@ SELECT
 FROM customers c
 LEFT JOIN order_totals ot ON ot.customer_id = c.id
 LEFT JOIN payment_summary ps ON ps.customer_id = c.id
+WHERE EXISTS (
+  SELECT 1
+  FROM customer_favorites cf
+  WHERE cf.customer_id = c.id
+    AND cf.is_active = TRUE
+)
 ORDER BY total_amount DESC
 LIMIT 100;`;

@@ -1913,12 +1913,27 @@ function buildExpressionTreeNode(
   return {
     children:
       expression.kind === 'operator'
-        ? expression.children.map((child) => buildExpressionTreeNode(nodesById, ownerNode, child, path, expandedExpressionColumnIds))
+        ? expression.children
+            .map((child) => buildExpressionChildTreeNode(nodesById, ownerNode, child, path, expandedExpressionColumnIds))
+            .filter(isInspectorTreeNode)
         : expression.upstream.map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, path, expandedExpressionColumnIds)).filter(isInspectorTreeNode),
     expression,
     kind: 'expression',
     ownerNode,
   };
+}
+
+function buildExpressionChildTreeNode(
+  nodesById: Map<string, LineageNode>,
+  ownerNode: LineageNode,
+  expression: LineageExpressionTree,
+  path: Set<string>,
+  expandedExpressionColumnIds: Set<string>,
+): InspectorColumnTreeNode | null {
+  if (expression.kind === 'column') {
+    return buildUpstreamColumnTreeNode(nodesById, expression.ref, path, expandedExpressionColumnIds) ?? buildExpressionTreeNode(nodesById, ownerNode, expression, path, expandedExpressionColumnIds);
+  }
+  return buildExpressionTreeNode(nodesById, ownerNode, expression, path, expandedExpressionColumnIds);
 }
 
 function buildUpstreamColumnTreeNode(

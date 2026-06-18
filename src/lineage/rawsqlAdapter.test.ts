@@ -111,6 +111,7 @@ describe('rawsqlAdapter', () => {
         'table_orders',
         'table_order_items',
         'table_payments',
+        'table_customer_favorites',
       ]),
     );
   });
@@ -157,12 +158,13 @@ describe('rawsqlAdapter', () => {
         'table_customers-main_output',
         'cte_order_totals-main_output',
         'cte_payment_summary-main_output',
+        'table_customer_favorites-main_output',
       ]),
     );
 
     const dataFlowEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
 
-    expect(dataFlowEdges).toHaveLength(7);
+    expect(dataFlowEdges).toHaveLength(8);
     expect(lineage.edges.every((edge) => edge.type === 'dataFlow')).toBe(true);
     expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')).toMatchObject({
       label: 'JOIN',
@@ -183,6 +185,10 @@ describe('rawsqlAdapter', () => {
         reason: 'outerJoin',
         joinType: 'left',
       },
+    });
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customer_favorites-main_output')).toMatchObject({
+      sourceAlias: 'cf',
+      confidence: 'medium',
     });
     expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.sourceAlias).toBe('c');
     expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinNullability).toBeUndefined();
@@ -207,6 +213,7 @@ describe('rawsqlAdapter', () => {
     expect(columnsByNodeId.get('table_orders')).toEqual(['id', 'customer_id', 'order_date']);
     expect(columnsByNodeId.get('table_order_items')).toEqual(['product_id', 'quantity', 'unit_price', 'order_id']);
     expect(columnsByNodeId.get('table_payments')).toEqual(['customer_id', 'amount', 'paid_at', 'status']);
+    expect(columnsByNodeId.get('table_customer_favorites')).toEqual(['customer_id', 'is_active']);
     expect(columnsByNodeId.get('main_output')).toEqual([
       'customer_id',
       'customer_name',
@@ -215,7 +222,17 @@ describe('rawsqlAdapter', () => {
       'total_amount',
       'paid_amount',
       'payment_status',
+      'condition 1',
     ]);
+    expect(lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === 'condition 1')).toMatchObject({
+      expressionSql: expect.stringContaining('exists'),
+      usage: { role: 'filter', reasons: ['where'] },
+      upstream: expect.arrayContaining([
+        { nodeId: 'table_customers', columnName: 'id' },
+        { nodeId: 'table_customer_favorites', columnName: 'customer_id' },
+        { nodeId: 'table_customer_favorites', columnName: 'is_active' },
+      ]),
+    });
   });
 
   it('preserves column lineage through UNION queries', () => {
