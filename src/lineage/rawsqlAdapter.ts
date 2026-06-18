@@ -149,6 +149,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       query: cte.query,
       targetId: toCteId(cte.getSourceAliasName()),
       targetLabel: cte.getSourceAliasName(),
+      recursiveRootId: toCteId(cte.getSourceAliasName()),
       cteNames,
       nodes,
       edges,
@@ -167,6 +168,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
     warnings,
     derivedCounter,
   });
+  nodes.get('main_output')!.querySql = formatNodeQuerySql(query);
 
   classifyColumnUsage(nodes);
 
@@ -191,6 +193,7 @@ interface CollectQueryEdgesOptions {
   query: unknown;
   targetId: string;
   targetLabel: string;
+  recursiveRootId?: string;
   cteNames: Set<string>;
   nodes: Map<string, LineageNode>;
   edges: LineageEdge[];
@@ -202,10 +205,11 @@ interface ResolvedSource {
   node: LineageNode;
   aliases: string[];
   sourceAlias?: string;
+  recursive?: boolean;
 }
 
 function collectQueryEdges(options: CollectQueryEdgesOptions): void {
-  const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter } = options;
+  const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId } = options;
 
   if (query instanceof SimpleSelectQuery) {
     const fromClause = query.fromClause;
@@ -219,7 +223,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     }
 
     const sources = [
-      resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter),
+      resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId),
     ];
     const joins = fromClause.joins ?? [];
 
@@ -229,12 +233,13 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         target: targetId,
         type: 'dataFlow',
         sourceAlias: source.sourceAlias,
+        recursive: source.recursive ? { reason: 'cteSelfReference' } : undefined,
         confidence: 'high',
       });
     }
 
     for (const join of joins) {
-      const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+      const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId);
       const joinType = normalizeJoinType(join);
       sources.push(joinedSource);
 
@@ -245,6 +250,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         label: normalizeJoinLabel(join),
         sourceAlias: joinedSource.sourceAlias,
         joinNullability: toJoinNullability(joinType),
+        recursive: joinedSource.recursive ? { reason: 'cteSelfReference' } : undefined,
         confidence: 'high',
       });
     }
@@ -466,6 +472,7 @@ function resolveSourceExpression(
   edges: LineageEdge[],
   warnings: AnalysisWarning[],
   derivedCounter: { value: number },
+  recursiveRootId?: string,
 ): ResolvedSource {
   const datasource = source.datasource;
 
@@ -474,10 +481,17 @@ function resolveSourceExpression(
     const alias = source.aliasExpression ? source.getAliasName() : null;
     const aliases = alias ? [alias, sourceName] : [sourceName];
     if (cteNames.has(sourceName)) {
+      const cteId = toCteId(sourceName);
+      const node = nodes.get(cteId) ?? createCteNode(sourceName, nodes);
+      const recursive = cteId === recursiveRootId;
+      if (recursive) {
+        node.recursive = true;
+      }
       return {
-        node: nodes.get(toCteId(sourceName)) ?? createCteNode(sourceName, nodes),
+        node,
         aliases,
         sourceAlias: alias ?? undefined,
+        recursive,
       };
     }
     return {
@@ -509,6 +523,7 @@ function resolveSourceExpression(
       edges,
       warnings,
       derivedCounter,
+      recursiveRootId,
     });
     return {
       node,
@@ -528,6 +543,7 @@ function resolveSourceExpression(
       edges,
       warnings,
       derivedCounter,
+      recursiveRootId,
     );
   }
 
@@ -821,23 +837,24 @@ function collectNestedExpressionLineage(value: unknown, options: CollectQueryEdg
 }
 
 function collectNestedQueryLineage(query: SimpleSelectQuery, options: CollectQueryEdgesOptions): LineageColumnRef[] {
-  const { cteNames, nodes, edges, warnings, derivedCounter, targetId } = options;
+  const { cteNames, nodes, edges, warnings, derivedCounter, targetId, recursiveRootId } = options;
   const fromClause = query.fromClause;
   if (!fromClause) {
     return [];
   }
 
-  const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter)];
+  const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId)];
   addLineageEdge(edges, {
     source: sources[0].node.id,
     target: targetId,
     type: 'dataFlow',
     sourceAlias: sources[0].sourceAlias,
+    recursive: sources[0].recursive ? { reason: 'cteSelfReference' } : undefined,
     confidence: 'medium',
   });
 
   for (const join of fromClause.joins ?? []) {
-    const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter);
+    const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId);
     sources.push(joinedSource);
     addLineageEdge(edges, {
       source: joinedSource.node.id,
@@ -845,6 +862,7 @@ function collectNestedQueryLineage(query: SimpleSelectQuery, options: CollectQue
       type: 'dataFlow',
       sourceAlias: joinedSource.sourceAlias,
       joinNullability: toJoinNullability(normalizeJoinType(join)),
+      recursive: joinedSource.recursive ? { reason: 'cteSelfReference' } : undefined,
       confidence: 'medium',
     });
   }

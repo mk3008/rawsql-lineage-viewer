@@ -94,7 +94,9 @@ export function LineageNodeCard({ data }: NodeProps<GraphNode>) {
               </button>
             ) : null}
           </div>
-          <span className="lineage-node-kind">{data.collapsedGroup ? 'Group' : node.type}</span>
+          <span className={`lineage-node-kind ${node.recursive && !data.collapsedGroup ? 'lineage-node-kind-recursive' : ''}`}>
+            {data.collapsedGroup ? 'Group' : node.recursive ? 'Recursive' : node.type}
+          </span>
         </div>
       </div>
       {data.selectedCommentTargetIds?.has(nodeCommentTargetId(node.id)) && (node.comments?.length || getNodeSql(node)) ? (

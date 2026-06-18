@@ -54,6 +54,42 @@ where exists (
 )
 order by rc.customer_id`;
 
+const recursiveEmployeeSql = `WITH RECURSIVE employee_tree AS (
+    SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        0 AS depth,
+        CAST(e.name AS VARCHAR(1000)) AS path
+    FROM
+        employees e
+    WHERE
+        e.manager_id IS NULL
+
+    UNION ALL
+
+    SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        et.depth + 1 AS depth,
+        CAST(et.path || ' / ' || e.name AS VARCHAR(1000)) AS path
+    FROM
+        employees e
+        INNER JOIN employee_tree et
+            ON e.manager_id = et.id
+)
+SELECT
+    id,
+    name,
+    manager_id,
+    depth,
+    path
+FROM
+    employee_tree
+ORDER BY
+    path`;
+
 function edgesTargetingTables(sql: string) {
   const { lineage } = analyzeSql(sql);
   const tableNodeIds = new Set(lineage.nodes.filter((node) => node.type === 'table').map((node) => node.id));
@@ -267,6 +303,24 @@ describe('rawsqlAdapter', () => {
       { nodeId: 'derived_union_left_1', columnName: 'customer_id' },
       { nodeId: 'derived_union_right_2', columnName: 'customer_id' },
     ]);
+  });
+
+  it('marks recursive CTE self references without losing source lineage', () => {
+    const { lineage } = analyzeSql(recursiveEmployeeSql);
+    const employeeTree = lineage.nodes.find((node) => node.id === 'cte_employee_tree');
+    const recursiveEdges = lineage.edges.filter((edge) => edge.recursive?.reason === 'cteSelfReference');
+
+    expect(employeeTree?.recursive).toBe(true);
+    expect(employeeTree?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id', 'name', 'manager_id', 'depth', 'path']));
+    expect(recursiveEdges).toHaveLength(1);
+    expect(recursiveEdges[0]).toMatchObject({
+      source: 'cte_employee_tree',
+      target: 'derived_union_all_right_2',
+      sourceAlias: 'et',
+    });
+    expect(lineage.edges.find((edge) => edge.source === 'table_employees' && edge.target === 'derived_union_all_left_1')?.recursive).toBeUndefined();
+    expect(lineage.edges.find((edge) => edge.source === 'table_employees' && edge.target === 'derived_union_all_right_2')?.recursive).toBeUndefined();
+    expect(lineage.edges.find((edge) => edge.source === 'cte_employee_tree' && edge.target === 'main_output')?.recursive).toBeUndefined();
   });
 
   it('expands wildcard columns from subqueries with known output columns', () => {
@@ -547,6 +601,8 @@ describe('rawsqlAdapter', () => {
     const derivedNode = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'src');
 
     expect(outputNode?.comments).toEqual(expect.arrayContaining(['Final output comment.', 'Output id comment.']));
+    expect(outputNode?.querySql).toContain('-- Final output comment.');
+    expect(outputNode?.querySql).toContain('id as user_id -- Output id comment.');
     expect(derivedNode?.comments).toEqual(expect.arrayContaining(['Derived source comment.', 'Derived id comment.']));
     expect(derivedNode?.querySql).toContain('-- Derived source comment.');
     expect(derivedNode?.querySql).toContain('id -- Derived id comment.');

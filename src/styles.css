@@ -155,6 +155,7 @@ textarea {
 
 .sql-panel {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr auto auto;
   min-width: 0;
   min-height: 0;
@@ -230,9 +231,20 @@ textarea {
   opacity: 0.5;
 }
 
+.sql-editor-frame {
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
 .sql-editor {
   width: 100%;
+  min-width: 0;
   min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
   border: 0;
   outline: none;
   color: #152033;
@@ -507,6 +519,13 @@ textarea {
   padding: 12px 14px 14px;
 }
 
+.lineage-inspector-node-body {
+  display: flex;
+  flex-direction: column;
+  align-content: normal;
+  overflow: hidden;
+}
+
 .lineage-inspector-empty,
 .lineage-inspector-muted {
   color: #64748b;
@@ -527,6 +546,14 @@ textarea {
 
 .lineage-inspector-section:last-child {
   border-bottom: 0;
+}
+
+.lineage-inspector-sql-section {
+  grid-template-rows: auto minmax(0, 1fr);
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding-bottom: 0;
 }
 
 .lineage-inspector-section h3 {
@@ -645,6 +672,25 @@ textarea {
   min-width: 0;
 }
 
+.lineage-inspector-source-column-selectable {
+  margin: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 5px 6px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.lineage-inspector-source-column-selectable:hover,
+.lineage-inspector-source-column-selectable:focus-visible,
+.lineage-inspector-column-card-selectable:focus-visible {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  outline: none;
+}
+
 .lineage-inspector-rule-list {
   display: grid;
   gap: 8px;
@@ -657,20 +703,15 @@ textarea {
   border: 1px solid #e4ebf5;
   border-radius: 7px;
   padding: 9px 10px;
-  background: #fff;
+  background: #eff6ff;
   color: #0f172a;
-  cursor: pointer;
   text-align: left;
 }
 
-.lineage-inspector-rule-card:hover {
-  border-color: #bfdbfe;
-  background: #f8fbff;
-}
-
-.lineage-inspector-rule-card-active {
-  border-color: #60a5fa;
-  background: #eff6ff;
+.lineage-inspector-rule-heading {
+  display: flex;
+  align-items: center;
+  min-width: 0;
 }
 
 .lineage-inspector-rule-case {
@@ -825,6 +866,11 @@ textarea {
   color: #6d28d9;
 }
 
+.lineage-inspector-type-rule {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .lineage-inspector-card-note {
   color: #1e3a8a;
   font-size: 12px;
@@ -846,7 +892,9 @@ textarea {
 }
 
 .lineage-inspector-code {
-  max-height: 190px;
+  height: 100%;
+  min-height: 240px;
+  max-height: none;
   padding: 9px 10px;
 }
 
@@ -863,11 +911,19 @@ textarea {
   background: transparent;
 }
 
+.lineage-inspector-code .cm-editor {
+  height: 100%;
+}
+
 .lineage-inspector-code .cm-scroller,
 .lineage-inspector-inline-code .cm-scroller,
 .lineage-inspector-rule-code .cm-scroller,
 .lineage-expression .cm-scroller {
   overflow: auto;
+}
+
+.lineage-inspector-code .cm-scroller {
+  height: 100%;
 }
 
 .lineage-inspector-actions {
@@ -1111,6 +1167,11 @@ textarea {
   font-weight: 850;
   text-transform: uppercase;
   white-space: nowrap;
+}
+
+.lineage-node-kind-recursive {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .lineage-node-actions {

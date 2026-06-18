@@ -14,7 +14,7 @@ const layoutSpacing = {
 };
 
 export function buildGraphModel(lineage: LineageModel, flowDirection: GraphFlowDirection = 'downstream'): GraphModel {
-  const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
+  const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge));
   const layoutEdges = flowDirection === 'upstream' ? visibleEdges.map(reverseLineageEdge) : visibleEdges;
   const positioned = layoutNodes(lineage.nodes, layoutEdges);
 
@@ -30,6 +30,10 @@ export function buildGraphModel(lineage: LineageModel, flowDirection: GraphFlowD
     })),
     edges: visibleEdges.map((edge) => toGraphEdge(edge, flowDirection)),
   };
+}
+
+function isRecursiveDataFlow(edge: LineageEdge): boolean {
+  return Boolean(edge.recursive) || edge.source === edge.target;
 }
 
 function layoutNodes(nodes: LineageNode[], edges: LineageEdge[]): Array<{ id: string; lineageNode: LineageNode; position: { x: number; y: number } }> {

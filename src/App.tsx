@@ -25,6 +25,7 @@ export function App() {
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
+  const [graphColumnSelectionTarget, setGraphColumnSelectionTarget] = useState<{ columnId: string; nodeId: string; nonce: number } | null>(null);
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(() => readSqlHistory(initialSql));
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
@@ -185,17 +186,19 @@ export function App() {
           </div>
           {panelTab === 'sql' ? (
             <>
-              <SqlCodeMirror
-                ariaLabel="SQL editor"
-                className="sql-editor"
-                editable
-                minHeight="340px"
-                value={sql}
-                onChange={(value) => {
-                  setSql(value);
-                  setShareStatus('idle');
-                }}
-              />
+              <div className="sql-editor-frame">
+                <SqlCodeMirror
+                  ariaLabel="SQL editor"
+                  className="sql-editor"
+                  editable
+                  minHeight="340px"
+                  value={sql}
+                  onChange={(value) => {
+                    setSql(value);
+                    setShareStatus('idle');
+                  }}
+                />
+              </div>
               <div className="panel-actions">
                 <button
                   className="primary-button"
@@ -221,8 +224,9 @@ export function App() {
               onFocusNode={(nodeId) => {
                 setGraphFocusTarget({ nodeId, nonce: Date.now() });
               }}
-              onSelectCaseRule={(selection) => {
-                setCaseRuleSelection(selection);
+              onSelectColumn={(item) => {
+                setCaseRuleSelection(null);
+                setGraphColumnSelectionTarget({ columnId: item.column.id, nodeId: item.node.id, nonce: Date.now() });
               }}
               selection={inspectorSelection}
             />
@@ -280,6 +284,7 @@ export function App() {
               <LineageGraph
                 caseRuleSelection={caseRuleSelection}
                 flowDirection={flowDirection}
+                columnSelectionTarget={graphColumnSelectionTarget}
                 focusTarget={graphFocusTarget}
                 lineage={adapterResult.lineage}
                 onInspectorSelectionChange={handleInspectorSelectionChange}

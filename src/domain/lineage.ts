@@ -44,6 +44,7 @@ export interface LineageNode {
   cteExecutableSql?: string;
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
   querySql?: string;
+  recursive?: boolean;
 }
 
 export interface LineageEdge {
@@ -56,6 +57,9 @@ export interface LineageEdge {
   joinNullability?: {
     reason: 'outerJoin';
     joinType: 'left' | 'right' | 'full';
+  };
+  recursive?: {
+    reason: 'cteSelfReference';
   };
   confidence?: 'high' | 'medium' | 'low';
 }

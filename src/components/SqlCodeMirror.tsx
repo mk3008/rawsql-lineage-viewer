@@ -19,7 +19,11 @@ export function SqlCodeMirror({ ariaLabel, className, editable = false, minHeigh
       EditorView.theme({
         '&': {
           backgroundColor: 'transparent',
+          boxSizing: 'border-box',
           fontSize: 'inherit',
+          maxWidth: '100%',
+          overflow: 'hidden',
+          width: '100%',
         },
         '.cm-content': {
           fontFamily: 'inherit',
@@ -37,6 +41,7 @@ export function SqlCodeMirror({ ariaLabel, className, editable = false, minHeigh
         },
         '.cm-scroller': {
           fontFamily: 'inherit',
+          maxWidth: '100%',
           overflow: 'auto',
         },
       }),

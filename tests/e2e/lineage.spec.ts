@@ -306,6 +306,11 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   const outputComment = page.getByTestId('lineage-comment').filter({ hasText: 'Final output comment.' });
   await expect(outputComment).toContainText('Final output comment.');
   await expect(outputComment).toContainText('Output id comment.');
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector).toContainText('Open in viewer');
+  await expect(inspector).toContainText('Copy SQL');
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Final output comment.');
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText('id as user_id -- Output id comment.');
   await outputComment.getByRole('button', { name: 'Close comment' }).click();
 
   const derivedNode = page.getByTestId('lineage-node-derived');
@@ -313,7 +318,6 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   const derivedComment = page.getByTestId('lineage-comment').filter({ hasText: 'Derived source comment.' });
   await expect(derivedComment).toContainText('Derived source comment.');
   await expect(derivedComment).toContainText('Derived id comment.');
-  const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Open in viewer');
   await expect(inspector).toContainText('Copy SQL');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Derived source comment.');
@@ -589,12 +593,28 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Sources' });
   await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('quantity');
   await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('unit_price');
+  await sourcesSection.getByRole('button', { name: /unit_price/ }).click();
+  await expect(inspector.locator('.lineage-inspector-column-card-active')).toHaveCount(1);
+  await expect(inspector.locator('.lineage-inspector-column-card-active').first()).toContainText('order_items');
+  await expect(inspector.locator('.lineage-inspector-column-card-active').first()).toContainText('unit_price');
+  await expect(page.getByTestId('rf__node-table_order_items').getByRole('button', { name: 'unit_price', exact: true })).toHaveClass(/lineage-column-selected/);
+
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(inspector).toContainText('Upstream');
   const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel');
   await expect(upstreamPanel.locator('.lineage-inspector-tree .lineage-inspector-tree').first()).toBeVisible();
   await expect(upstreamPanel).toContainText('order_totals');
   await expect(upstreamPanel).toContainText('recent_orders');
   await expect(upstreamPanel).toContainText('order_items');
+  await upstreamPanel.locator('.lineage-inspector-column-card').filter({ hasText: 'order_totals' }).filter({ hasText: 'total_amount' }).first().click();
+  await expect(inspector.locator('.lineage-inspector-column-card-active')).toHaveCount(1);
+  await expect(inspector.locator('.lineage-inspector-column-card-active').first()).toContainText('order_totals');
+  await expect(inspector.locator('.lineage-inspector-column-card-active').first()).toContainText('total_amount');
+  await expect(page.getByTestId('rf__node-cte_order_totals').getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(
+    /lineage-column-selected/,
+  );
+
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
   await expect(inspector).not.toContainText('Upstream ot');
   await expect(inspector).toContainText('Downstream');
   await expect(inspector).toContainText('coalesce(ot.total_amount, 0)');
@@ -1028,7 +1048,7 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputComment).toHaveCount(0);
 });
 
-test('shows CASE rules in the inspector and can highlight a single rule lineage', async ({ page }) => {
+test('shows CASE rules as upstream tree branches in the inspector', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto('/');
 
@@ -1041,21 +1061,16 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector.getByRole('tab', { name: /Upstream/ })).toHaveAttribute('aria-selected', 'true');
   await expect(inspector.getByRole('tab', { name: /Rules/ })).toHaveCount(0);
+  await expect(inspector.locator('.lineage-inspector-rule-card')).toHaveCount(3);
   const firstRuleCard = inspector.locator('.lineage-inspector-rule-card').first();
   await expect(firstRuleCard).toBeVisible();
+  await expect(firstRuleCard.locator('.lineage-inspector-type-rule')).toHaveText('RULE');
   await expect(firstRuleCard.locator('.lineage-inspector-rule-label')).toHaveCount(0);
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').first()).toContainText('ps.last_paid_at is null');
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').first()).not.toContainText('when');
   await expect(firstRuleCard.locator('.lineage-inspector-rule-code').last()).toContainText("'unknown'");
   await expect(inspector.getByRole('tab', { name: /Upstream/ })).toHaveAttribute('aria-selected', 'true');
   await expect(paymentSummaryNode.getByRole('button', { name: 'last_paid_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
-
-  await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
-
-  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
-  await inspector.getByRole('button', { name: /ps\.last_paid_at is null/ }).click();
-  await expect(inspector.getByRole('tab', { name: /Upstream/ })).toHaveAttribute('aria-selected', 'true');
-  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveClass(/lineage-inspector-rule-card-active/);
   const sourcesSection = inspector.locator('.lineage-inspector-section').filter({ has: page.locator('h3', { hasText: 'Sources' }) });
   await expect(sourcesSection).toContainText('Sources 1');
   await expect(sourcesSection).toContainText('payments');
@@ -1063,6 +1078,9 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   await expect(sourcesSection).not.toContainText('paid_amount');
   const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel');
   await expect(inspector.getByRole('tab', { name: /Upstream 2/ })).toHaveAttribute('aria-selected', 'true');
+  const firstRuleBranch = upstreamPanel.locator('.lineage-inspector-tree-node').filter({ hasText: 'ps.last_paid_at is null' }).first();
+  await expect(firstRuleBranch).toContainText('payment_summary');
+  await expect(firstRuleBranch).toContainText('payments');
   await expect(upstreamPanel).toContainText('payment_summary');
   await expect(upstreamPanel).toContainText('last_paid_at');
   await expect(upstreamPanel).toContainText('payments');
@@ -1078,15 +1096,15 @@ test('shows CASE rules in the inspector and can highlight a single rule lineage'
   const ruleCallout = page.getByTestId('lineage-comment').filter({ hasText: 'ps.last_paid_at is null' });
   await expect(ruleCallout).toBeVisible();
   await expect(ruleCallout).toContainText("'unknown'");
-  await expect(ruleCallout).not.toContainText('case');
-  await expect(ruleCallout.locator('.lineage-expression')).toContainText("ps.last_paid_at is null then 'unknown'");
+  await expect(ruleCallout).toContainText('case');
+  await expect(ruleCallout.locator('.lineage-expression')).toContainText('case');
 
   await inspector
     .locator('.lineage-inspector-section')
     .filter({ hasText: 'Selected' })
     .getByRole('button', { name: 'Select full column lineage' })
     .click();
-  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toBeVisible();
+  await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-column-card').first()).toHaveClass(/lineage-inspector-column-card-active/);
 });
 
@@ -1284,6 +1302,43 @@ test('renders three-way UNION chains as sibling graph parts', async ({ page }) =
   await expect(page.getByTestId('rf__edge-derived_union_all_part_1_1-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_union_all_part_2_2-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_union_all_part_3_3-main_output')).toBeAttached();
+});
+
+test('marks recursive CTEs without drawing recursive self-reference lines', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH RECURSIVE employee_tree AS (
+      SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        0 AS depth,
+        CAST(e.name AS VARCHAR(1000)) AS path
+      FROM employees e
+      WHERE e.manager_id IS NULL
+      UNION ALL
+      SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        et.depth + 1 AS depth,
+        CAST(et.path || ' / ' || e.name AS VARCHAR(1000)) AS path
+      FROM employees e
+      INNER JOIN employee_tree et ON e.manager_id = et.id
+    )
+    SELECT id, name, manager_id, depth, path
+    FROM employee_tree
+    ORDER BY path
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const employeeTree = page.getByTestId('rf__node-cte_employee_tree');
+  await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
+  await expect(employeeTree).toBeVisible();
+  await expect(employeeTree.getByText('Recursive')).toBeVisible();
+  await expect(page.getByTestId('rf__edge-cte_employee_tree-derived_union_all_right_2')).toHaveCount(0);
+  await expect(page.getByTestId('rf__edge-cte_employee_tree-main_output')).toBeAttached();
 });
 
 test('analyzes CREATE TABLE AS SELECT from the SELECT body', async ({ page }) => {

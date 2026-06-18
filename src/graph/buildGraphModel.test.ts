@@ -3,6 +3,29 @@ import { salesSummarySql } from '../examples/salesSummarySql';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
 import { buildGraphModel } from './buildGraphModel';
 
+const recursiveEmployeeSql = `WITH RECURSIVE employee_tree AS (
+    SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        0 AS depth,
+        CAST(e.name AS VARCHAR(1000)) AS path
+    FROM employees e
+    WHERE e.manager_id IS NULL
+    UNION ALL
+    SELECT
+        e.id,
+        e.name,
+        e.manager_id,
+        et.depth + 1 AS depth,
+        CAST(et.path || ' / ' || e.name AS VARCHAR(1000)) AS path
+    FROM employees e
+    INNER JOIN employee_tree et ON e.manager_id = et.id
+)
+SELECT id, name, manager_id, depth, path
+FROM employee_tree
+ORDER BY path`;
+
 describe('buildGraphModel', () => {
   it('renders only data flow edges', () => {
     const { lineage } = analyzeSql(salesSummarySql);
@@ -68,5 +91,20 @@ describe('buildGraphModel', () => {
       source: 'main_output',
       target: 'table_customers',
     });
+  });
+
+  it('does not render recursive CTE self-reference edges as graph lines', () => {
+    const { lineage } = analyzeSql(recursiveEmployeeSql);
+    const graph = buildGraphModel(lineage, 'upstream');
+    const recursiveLineageEdges = lineage.edges.filter((edge) => edge.recursive);
+    const recursiveGraphEdges = graph.edges.filter((edge) => edge.data?.lineageEdge.recursive);
+    const employeeTree = graph.nodes.find((node) => node.id === 'cte_employee_tree');
+    const output = graph.nodes.find((node) => node.id === 'main_output');
+
+    expect(recursiveLineageEdges).toHaveLength(1);
+    expect(recursiveGraphEdges).toHaveLength(0);
+    expect(employeeTree?.data.lineageNode.recursive).toBe(true);
+    expect(employeeTree?.position.x).toBeGreaterThan(output?.position.x ?? Number.POSITIVE_INFINITY);
+    expect(employeeTree?.position.x).toBeLessThanOrEqual(720);
   });
 });
