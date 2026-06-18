@@ -444,7 +444,7 @@ function collectExecutableSqlComments(
 function formatCteExecutableSql(sql: string, comments?: string[]): string {
   const trimmedSql = sql.trim();
   try {
-    return nodeSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim();
+    return prependSqlComments(nodeSqlFormatter.format(SelectQueryParser.parse(trimmedSql)).formattedSql.trim(), comments);
   } catch {
     return prependSqlComments(trimmedSql, comments);
   }

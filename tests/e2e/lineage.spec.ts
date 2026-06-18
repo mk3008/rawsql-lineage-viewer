@@ -12,6 +12,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
 
   await expect(page.getByRole('heading', { name: 'SQL Lineage Viewer' })).toBeVisible();
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).toContainText(/recent_orders AS/);
+  await expect(page.locator('.sql-editor .cm-scroller')).toHaveCSS('overflow-y', 'scroll');
   await expect(page.getByTestId('analysis-status')).toContainText('Parsed successfully');
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
   await expect(page.getByTestId('rf__node-table_orders')).toBeVisible();
@@ -186,8 +187,7 @@ test('groups condition-only and unused CTE columns into sections', async ({ page
 
   await recentOrdersNode.getByRole('button', { name: 'status', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
-  await expect(inspector).toContainText('Usage');
-  await expect(inspector).toContainText('Used by: WHERE');
+  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('Used by: WHERE');
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 
@@ -202,7 +202,7 @@ test('shows GROUP BY usage and the selected column expression in the inspector',
 
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toContainText('Used by: GROUP BY');
-  await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText('customer_id');
+  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('customer_id');
   await expect(inspector).not.toContainText('Used by: JOIN');
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
@@ -279,7 +279,7 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   await expect(inspector).toContainText('Extended line amount.');
-  await expect(inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText('oi.quantity * oi.unit_price');
+  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('oi.quantity * oi.unit_price');
 });
 
 test('shows title comments for output and derived nodes', async ({ page }) => {
@@ -319,6 +319,41 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id -- Derived id comment.');
 });
 
+test('keeps CTE comments in inspector SQL', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    /* Monthly customer health report.
+       Top-level header comment for comment export mode comparison. */
+    WITH order_base AS (
+      /* Pull only order rows that affect monthly customer health.
+         This CTE was originally copied from the billing report and has grown a few extra filters. */
+      SELECT o.id, o.customer_id, o.status
+      FROM orders o
+      WHERE o.created_at >= :report_from
+    ),
+    customer_order_summary AS (
+      /* Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names. */
+      SELECT ob.customer_id, count(ob.id) AS order_count
+      FROM order_base ob
+      GROUP BY ob.customer_id
+    )
+    SELECT customer_id, order_count
+    FROM customer_order_summary
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await page.getByTestId('rf__node-cte_order_base').getByRole('button', { name: 'order_base', exact: true }).click();
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText('Pull only order rows that affect monthly customer health.');
+
+  await page.getByTestId('rf__node-cte_customer_order_summary').getByRole('button', { name: 'customer_order_summary', exact: true }).click();
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText(
+    'Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names.',
+  );
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText('Pull only order rows that affect monthly customer health.');
+});
+
 test('shows selected expressions with rawsql-ts formatting in the inspector', async ({ page }) => {
   await page.goto('/');
 
@@ -326,7 +361,7 @@ test('shows selected expressions with rawsql-ts formatting in the inspector', as
   await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
 
   const inspector = page.getByTestId('lineage-inspector');
-  const expression = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' }).locator('.lineage-inspector-inline-code');
+  const expression = inspector.locator('.lineage-inspector-root-card').locator('.lineage-inspector-inline-code');
   const referenceColumn = outputNode.getByRole('button', { name: 'paid_amount', exact: true });
   await expect(expression).toHaveCSS('white-space', 'pre');
   await expect(expression).toHaveCSS('overflow-x', 'auto');
@@ -354,8 +389,7 @@ test('shows long selected expressions with horizontal scrolling', async ({ page 
 
   const expression = page
     .getByTestId('lineage-inspector')
-    .locator('.lineage-inspector-section')
-    .filter({ hasText: 'Selected' })
+    .locator('.lineage-inspector-root-card')
     .locator('.lineage-inspector-inline-code');
   await expect(expression).toBeVisible();
   await expect(expression).toContainText('case\n');
@@ -374,11 +408,11 @@ test('does not force column callouts when selecting columns', async ({ page }) =
   );
   await expect(page.getByRole('checkbox', { name: 'Column callouts' })).toHaveCount(0);
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText('c.id');
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-root-card')).toContainText('c.id');
 
   await page.getByTestId('rf__node-table_customers').getByRole('button', { name: 'id', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText('id');
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-root-card')).toContainText('id');
 });
 
 test('compresses passthrough columns by default and can show them per node', async ({ page }) => {
@@ -452,7 +486,7 @@ test('shows literal expressions in the inspector without opening callouts', asyn
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'a', exact: true }).click();
 
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText('false');
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-root-card')).toContainText('false');
 });
 
 test('keeps column callouts hidden by default even when selecting expression columns', async ({ page }) => {
@@ -465,7 +499,7 @@ test('keeps column callouts hidden by default even when selecting expression col
   await paymentSummaryNode.getByRole('button', { name: 'paid_amount', exact: true }).click();
 
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-section').filter({ hasText: 'Selected' })).toContainText(
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-root-card')).toContainText(
     'sum(p.amount)',
   );
 });
@@ -492,8 +526,8 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   const inspector = page.getByTestId('lineage-inspector');
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText('total_amount');
-  await expect(inspector).toContainText('Selected');
-  const selectedCard = inspector.locator('.lineage-inspector-column-card').first();
+  await expect(inspector).not.toContainText('Selected');
+  const selectedCard = inspector.locator('.lineage-inspector-root-card');
   await expect(selectedCard.locator('.lineage-inspector-column-meta')).toContainText('Final Result');
   await expect(selectedCard.locator('.lineage-inspector-column-name')).toHaveText('total_amount');
   await expect(inspector).toContainText('Sources');
@@ -514,6 +548,10 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(upstreamPanel).toContainText('order_totals');
   await expect(upstreamPanel).toContainText('recent_orders');
   await expect(upstreamPanel).toContainText('order_items');
+  const orderItemsTreeGroup = upstreamPanel.locator('.lineage-inspector-column-group-card').filter({ hasText: 'order_items' });
+  await expect(orderItemsTreeGroup).toHaveCount(1);
+  await expect(orderItemsTreeGroup).toContainText('quantity');
+  await expect(orderItemsTreeGroup).toContainText('unit_price');
   await upstreamPanel.locator('.lineage-inspector-column-card').filter({ hasText: 'order_totals' }).filter({ hasText: 'total_amount' }).first().click();
   await expect(inspector.locator('h2')).toHaveText('total_amount');
   await expect(selectedCard).toContainText('Final Result');
@@ -533,6 +571,8 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Extended line amount.');
   await inspector.getByRole('tab', { name: /Downstream/ }).click();
   await expect(inspector.getByRole('tab', { name: /Downstream/ })).toHaveAttribute('aria-selected', 'true');
+  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('Final Result');
+  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('total_amount');
   await expect(inspector).toContainText('No downstream columns.');
 
   await page.getByRole('tab', { name: 'SQL' }).click();
@@ -556,7 +596,7 @@ test('focuses the graph node when inspector column or table names are clicked', 
 
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
-  const selectedCard = inspector.locator('.lineage-inspector-section').filter({ hasText: 'Selected' }).locator('.lineage-inspector-column-card');
+  const selectedCard = inspector.locator('.lineage-inspector-root-card');
   const sourceCard = inspector.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
 
   await sourceCard.getByRole('button', { name: 'order_items' }).click();
@@ -934,6 +974,7 @@ test('shows all expanded columns without node resizing or vertical scrolling', a
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto('/');
+  await showAllColumns(page);
 
   const outputNode = page.getByTestId('rf__node-main_output');
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
@@ -1015,11 +1056,7 @@ test('shows CASE rules as upstream tree branches in the inspector', async ({ pag
   );
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 
-  await inspector
-    .locator('.lineage-inspector-section')
-    .filter({ hasText: 'Selected' })
-    .getByRole('button', { name: 'Select full column lineage' })
-    .click();
+  await inspector.locator('.lineage-inspector-root-card').click();
   await expect(inspector.getByRole('button', { name: /ps\.last_paid_at is null/ })).toHaveCount(1);
   await expect(inspector.locator('.lineage-inspector-rule-card-active')).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-column-card').first()).toHaveClass(/lineage-inspector-column-card-active/);
@@ -1141,6 +1178,28 @@ test('highlights downstream output lineage when a source column is selected', as
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 5/);
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
+});
+
+test('groups terminal output columns in the inspector downstream tree', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT
+      u.id AS id_one,
+      u.id AS id_two
+    FROM users u
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  await page.getByTestId('rf__node-table_users').getByRole('button', { name: 'id', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Downstream/ }).click();
+
+  const outputTreeGroup = inspector.locator('.lineage-inspector-tab-panel .lineage-inspector-column-group-card').filter({ hasText: 'Final Result' });
+  await expect(outputTreeGroup).toHaveCount(1);
+  await expect(outputTreeGroup).toContainText('id_one');
+  await expect(outputTreeGroup).toContainText('id_two');
 });
 
 test('can drag lineage nodes to separate overlapping lines', async ({ page }) => {
@@ -1292,3 +1351,4 @@ test('analyzes CREATE TABLE AS SELECT from the SELECT body', async ({ page }) =>
   await showAllColumns(page);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true })).toBeVisible();
 });
+

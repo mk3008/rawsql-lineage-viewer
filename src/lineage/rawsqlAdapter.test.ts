@@ -745,6 +745,35 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.get('cte_order_totals')?.querySql).toBe(nodeById.get('cte_order_totals')?.cteExecutableSql);
   });
 
+  it('keeps CTE header comments in executable SQL', () => {
+    const { lineage } = analyzeSql(`
+      /* Monthly customer health report.
+         Top-level header comment for comment export mode comparison. */
+      WITH order_base AS (
+        /* Pull only order rows that affect monthly customer health.
+           This CTE was originally copied from the billing report and has grown a few extra filters. */
+        SELECT o.id, o.customer_id, o.status
+        FROM orders o
+        WHERE o.created_at >= :report_from
+      ),
+      customer_order_summary AS (
+        /* Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names. */
+        SELECT ob.customer_id, count(ob.id) AS order_count
+        FROM order_base ob
+        GROUP BY ob.customer_id
+      )
+      SELECT customer_id, order_count
+      FROM customer_order_summary
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('cte_order_base')?.cteExecutableSql).toContain('Pull only order rows that affect monthly customer health.');
+    expect(nodeById.get('cte_customer_order_summary')?.cteExecutableSql).toContain(
+      'Keep the lifetime-ish rollup separate because several downstream dashboards still compare these names.',
+    );
+    expect(nodeById.get('cte_customer_order_summary')?.cteExecutableSql).toContain('Pull only order rows that affect monthly customer health.');
+  });
+
   it('uses comments before the inner CTE select query as CTE comments', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (

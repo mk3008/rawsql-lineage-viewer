@@ -184,7 +184,7 @@ export function App() {
             ) : null}
           </div>
           {panelTab === 'sql' ? (
-            <>
+            <div className="sql-tab-panel">
               <div className="sql-editor-frame">
                 <SqlCodeMirror
                   ariaLabel="SQL editor"
@@ -214,7 +214,7 @@ export function App() {
                 {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
                 <span>{error ? error : 'Parsed successfully'}</span>
               </div>
-            </>
+            </div>
           ) : panelTab === 'inspector' ? (
             <LineageInspector
               activeCaseRule={caseRuleSelection}

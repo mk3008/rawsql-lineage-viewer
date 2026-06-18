@@ -62,16 +62,18 @@ describe('buildGraphModel', () => {
     expect(innerDataFlow?.style?.strokeDasharray).toBeUndefined();
   });
 
-  it('uses curved edges and roomy vertical spacing to reduce visual overlap', () => {
+  it('uses curved edges and compact spacing for collapsed-first graph layout', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const graph = buildGraphModel(lineage);
 
     const orders = graph.nodes.find((node) => node.id === 'table_orders');
     const orderItems = graph.nodes.find((node) => node.id === 'table_order_items');
+    const recentOrders = graph.nodes.find((node) => node.id === 'cte_recent_orders');
 
     expect(graph.edges.every((edge) => edge.type === 'lineageDataFlow')).toBe(true);
     expect(orders?.position.x).toBe(orderItems?.position.x);
-    expect(Math.abs((orders?.position.y ?? 0) - (orderItems?.position.y ?? 0))).toBeGreaterThanOrEqual(230);
+    expect(Math.abs((orders?.position.y ?? 0) - (orderItems?.position.y ?? 0))).toBeLessThanOrEqual(190);
+    expect((recentOrders?.position.x ?? 0) - (orders?.position.x ?? 0)).toBe(280);
   });
 
   it('can render upstream direction from output back to source tables', () => {

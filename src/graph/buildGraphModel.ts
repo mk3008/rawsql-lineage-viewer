@@ -9,8 +9,8 @@ const nodeSize = {
 };
 
 const layoutSpacing = {
-  x: 360,
-  y: 300,
+  x: 280,
+  y: 180,
 };
 
 export function buildGraphModel(lineage: LineageModel, flowDirection: GraphFlowDirection = 'downstream'): GraphModel {
