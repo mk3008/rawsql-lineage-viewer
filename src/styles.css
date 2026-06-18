@@ -506,6 +506,11 @@ textarea {
   border-bottom: 1px solid #e4ebf5;
 }
 
+.lineage-inspector-title-block {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
 .lineage-inspector-kicker {
   margin-bottom: 4px;
   color: #64748b;
@@ -1084,6 +1089,14 @@ textarea {
   align-items: center;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.lineage-output-title-form-header {
+  width: 100%;
+}
+
+.lineage-output-title-edit-button {
+  flex: 0 0 auto;
 }
 
 .lineage-output-title-input {

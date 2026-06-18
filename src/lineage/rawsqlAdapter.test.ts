@@ -613,6 +613,31 @@ describe('rawsqlAdapter', () => {
     expect(customerSegment?.caseRules?.[0].label.replace(/\s+/g, ' ')).toBe(
       'when rc.tier = :enterprise_tier and rc.gross_amount >= :strategic_amount',
     );
+
+    const customerOrderSummary = lineage.nodes.find((node) => node.id === 'cte_customer_order_summary');
+    const grossAmount = customerOrderSummary?.columns.find((column) => column.name === 'gross_amount');
+    expect(grossAmount?.caseRules).toHaveLength(2);
+    expect(grossAmount?.caseRules?.[0]).toMatchObject({
+      conditionUpstream: [{ nodeId: 'cte_order_base', columnName: 'status' }],
+      resultUpstream: [],
+    });
+    expect(grossAmount?.caseRules?.[1]).toMatchObject({
+      conditionUpstream: [],
+      resultUpstream: [{ nodeId: 'cte_order_base', columnName: 'total_amount' }],
+    });
+
+    const rankedCustomers = lineage.nodes.find((node) => node.id === 'cte_ranked_customers');
+    const tierRank = rankedCustomers?.columns.find((column) => column.name === 'tier_rank');
+    expect(tierRank?.caseRules).toEqual([
+      expect.objectContaining({
+        id: 'expression_1',
+        resultUpstream: [
+          { nodeId: 'cte_customer_order_summary', columnName: 'tier' },
+          { nodeId: 'cte_customer_order_summary', columnName: 'gross_amount' },
+          { nodeId: 'cte_customer_order_summary', columnName: 'customer_id' },
+        ],
+      }),
+    ]);
   });
 
   it('records title comments for output and derived nodes', () => {

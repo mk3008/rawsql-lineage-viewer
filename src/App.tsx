@@ -254,6 +254,7 @@ export function App() {
           ) : panelTab === 'inspector' ? (
             <LineageInspector
               activeCaseRule={caseRuleSelection}
+              expandedExpressionColumnIds={expandedExpressionColumnIds}
               flowDirection={flowDirection}
               onClearCaseRule={() => setCaseRuleSelection(null)}
               onRenameOutputTitle={renameOutputTitle}
