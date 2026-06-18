@@ -246,6 +246,45 @@ test('renders scalar subquery table sources and condition columns', async ({ pag
   await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toHaveClass(/lineage-column-highlighted/);
 });
 
+test('renders WHERE EXISTS subquery sources as condition lineage', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT
+        c.id,
+        c.name
+    FROM
+        customers c
+    WHERE
+        NOT EXISTS (
+            SELECT
+                1
+            FROM
+                orders o
+            WHERE
+                o.customer_id = c.id
+        )
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  const customersNode = page.getByTestId('rf__node-table_customers');
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await expect(customersNode).toBeVisible();
+  await expect(ordersNode).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_customers-main_output')).toBeAttached();
+  await expect(page.getByTestId('rf__edge-table_orders-main_output')).toBeAttached();
+  await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'o' })).toBeVisible();
+  await expect(ordersNode.getByText('Condition')).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+
+  await outputNode.getByRole('button', { name: 'id', exact: true }).click();
+  await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).not.toHaveClass(/lineage-column-highlighted/);
+});
+
 test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.addInitScript(() => {
@@ -1102,6 +1141,31 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
+});
+
+test('expands composite non-CASE expressions in the inspector', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT a.id + b.id AS combined_id
+    FROM accounts a
+    JOIN branches b ON b.account_id = a.id
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'combined_id', exact: true }).click();
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector.locator('.lineage-inspector-rule-card')).toHaveCount(0);
+  await inspector.getByRole('button', { name: /Expand expression/ }).click();
+  await expect(inspector.locator('.lineage-inspector-rule-card')).toHaveCount(1);
+  const expressionCard = inspector.locator('.lineage-inspector-rule-card').first();
+  await expect(expressionCard.locator('.lineage-inspector-type-expression')).toHaveText('EXPRESSION');
+  await expect(expressionCard).toContainText('a.id + b.id');
+  await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('accounts');
+  await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('branches');
 });
 
 test('expands and collapses CASE expression branches in the inspector', async ({ page }) => {

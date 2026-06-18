@@ -496,6 +496,33 @@ describe('rawsqlAdapter', () => {
     expect(doubleCase?.map((rule) => rule.caseLabel)).toEqual(['case 1', 'case 2']);
   });
 
+  it('records composite non-CASE expression rules when multiple columns are referenced', () => {
+    const { lineage } = analyzeSql(`
+      SELECT a.id + b.id AS combined_id
+      FROM accounts a
+      JOIN branches b ON b.account_id = a.id
+    `);
+    const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
+    const combinedId = outputNode?.columns.find((column) => column.name === 'combined_id');
+
+    expect(combinedId?.caseRules).toEqual([
+      expect.objectContaining({
+        id: 'expression_1',
+        label: 'expression',
+        resultSql: 'a.id + b.id',
+        conditionUpstream: [],
+        resultUpstream: [
+          { nodeId: 'table_accounts', columnName: 'id' },
+          { nodeId: 'table_branches', columnName: 'id' },
+        ],
+      }),
+    ]);
+    expect(combinedId?.upstream).toEqual([
+      { nodeId: 'table_accounts', columnName: 'id' },
+      { nodeId: 'table_branches', columnName: 'id' },
+    ]);
+  });
+
   it('records CASE rules for a commented output CASE without AS alias', () => {
     const { lineage } = analyzeSql(`
       /* Monthly customer health report.
@@ -705,6 +732,44 @@ describe('rawsqlAdapter', () => {
         { nodeId: 'table_orders', columnName: 'status' },
       ]),
     );
+  });
+
+  it('adds WHERE EXISTS subquery sources as condition lineage', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+          c.id,
+          c.name
+      FROM
+          customers c
+      WHERE
+          NOT EXISTS (
+              SELECT
+                  1
+              FROM
+                  orders o
+              WHERE
+                  o.customer_id = c.id
+          )
+    `);
+    const customers = lineage.nodes.find((node) => node.id === 'table_customers');
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: 'table_customers', target: 'main_output', sourceAlias: 'c' }),
+        expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o' }),
+      ]),
+    );
+    expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'id' }]);
+    expect(output?.columns.find((column) => column.name === 'name')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'name' }]);
+    expect(customers?.columns.find((column) => column.name === 'id')?.usage).toBeUndefined();
+    expect(orders?.columns).toEqual([
+      expect.objectContaining({
+        name: 'customer_id',
+        usage: { role: 'condition', reasons: ['where'] },
+      }),
+    ]);
   });
 
   it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {

@@ -25,6 +25,7 @@ import type {
   LineageModel,
   LineageNode,
 } from '../domain/lineage';
+import { isSimpleColumnReference } from './columnDisplay';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -256,6 +257,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     setNodeColumns(nodes, targetId, outputColumns);
     setValueSourceColumns(outputColumns, nodes);
     setReferencedSourceColumns(query, sources, nodes);
+    collectNestedConditionLineage(query, options);
 
     return;
   }
@@ -587,7 +589,7 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
 
     const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     const comments = extractSelectItemComments(query.selectClause.items, index);
-    const caseRules = collectCaseRules(item.value, sources);
+    const caseRules = collectExpressionBreakdownRules(item.value, sources);
     const name = getSelectItemOutputName(item, index);
     return {
       id: '',
@@ -632,6 +634,15 @@ function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'
   return `expr_${index + 1}`;
 }
 
+function collectExpressionBreakdownRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
+  const caseRules = collectCaseRules(value, sources);
+  if (caseRules?.length) {
+    return caseRules;
+  }
+
+  return collectCompositeExpressionRule(value, sources);
+}
+
 function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
   const cases = collectCaseExpressions(value);
   if (cases.length === 0) {
@@ -644,6 +655,29 @@ function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCas
     return collectCaseExpressionRules(caseExpression, caseIndex, caseLabel, sources);
   });
   return rules.length > 0 ? rules : undefined;
+}
+
+function collectCompositeExpressionRule(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
+  const upstream = resolveColumnReferences(value, sources);
+  if (upstream.length < 2) {
+    return undefined;
+  }
+
+  const expressionSql = formatExpressionSql(value);
+  if (!expressionSql || isSimpleColumnReference(expressionSql)) {
+    return undefined;
+  }
+
+  return [
+    {
+      id: 'expression_1',
+      label: 'expression',
+      expressionSql,
+      resultSql: expressionSql,
+      conditionUpstream: [],
+      resultUpstream: upstream,
+    },
+  ];
 }
 
 function collectCaseExpressions(value: unknown): unknown[] {
@@ -776,6 +810,21 @@ function setReferencedSourceColumns(query: SimpleSelectQuery, sources: ResolvedS
   }
 }
 
+function collectNestedConditionLineage(query: SimpleSelectQuery, options: CollectQueryEdgesOptions): void {
+  const conditionExpressions: Array<{ reason: LineageColumnUsageReason; value: unknown }> = [
+    { reason: 'join', value: (query.fromClause?.joins ?? []).map((join) => join.condition) },
+    { reason: 'where', value: query.whereClause?.condition },
+    { reason: 'having', value: query.havingClause?.condition },
+    { reason: 'orderBy', value: query.orderByClause?.order ?? [] },
+  ];
+
+  for (const { reason, value } of conditionExpressions) {
+    for (const nestedQuery of collectNestedSimpleSelectQueries(value)) {
+      collectNestedQueryLineage(nestedQuery, options, reason);
+    }
+  }
+}
+
 function setValueSourceColumns(columns: LineageColumn[], nodes: Map<string, LineageNode>): void {
   for (const column of columns) {
     for (const upstream of column.upstream ?? []) {
@@ -846,7 +895,11 @@ function collectNestedExpressionLineage(value: unknown, options: CollectQueryEdg
   return refs;
 }
 
-function collectNestedQueryLineage(query: SimpleSelectQuery, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+function collectNestedQueryLineage(
+  query: SimpleSelectQuery,
+  options: CollectQueryEdgesOptions,
+  usageReason: LineageColumnUsageReason = 'subquery',
+): LineageColumnRef[] {
   const { cteNames, nodes, edges, warnings, derivedCounter, targetId, recursiveRootId } = options;
   const fromClause = query.fromClause;
   if (!fromClause) {
@@ -893,7 +946,7 @@ function collectNestedQueryLineage(query: SimpleSelectQuery, options: CollectQue
       {
         id: '',
         name: ref.columnName,
-        usage: { role: 'condition', reasons: ['subquery'] },
+        usage: { role: 'condition', reasons: [usageReason] },
       },
     ]);
   }
@@ -1245,10 +1298,23 @@ function createDerivedNode(id: string, label: string, nodes: Map<string, Lineage
 }
 
 function addLineageEdge(edges: LineageEdge[], edge: Omit<LineageEdge, 'id'>): void {
+  const baseId = `${edge.source}-${edge.target}`;
   edges.push({
     ...edge,
-    id: `${edge.source}-${edge.target}`,
+    id: edges.some((existing) => existing.id === baseId) ? uniqueEdgeId(baseId, edge, edges) : baseId,
   });
+}
+
+function uniqueEdgeId(baseId: string, edge: Omit<LineageEdge, 'id'>, edges: LineageEdge[]): string {
+  const parts = [edge.type, edge.label, edge.sourceAlias].filter((part): part is string => Boolean(part));
+  const suffix = sanitizeId(parts.join('_')) || 'edge';
+  let id = `${baseId}-${suffix}`;
+  let counter = 2;
+  while (edges.some((existing) => existing.id === id)) {
+    id = `${baseId}-${suffix}_${counter}`;
+    counter += 1;
+  }
+  return id;
 }
 
 function normalizeJoinLabel(join: JoinClause): string {
