@@ -495,6 +495,11 @@ describe('rawsqlAdapter', () => {
       conditionUpstream: [{ nodeId: 'table_payments', columnName: 'is_active' }],
       resultUpstream: [{ nodeId: 'table_payments', columnName: 'email' }],
     });
+    expect(compositeCase?.[1]).toMatchObject({
+      caseLabel: 'case 2',
+      conditionUpstream: [],
+      resultUpstream: [{ nodeId: 'table_payments', columnName: 'name' }],
+    });
     expect(doubleCase?.map((rule) => rule.caseLabel)).toEqual(['case 1', 'case 2']);
   });
 
@@ -633,15 +638,13 @@ describe('rawsqlAdapter', () => {
     const rankedCustomers = lineage.nodes.find((node) => node.id === 'cte_ranked_customers');
     const tierRank = rankedCustomers?.columns.find((column) => column.name === 'tier_rank');
     expect(tierRank?.caseRules).toBeUndefined();
-    expect(tierRank?.expressionTree).toMatchObject({
-      kind: 'expression',
-      upstream: [
-        { nodeId: 'cte_customer_order_summary', columnName: 'tier' },
-        { nodeId: 'cte_customer_order_summary', columnName: 'gross_amount' },
-        { nodeId: 'cte_customer_order_summary', columnName: 'customer_id' },
-      ],
-    });
-    expect(tierRank?.expressionTree?.sql).toContain('row_number() over');
+    expect(tierRank?.expressionTree).toBeUndefined();
+    expect(tierRank?.upstream).toEqual([
+      { nodeId: 'cte_customer_order_summary', columnName: 'tier' },
+      { nodeId: 'cte_customer_order_summary', columnName: 'gross_amount' },
+      { nodeId: 'cte_customer_order_summary', columnName: 'customer_id' },
+    ]);
+    expect(tierRank?.expressionSql).toContain('row_number() over');
   });
 
   it('records title comments for output and derived nodes', () => {

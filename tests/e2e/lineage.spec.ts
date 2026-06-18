@@ -1386,8 +1386,7 @@ test('expands nested aggregate CASE and window expressions in the inspector tree
     .filter({ hasText: 'ranked_customers' })
     .filter({ hasText: 'tier_rank' })
     .first();
-  await tierRankCard.getByRole('button', { name: /Expand expression/ }).click();
-  await expect(inspector.locator('.lineage-inspector-expression-tree-card')).toHaveCount(1);
+  await expect(tierRankCard.getByRole('button', { name: /Expand expression/ })).toHaveCount(0);
   await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('row_number() over');
   await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('tier');
   await expect(inspector.locator('.lineage-inspector-tab-panel')).toContainText('gross_amount');

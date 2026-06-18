@@ -680,10 +680,13 @@ function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCas
   }
 
   const directSingleCase = cases.length === 1 && cases[0] === value;
-  const rules = cases.flatMap((caseExpression, caseIndex) => {
-    const caseLabel = directSingleCase ? undefined : `case ${caseIndex + 1}`;
-    return collectCaseExpressionRules(caseExpression, caseIndex, caseLabel, sources);
-  });
+  const collectedRules = cases.flatMap((caseExpression, caseIndex) => collectCaseExpressionRules(caseExpression, caseIndex, undefined, sources));
+  const rules = directSingleCase
+    ? collectedRules
+    : collectedRules.map((rule, index) => ({
+        ...rule,
+        caseLabel: `case ${index + 1}`,
+      }));
   return rules.length > 0 ? rules : undefined;
 }
 
@@ -698,11 +701,7 @@ function collectExpressionTree(value: unknown, sources: ResolvedSource[]): Linea
     return undefined;
   }
 
-  return collectExpressionTreeNode(value, sources) ?? {
-    kind: 'expression',
-    sql: expressionSql,
-    upstream,
-  };
+  return collectExpressionTreeNode(value, sources);
 }
 
 function collectExpressionTreeNode(value: unknown, sources: ResolvedSource[]): LineageExpressionTree | undefined {
