@@ -81,19 +81,18 @@ interface InspectorColumnTreeColumnNode {
 interface InspectorColumnTreeRuleNode {
   children: InspectorColumnTreeNode[];
   kind: 'rule';
+  ownerNode: LineageNode;
   rule: LineageCaseRule;
 }
 
 export function LineageGraph({
   caseRuleSelection,
-  columnSelectionTarget,
   focusTarget,
   flowDirection,
   lineage,
   onInspectorSelectionChange,
 }: {
   caseRuleSelection?: CaseRuleSelection | null;
-  columnSelectionTarget?: { columnId: string; nodeId: string; nonce: number } | null;
   focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
   lineage: LineageModel;
@@ -199,22 +198,6 @@ export function LineageGraph({
       };
     });
   }, []);
-  const selectColumnById = useCallback((nodeId: string, columnId: string) => {
-    const node = viewLineage.nodes.find((item) => item.id === nodeId);
-    const column = node?.columns.find((item) => item.id === columnId);
-    if (!node || !column) {
-      return;
-    }
-
-    setSelectedNodeCommentTargetId(null);
-    setDismissedCommentTargetIds(new Set());
-    setActiveCommentTargetId(columnCommentTargetId(column.id));
-    setSelectedColumn({
-      columnId: column.id,
-      columnName: column.name,
-      nodeId,
-    });
-  }, [viewLineage.nodes]);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
     setActiveCommentTargetId((current) => (current === targetId ? null : current));
@@ -274,13 +257,6 @@ export function LineageGraph({
   useEffect(() => {
     onInspectorSelectionChange?.(inspectorSelection);
   }, [inspectorSelection, onInspectorSelectionChange]);
-  useEffect(() => {
-    if (!columnSelectionTarget) {
-      return;
-    }
-
-    selectColumnById(columnSelectionTarget.nodeId, columnSelectionTarget.columnId);
-  }, [columnSelectionTarget, selectColumnById]);
   const selectedCommentTargetIds = useMemo(() => {
     if (selectedColumn) {
       const targetIds = new Set<string>([columnCommentTargetId(selectedColumn.columnId)]);
@@ -552,14 +528,12 @@ export function LineageInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
-  onSelectColumn,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
   selection: InspectorSelection;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -595,7 +569,6 @@ export function LineageInspector({
             flowDirection={flowDirection}
             onClearCaseRule={onClearCaseRule}
             onFocusNode={onFocusNode}
-            onSelectColumn={onSelectColumn}
             selection={selection}
           />
         ) : (
@@ -613,23 +586,30 @@ function ColumnInspector({
   flowDirection,
   onClearCaseRule,
   onFocusNode,
-  onSelectColumn,
   selection,
 }: {
   activeCaseRule?: CaseRuleSelection | null;
   flowDirection: GraphFlowDirection;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
 }) {
   const defaultTab = flowDirection === 'downstream' ? 'downstream' : 'upstream';
   const [activeTab, setActiveTab] = useState<'upstream' | 'downstream'>(defaultTab);
+  const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
   useEffect(() => {
     setActiveTab(defaultTab);
   }, [defaultTab, selection.selected.column.id, selection.selected.node.id]);
+  useEffect(() => {
+    setActiveInspectorCardId(null);
+  }, [selection.selected.column.id, selection.selected.node.id]);
   const selectWholeColumn = () => {
+    setActiveInspectorCardId(null);
     onClearCaseRule?.();
+  };
+  const selectInspectorCard = (item: InspectorColumnItem) => {
+    setActiveInspectorCardId(inspectorItemKey(item));
+    onFocusNode?.(item.node.id);
   };
 
   return (
@@ -637,17 +617,21 @@ function ColumnInspector({
       <section className="lineage-inspector-section">
         <h3>Selected</h3>
         <InspectorColumnCard
-          active={!activeCaseRule}
+          active={!activeCaseRule && activeInspectorCardId === null}
           hideExpression={Boolean(selection.selected.column.caseRules?.length)}
           item={selection.selected}
           onClearCaseRule={selectWholeColumn}
           onFocusNode={onFocusNode}
-          onSelectColumn={onSelectColumn}
           selectable={Boolean(selection.selected.column.caseRules?.length)}
         />
       </section>
       {selection.selected.column.usage ? <InspectorTextSection title="Usage" values={[formatInspectorUsage(selection.selected.column)]} /> : null}
-      <InspectorSourceGroups items={selection.sources} onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} />
+      <InspectorSourceGroups
+        activeInspectorCardId={activeInspectorCardId}
+        items={selection.sources}
+        onFocusNode={onFocusNode}
+        onSelectInspectorCard={selectInspectorCard}
+      />
       <section className="lineage-inspector-section">
         <div className="lineage-inspector-tabs" role="tablist" aria-label="Lineage direction">
           <button
@@ -671,12 +655,18 @@ function ColumnInspector({
         </div>
         <div className="lineage-inspector-tab-panel" role="tabpanel">
           {activeTab === 'upstream' ? (
-            <InspectorUpstreamTree onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} tree={selection.upstreamTree} />
+            <InspectorUpstreamTree
+              activeInspectorCardId={activeInspectorCardId}
+              onFocusNode={onFocusNode}
+              onSelectInspectorCard={selectInspectorCard}
+              tree={selection.upstreamTree}
+            />
           ) : (
             <InspectorColumnTree
+              activeInspectorCardId={activeInspectorCardId}
               emptyText="No downstream columns."
               onFocusNode={onFocusNode}
-              onSelectColumn={onSelectColumn}
+              onSelectInspectorCard={selectInspectorCard}
               title="Downstream"
               tree={selection.downstreamTree}
             />
@@ -700,7 +690,7 @@ function NodeInspector({
     <div className="lineage-inspector-body lineage-inspector-node-body">
       <section className="lineage-inspector-section">
         <div className="lineage-inspector-node-line">
-          <span className={`lineage-inspector-type lineage-inspector-type-${node.type}`}>{node.type}</span>
+          <InspectorTypeBadge node={node} />
           <strong>{node.columns.length}</strong>
           <span>columns</span>
         </div>
@@ -726,13 +716,15 @@ function NodeInspector({
 }
 
 function InspectorSourceGroups({
+  activeInspectorCardId,
   items,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
 }: {
+  activeInspectorCardId?: string | null;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
 }) {
   const groups = groupInspectorItemsByNode(items);
   return (
@@ -744,10 +736,11 @@ function InspectorSourceGroups({
         <div className="lineage-inspector-source-list">
           {groups.map((group) => (
             <InspectorSourceGroup
+              activeInspectorCardId={activeInspectorCardId}
               group={group}
               key={group.items[0]?.node.id ?? 'source'}
               onFocusNode={onFocusNode}
-              onSelectColumn={onSelectColumn}
+              onSelectInspectorCard={onSelectInspectorCard}
             />
           ))}
         </div>
@@ -759,13 +752,15 @@ function InspectorSourceGroups({
 }
 
 function InspectorSourceGroup({
+  activeInspectorCardId,
   group,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
 }: {
+  activeInspectorCardId?: string | null;
   group: InspectorColumnGroup;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
 }) {
   const node = group.items[0]?.node;
   if (!node) {
@@ -775,7 +770,7 @@ function InspectorSourceGroup({
   return (
     <div className="lineage-inspector-source-group">
       <div className="lineage-inspector-source-heading">
-        <span className={`lineage-inspector-type lineage-inspector-type-${node.type}`}>{node.type}</span>
+        <InspectorTypeBadge node={node} />
         <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
           {node.label}
         </button>
@@ -784,17 +779,18 @@ function InspectorSourceGroup({
         {group.items.map((item) => {
           const expressionSql =
             item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
+          const active = activeInspectorCardId === inspectorItemKey(item);
           return (
             <div
-              className="lineage-inspector-source-column lineage-inspector-source-column-selectable"
+              className={`lineage-inspector-source-column lineage-inspector-source-column-selectable ${active ? 'lineage-inspector-source-column-active' : ''}`}
               key={item.column.id}
               role="button"
               tabIndex={0}
-              onClick={() => onSelectColumn?.(item)}
+              onClick={() => onSelectInspectorCard?.(item)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  onSelectColumn?.(item);
+                  onSelectInspectorCard?.(item);
                 }
               }}
             >
@@ -810,12 +806,14 @@ function InspectorSourceGroup({
 }
 
 function InspectorUpstreamTree({
+  activeInspectorCardId,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
   tree,
 }: {
+  activeInspectorCardId?: string | null;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
   tree: InspectorColumnTreeNode[];
 }) {
   if (tree.length === 0) {
@@ -832,21 +830,28 @@ function InspectorUpstreamTree({
       <h3>
         Upstream <span>{tree.length}</span>
       </h3>
-      <InspectorColumnTreeNodes nodes={tree} onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} />
+      <InspectorColumnTreeNodes
+        activeInspectorCardId={activeInspectorCardId}
+        nodes={tree}
+        onFocusNode={onFocusNode}
+        onSelectInspectorCard={onSelectInspectorCard}
+      />
     </section>
   );
 }
 
 function InspectorColumnTree({
+  activeInspectorCardId,
   emptyText,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
   title,
   tree,
 }: {
+  activeInspectorCardId?: string | null;
   emptyText: string;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
   title: string;
   tree: InspectorColumnTreeNode[];
 }) {
@@ -856,7 +861,12 @@ function InspectorColumnTree({
         {title} <span>{tree.length}</span>
       </h3>
       {tree.length > 0 ? (
-        <InspectorColumnTreeNodes nodes={tree} onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} />
+        <InspectorColumnTreeNodes
+          activeInspectorCardId={activeInspectorCardId}
+          nodes={tree}
+          onFocusNode={onFocusNode}
+          onSelectInspectorCard={onSelectInspectorCard}
+        />
       ) : (
         <div className="lineage-inspector-muted">{emptyText}</div>
       )}
@@ -865,27 +875,41 @@ function InspectorColumnTree({
 }
 
 function InspectorColumnTreeNodes({
+  activeInspectorCardId,
   depth = 0,
   nodes,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
 }: {
+  activeInspectorCardId?: string | null;
   depth?: number;
   nodes: InspectorColumnTreeNode[];
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
 }) {
   return (
     <div className="lineage-inspector-tree" style={{ '--lineage-inspector-tree-depth': depth } as CSSProperties}>
       {nodes.map((node, index) => (
         <div className="lineage-inspector-tree-node" key={inspectorTreeNodeKey(node, depth, index)}>
           {node.kind === 'rule' ? (
-            <InspectorRuleCard rule={node.rule} />
+            <InspectorRuleCard ownerNode={node.ownerNode} rule={node.rule} />
           ) : (
-            <InspectorColumnCard item={node.item} onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} selectable />
+            <InspectorColumnCard
+              active={activeInspectorCardId === inspectorItemKey(node.item)}
+              item={node.item}
+              onFocusNode={onFocusNode}
+              onSelectInspectorCard={onSelectInspectorCard}
+              selectable
+            />
           )}
           {node.children.length > 0 ? (
-            <InspectorColumnTreeNodes depth={depth + 1} nodes={node.children} onFocusNode={onFocusNode} onSelectColumn={onSelectColumn} />
+            <InspectorColumnTreeNodes
+              activeInspectorCardId={activeInspectorCardId}
+              depth={depth + 1}
+              nodes={node.children}
+              onFocusNode={onFocusNode}
+              onSelectInspectorCard={onSelectInspectorCard}
+            />
           ) : null}
         </div>
       ))}
@@ -895,15 +919,16 @@ function InspectorColumnTreeNodes({
 
 function inspectorTreeNodeKey(node: InspectorColumnTreeNode, depth: number, index: number) {
   return node.kind === 'rule'
-    ? `rule:${node.rule.id}:${depth}:${index}`
+    ? `rule:${node.ownerNode.id}:${node.rule.id}:${depth}:${index}`
     : `${node.item.node.id}:${node.item.column.id}:${depth}:${index}`;
 }
 
-function InspectorRuleCard({ rule }: { rule: LineageCaseRule }) {
+function InspectorRuleCard({ ownerNode, rule }: { ownerNode: LineageNode; rule: LineageCaseRule }) {
+  const ownerType = ownerNode.recursive ? 'recursive' : ownerNode.type;
   return (
     <div className="lineage-inspector-rule-card">
       <div className="lineage-inspector-rule-heading">
-        <span className="lineage-inspector-type lineage-inspector-type-rule">RULE</span>
+        <span className={`lineage-inspector-type lineage-inspector-type-rule lineage-inspector-type-rule-${ownerType}`}>RULE</span>
       </div>
       {rule.caseLabel ? <span className="lineage-inspector-rule-case">{rule.caseLabel}</span> : null}
       {rule.conditionSql ? <InspectorRuleSql label="Condition" sql={rule.conditionSql} /> : null}
@@ -927,7 +952,7 @@ function InspectorColumnCard({
   item,
   onClearCaseRule,
   onFocusNode,
-  onSelectColumn,
+  onSelectInspectorCard,
   selectable,
 }: {
   active?: boolean;
@@ -935,7 +960,7 @@ function InspectorColumnCard({
   item: InspectorColumnItem;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onSelectColumn?: (item: InspectorColumnItem) => void;
+  onSelectInspectorCard?: (item: InspectorColumnItem) => void;
   selectable?: boolean;
 }) {
   const expressionSql =
@@ -949,7 +974,7 @@ function InspectorColumnCard({
       if (onClearCaseRule) {
         onClearCaseRule();
       } else {
-        onSelectColumn?.(item);
+        onSelectInspectorCard?.(item);
       }
     }
   };
@@ -972,7 +997,7 @@ function InspectorColumnCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-column-meta">
-        <span className={`lineage-inspector-type lineage-inspector-type-${item.node.type}`}>{item.node.type}</span>
+        <InspectorTypeBadge node={item.node} />
         <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
           {item.node.label}
         </button>
@@ -982,6 +1007,15 @@ function InspectorColumnCard({
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
     </div>
   );
+}
+
+function inspectorItemKey(item: InspectorColumnItem) {
+  return `${item.node.id}:${item.column.id}`;
+}
+
+function InspectorTypeBadge({ node }: { node: LineageNode }) {
+  const type = node.recursive ? 'recursive' : node.type;
+  return <span className={`lineage-inspector-type lineage-inspector-type-${type}`}>{type}</span>;
 }
 
 function groupInspectorItemsByNode(items: InspectorColumnItem[]) {
@@ -1124,12 +1158,17 @@ function collectCaseRuleUpstreamTree(
   columnName: string,
   rules: LineageCaseRule[],
 ): InspectorColumnTreeNode[] {
+  const ownerNode = nodesById.get(nodeId);
+  if (!ownerNode) {
+    return [];
+  }
   const rootPath = new Set([columnKey(nodeId, columnName)]);
   return rules.map((rule) => ({
     children: mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream)
       .map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, rootPath))
       .filter(isInspectorTreeNode),
     kind: 'rule' as const,
+    ownerNode,
     rule,
   }));
 }

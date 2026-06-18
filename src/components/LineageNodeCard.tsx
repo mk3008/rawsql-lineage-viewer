@@ -247,7 +247,9 @@ function LineageColumnRow({
   const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
   const selectedRuleExpressionSql = data.selectedRuleExpressionByColumnId?.get(column.id);
   const expressionSql =
-    selectedRuleExpressionSql ?? (column.expressionSql && !isSimpleColumnReference(column.expressionSql) ? column.expressionSql : undefined);
+    selectedRuleExpressionSql ??
+    (column.expressionSql && (isSelected || !isSimpleColumnReference(column.expressionSql)) ? column.expressionSql : undefined);
+  const fallbackText = isSelected && !column.comments?.length && !expressionSql && !formatUsageText(column) ? column.name : undefined;
   const usageClass =
     column.usage?.role === 'condition' ? 'lineage-column-condition' : column.usage?.role === 'unused' ? 'lineage-column-unused' : '';
 
@@ -264,11 +266,12 @@ function LineageColumnRow({
       >
         {column.name}
       </button>
-      {isCommentSelected && (hasColumnCalloutContent(column) || selectedRuleExpressionSql) ? (
+      {isCommentSelected && (isSelected || hasColumnCalloutContent(column) || selectedRuleExpressionSql) ? (
         <CommentBubble
           anchorRef={columnRef}
           comments={column.comments}
           expressionSql={expressionSql}
+          fallbackText={fallbackText}
           usageText={formatUsageText(column)}
           isActive={data.activeCommentTargetId === columnCommentTargetId(column.id)}
           onClose={() => data.onCommentClose?.(columnCommentTargetId(column.id))}
@@ -286,6 +289,7 @@ function CommentBubble({
   comments,
   expressionSql,
   cteExecutableSql,
+  fallbackText,
   usageText,
   isActive,
   onClose,
@@ -297,6 +301,7 @@ function CommentBubble({
   comments?: string[];
   expressionSql?: string;
   cteExecutableSql?: string;
+  fallbackText?: string;
   usageText?: string;
   isActive?: boolean;
   onClose?: () => void;
@@ -411,6 +416,7 @@ function CommentBubble({
         </div>
       ) : null}
       {usageText ? <div className="lineage-comment-section">{usageText}</div> : null}
+      {fallbackText ? <div className="lineage-comment-section">{fallbackText}</div> : null}
       {expressionSql ? (
         <div className="lineage-comment-section">
           <SqlCodeMirror className="lineage-expression" value={expressionSql} />

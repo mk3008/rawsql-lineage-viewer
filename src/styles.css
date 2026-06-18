@@ -691,6 +691,11 @@ textarea {
   outline: none;
 }
 
+.lineage-inspector-source-column-active {
+  border-color: #60a5fa;
+  background: #eff6ff;
+}
+
 .lineage-inspector-rule-list {
   display: grid;
   gap: 8px;
@@ -703,7 +708,7 @@ textarea {
   border: 1px solid #e4ebf5;
   border-radius: 7px;
   padding: 9px 10px;
-  background: #eff6ff;
+  background: #fff;
   color: #0f172a;
   text-align: left;
 }
@@ -867,6 +872,37 @@ textarea {
 }
 
 .lineage-inspector-type-rule {
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+}
+
+.lineage-inspector-type-rule-table {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.lineage-inspector-type-rule-cte {
+  border-color: #86efac;
+  color: #047857;
+}
+
+.lineage-inspector-type-rule-derived {
+  border-color: #fcd34d;
+  color: #b45309;
+}
+
+.lineage-inspector-type-rule-output {
+  border-color: #c4b5fd;
+  color: #6d28d9;
+}
+
+.lineage-inspector-type-rule-recursive {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+
+.lineage-inspector-type-recursive {
   background: #dbeafe;
   color: #1d4ed8;
 }
