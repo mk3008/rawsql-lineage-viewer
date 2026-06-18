@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Play, Share2, Trash2 } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type GraphHighlightTarget, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
@@ -26,6 +26,7 @@ export function App() {
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
+  const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
   const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
@@ -36,6 +37,9 @@ export function App() {
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
   const [flowDirection, setFlowDirection] = useState<GraphFlowDirection>('upstream');
+  const lastHandledAutoInspectOutputNonceRef = useRef(0);
+  const pendingAutoInspectOutputNonceRef = useRef<number | null>(null);
+  const suppressNullInspectorSelectionRef = useRef(false);
 
   const analysis = useMemo(() => {
     try {
@@ -54,6 +58,34 @@ export function App() {
 
   const error = analysis.error;
   const adapterResult = analysis.result;
+  useEffect(() => {
+    if (lastHandledAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
+      return;
+    }
+
+    if (!adapterResult) {
+      if (pendingAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
+        pendingAutoInspectOutputNonceRef.current = null;
+        suppressNullInspectorSelectionRef.current = false;
+        setForcedInspectorSelection(null);
+        setInspectorSelection(null);
+      }
+      return;
+    }
+
+    lastHandledAutoInspectOutputNonceRef.current = autoInspectOutputNonce;
+    const outputNode = adapterResult.lineage.nodes.find((node) => node.type === 'output');
+    if (!outputNode) {
+      pendingAutoInspectOutputNonceRef.current = null;
+      return;
+    }
+
+    pendingAutoInspectOutputNonceRef.current = null;
+    setForcedInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
+    setInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
+    setIsPanelOpen(true);
+    setPanelTab('inspector');
+  }, [adapterResult, autoInspectOutputNonce, outputTitle]);
   const shareMessage =
     shareStatus === 'copied'
       ? 'Share URL copied'
@@ -73,7 +105,16 @@ export function App() {
       }
     : null;
   const handleInspectorSelectionChange = useCallback((selection: InspectorSelection) => {
+    if (selection && !(selection.kind === 'node' && selection.node.type === 'output')) {
+      setForcedInspectorSelection(null);
+    }
     setInspectorSelection((current) => {
+      if (!selection && (pendingAutoInspectOutputNonceRef.current !== null || suppressNullInspectorSelectionRef.current)) {
+        return current;
+      }
+      if (selection) {
+        suppressNullInspectorSelectionRef.current = false;
+      }
       if (!isSameInspectorSelection(current, selection)) {
         setCaseRuleSelection(null);
       }
@@ -98,16 +139,39 @@ export function App() {
   }, []);
   const openSql = useCallback((nextSql: string, nextOutputTitle?: string) => {
     const normalizedSql = nextSql.trim();
+    const resolvedOutputTitle = nextOutputTitle ?? findSqlHistoryOutputTitle(normalizedSql, sqlHistory) ?? defaultOutputTitle;
+    let nextInspectorSelection: InspectorSelection = null;
+    suppressNullInspectorSelectionRef.current = true;
+    try {
+      const nextAnalysis = analyzeSql(nextSql);
+      const outputNode = nextAnalysis.lineage.nodes.find((node) => node.type === 'output');
+      if (outputNode) {
+        nextInspectorSelection = { kind: 'node', node: { ...outputNode, label: resolvedOutputTitle } };
+      }
+    } catch {
+      nextInspectorSelection = null;
+    }
+
     setSql(nextSql);
     setLastAnalyzedSql(nextSql);
     setCaseRuleSelection(null);
     setExpandedExpressionColumnIds(new Set());
     setGraphHighlightTarget(null);
-    setInspectorSelection(null);
+    setForcedInspectorSelection(nextInspectorSelection);
+    setInspectorSelection(nextInspectorSelection);
     setShareStatus('idle');
-    setAutoInspectOutputNonce((current) => current + 1);
-    setOutputTitle(nextOutputTitle ?? findSqlHistoryOutputTitle(normalizedSql, sqlHistory) ?? defaultOutputTitle);
+    setAutoInspectOutputNonce((current) => {
+      const next = current + 1;
+      pendingAutoInspectOutputNonceRef.current = next;
+      suppressNullInspectorSelectionRef.current = true;
+      return next;
+    });
+    setOutputTitle(resolvedOutputTitle);
     setSqlHistory((current) => saveSqlHistory(nextSql, current));
+    if (nextInspectorSelection) {
+      setIsPanelOpen(true);
+      setPanelTab('inspector');
+    }
   }, [sqlHistory]);
   const openHistoryItem = useCallback((item: SqlHistoryItem) => {
     openSql(item.sql, item.outputTitle ?? defaultOutputTitle);
@@ -115,6 +179,16 @@ export function App() {
   const renameOutputTitle = useCallback((title: string) => {
     const normalizedTitle = normalizeSqlHistoryTitle(title, lastAnalyzedSql);
     setOutputTitle(normalizedTitle);
+    setForcedInspectorSelection((current) =>
+      current?.kind === 'node' && current.node.type === 'output'
+        ? { ...current, node: { ...current.node, label: normalizedTitle } }
+        : current,
+    );
+    setInspectorSelection((current) =>
+      current?.kind === 'node' && current.node.type === 'output'
+        ? { ...current, node: { ...current.node, label: normalizedTitle } }
+        : current,
+    );
     setSqlHistory((current) => {
       const next = upsertSqlHistoryTitle(lastAnalyzedSql, normalizedTitle, current);
       writeSqlHistory(next);
@@ -265,7 +339,7 @@ export function App() {
               onHighlightTarget={(target) => {
                 setGraphHighlightTarget({ target, nonce: Date.now() });
               }}
-              selection={inspectorSelection}
+              selection={forcedInspectorSelection ?? inspectorSelection}
             />
           ) : (
             <SqlHistoryPanel

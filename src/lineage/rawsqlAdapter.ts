@@ -22,6 +22,7 @@ import type {
   LineageColumnRef,
   LineageColumnUsageReason,
   LineageEdge,
+  LineageExpressionTree,
   LineageModel,
   LineageNode,
 } from '../domain/lineage';
@@ -581,7 +582,7 @@ function resolveSourceExpression(
 }
 
 function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
-  return query.selectClause.items.flatMap((item, index) => {
+  const selectedColumns: LineageColumn[] = query.selectClause.items.flatMap((item, index): LineageColumn | LineageColumn[] => {
     const wildcardColumns = expandWildcardSelectItem(item, sources);
     if (wildcardColumns) {
       return wildcardColumns;
@@ -590,17 +591,51 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
     const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     const comments = extractSelectItemComments(query.selectClause.items, index);
     const caseRules = collectExpressionBreakdownRules(item.value, sources);
+    const expressionTree = collectExpressionTree(item.value, sources);
     const name = getSelectItemOutputName(item, index);
     return {
       id: '',
       name,
       comments,
       caseRules,
+      expressionTree,
       expressionSql: formatExpressionSql(item.value),
       upstream,
       usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
     };
   });
+  return [...selectedColumns, ...collectFilterColumns(query, sources, options)];
+}
+
+function collectFilterColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
+  const whereCondition = query.whereClause?.condition;
+  if (!whereCondition) {
+    return [];
+  }
+
+  return splitAndConditions(whereCondition).flatMap((condition, index) => {
+    const upstream = mergeColumnRefs(resolveColumnReferences(condition, sources), collectNestedExpressionLineage(condition, options, 'where'));
+    if (upstream.length === 0) {
+      return [];
+    }
+
+    return [
+      {
+        id: '',
+        name: `condition ${index + 1}`,
+        expressionSql: formatExpressionSql(condition),
+        upstream,
+        usage: { role: 'filter', reasons: ['where'] },
+      },
+    ];
+  });
+}
+
+function splitAndConditions(condition: unknown): unknown[] {
+  if (isBinaryExpressionLike(condition) && condition.operator.value.toLowerCase() === 'and') {
+    return [...splitAndConditions(condition.left), ...splitAndConditions(condition.right)];
+  }
+  return [condition];
 }
 
 function expandWildcardSelectItem(item: SimpleSelectQuery['selectClause']['items'][number], sources: ResolvedSource[]): LineageColumn[] | null {
@@ -635,12 +670,7 @@ function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'
 }
 
 function collectExpressionBreakdownRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
-  const caseRules = collectCaseRules(value, sources);
-  if (caseRules?.length) {
-    return caseRules;
-  }
-
-  return collectCompositeExpressionRule(value, sources);
+  return collectCaseRules(value, sources);
 }
 
 function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
@@ -657,7 +687,7 @@ function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCas
   return rules.length > 0 ? rules : undefined;
 }
 
-function collectCompositeExpressionRule(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
+function collectExpressionTree(value: unknown, sources: ResolvedSource[]): LineageExpressionTree | undefined {
   const upstream = resolveColumnReferences(value, sources);
   if (upstream.length < 2) {
     return undefined;
@@ -668,16 +698,54 @@ function collectCompositeExpressionRule(value: unknown, sources: ResolvedSource[
     return undefined;
   }
 
-  return [
-    {
-      id: 'expression_1',
-      label: 'expression',
-      expressionSql,
-      resultSql: expressionSql,
-      conditionUpstream: [],
-      resultUpstream: upstream,
-    },
-  ];
+  return collectExpressionTreeNode(value, sources) ?? {
+    kind: 'expression',
+    sql: expressionSql,
+    upstream,
+  };
+}
+
+function collectExpressionTreeNode(value: unknown, sources: ResolvedSource[]): LineageExpressionTree | undefined {
+  if (value instanceof ColumnReference) {
+    const refs = resolveColumnReferences(value, sources);
+    const sql = formatExpressionSql(value);
+    if (refs.length !== 1 || !sql) {
+      return undefined;
+    }
+    return { kind: 'column', ref: refs[0], sql };
+  }
+
+  if (isBinaryExpressionLike(value)) {
+    const sql = formatExpressionSql(value);
+    const operator = value.operator.value;
+    const left = collectExpressionTreeNode(value.left, sources);
+    const right = collectExpressionTreeNode(value.right, sources);
+    const upstream = resolveColumnReferences(value, sources);
+    if (!sql || !operator || !left || !right || upstream.length < 2) {
+      return undefined;
+    }
+
+    return {
+      children: [left, right],
+      kind: 'operator',
+      operator,
+      sql,
+      upstream,
+    };
+  }
+
+  return undefined;
+}
+
+function isBinaryExpressionLike(value: unknown): value is { left: unknown; operator: { value: string }; right: unknown } {
+  return (
+    value != null &&
+    typeof value === 'object' &&
+    'left' in value &&
+    'right' in value &&
+    'operator' in value &&
+    typeof (value as { operator?: { value?: unknown } }).operator?.value === 'string'
+  );
 }
 
 function collectCaseExpressions(value: unknown): unknown[] {
@@ -827,6 +895,9 @@ function collectNestedConditionLineage(query: SimpleSelectQuery, options: Collec
 
 function setValueSourceColumns(columns: LineageColumn[], nodes: Map<string, LineageNode>): void {
   for (const column of columns) {
+    if (column.usage?.role === 'filter') {
+      continue;
+    }
     for (const upstream of column.upstream ?? []) {
       setNodeColumns(nodes, upstream.nodeId, [upstream.columnName]);
     }
@@ -887,10 +958,14 @@ function collectQueryConditionReferences(query: SimpleSelectQuery): Array<{ reas
   return references.filter((item) => item.refs.length > 0);
 }
 
-function collectNestedExpressionLineage(value: unknown, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+function collectNestedExpressionLineage(
+  value: unknown,
+  options: CollectQueryEdgesOptions,
+  usageReason: LineageColumnUsageReason = 'subquery',
+): LineageColumnRef[] {
   const refs: LineageColumnRef[] = [];
   for (const query of collectNestedSimpleSelectQueries(value)) {
-    refs.push(...collectNestedQueryLineage(query, options));
+    refs.push(...collectNestedQueryLineage(query, options, usageReason));
   }
   return refs;
 }
@@ -943,11 +1018,13 @@ function collectNestedQueryLineage(
   const localRefs = resolveColumnReferences(collectColumnReferences(query), sources);
   for (const ref of localRefs) {
     setNodeColumns(nodes, ref.nodeId, [
-      {
-        id: '',
-        name: ref.columnName,
-        usage: { role: 'condition', reasons: [usageReason] },
-      },
+      usageReason === 'subquery'
+        ? {
+            id: '',
+            name: ref.columnName,
+            usage: { role: 'condition', reasons: [usageReason] },
+          }
+        : ref.columnName,
     ]);
   }
 
@@ -1021,6 +1098,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     const name = typeof column === 'string' ? column : column.name;
     const comments = typeof column === 'string' ? undefined : column.comments;
     const caseRules = typeof column === 'string' ? undefined : column.caseRules;
+    const expressionTree = typeof column === 'string' ? undefined : column.expressionTree;
     const expressionSql = typeof column === 'string' ? undefined : column.expressionSql;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     const usage = typeof column === 'string' ? undefined : column.usage;
@@ -1031,6 +1109,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         name,
         comments,
         caseRules,
+        expressionTree,
         expressionSql,
         upstream,
         usage,
@@ -1045,6 +1124,9 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
       }
       if (existing && caseRules && caseRules.length > 0) {
         existing.caseRules = caseRules;
+      }
+      if (existing && expressionTree) {
+        existing.expressionTree = expressionTree;
       }
       if (existing && expressionSql) {
         existing.expressionSql = expressionSql;
@@ -1063,6 +1145,9 @@ function classifyColumnUsage(nodes: Map<string, LineageNode>): void {
 
   for (const node of nodes.values()) {
     for (const column of node.columns) {
+      if (column.usage?.role === 'filter') {
+        continue;
+      }
       for (const upstream of column.upstream ?? []) {
         valueUsed.add(columnKey(upstream.nodeId, upstream.columnName));
       }
@@ -1079,13 +1164,16 @@ function classifyColumnUsage(nodes: Map<string, LineageNode>): void {
 
     node.columns = node.columns.map((column) => {
       const key = columnKey(node.id, column.name);
-      if (column.usage?.role === 'condition' && column.usage.reasons?.includes('subquery')) {
+      if (column.usage?.role === 'condition' && column.usage.reasons?.includes('subquery') && node.type !== 'table') {
         return column;
       }
       if (valueUsed.has(key)) {
         return { ...column, usage: undefined };
       }
       if (conditionUsed.has(key)) {
+        if (node.type === 'table') {
+          return { ...column, usage: undefined };
+        }
         return {
           ...column,
           usage: {
@@ -1116,6 +1204,9 @@ function mergeColumnUsage(left: LineageColumn['usage'], right: LineageColumn['us
   }
   if (left.role === 'unused' || right.role === 'unused') {
     return left.role === 'unused' ? left : right;
+  }
+  if (left.role === 'filter' || right.role === 'filter') {
+    return left.role === 'filter' ? left : right;
   }
   if (left.reasons?.includes('groupBy')) {
     return left;

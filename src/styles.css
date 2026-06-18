@@ -960,8 +960,8 @@ textarea {
 }
 
 .lineage-inspector-type-rule-recursive {
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  border-color: #f0abfc;
+  color: #a21caf;
 }
 
 .lineage-inspector-type-expression {
@@ -991,13 +991,13 @@ textarea {
 }
 
 .lineage-inspector-type-expression-recursive {
-  border-color: #93c5fd;
-  color: #1d4ed8;
+  border-color: #f0abfc;
+  color: #a21caf;
 }
 
 .lineage-inspector-type-recursive {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: #fae8ff;
+  color: #a21caf;
 }
 
 .lineage-inspector-card-note {
@@ -1381,8 +1381,8 @@ textarea {
 }
 
 .lineage-node-kind-recursive {
-  background: #dbeafe;
-  color: #1d4ed8;
+  background: #fae8ff;
+  color: #a21caf;
 }
 
 .lineage-node-actions {
@@ -1531,6 +1531,10 @@ textarea {
 
 .lineage-column-condition {
   color: #475569;
+}
+
+.lineage-column-filter {
+  color: #7c3aed;
 }
 
 .lineage-column-unused {

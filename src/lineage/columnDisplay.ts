@@ -8,7 +8,7 @@ export function hasColumnCalloutContent(column: LineageColumn) {
   if (column.comments?.length) {
     return true;
   }
-  if (column.usage?.role === 'condition') {
+  if (column.usage?.role === 'condition' || column.usage?.role === 'filter') {
     return true;
   }
   return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));

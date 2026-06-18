@@ -173,6 +173,7 @@ function LineageColumnList({
   const shouldCompress = data.passthroughColumnsCompressed ?? false;
   const displayColumns = forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
   const valueColumns = displayColumns.filter((column) => !column.usage);
+  const filterColumns = displayColumns.filter((column) => column.usage?.role === 'filter');
   const conditionColumns = displayColumns.filter((column) => column.usage?.role === 'condition');
   const unusedColumns = data.showUnusedColumns === false ? [] : displayColumns.filter((column) => column.usage?.role === 'unused');
   const visibleValueColumns = shouldCompress ? valueColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : valueColumns;
@@ -184,6 +185,7 @@ function LineageColumnList({
         <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
       ))}
       {compressedCount > 0 ? <PassthroughSummary count={compressedCount} /> : null}
+      {filterColumns.length > 0 ? <LineageColumnSection columns={filterColumns} data={data} label="Filter" nodeId={nodeId} /> : null}
       {conditionColumns.length > 0 ? (
         <LineageColumnSection columns={conditionColumns} data={data} label="Condition" nodeId={nodeId} />
       ) : null}
@@ -254,7 +256,13 @@ function LineageColumnRow({
     (column.expressionSql && (isSelected || !isSimpleColumnReference(column.expressionSql)) ? column.expressionSql : undefined);
   const fallbackText = isSelected && !column.comments?.length && !expressionSql && !formatUsageText(column) ? column.name : undefined;
   const usageClass =
-    column.usage?.role === 'condition' ? 'lineage-column-condition' : column.usage?.role === 'unused' ? 'lineage-column-unused' : '';
+    column.usage?.role === 'condition'
+      ? 'lineage-column-condition'
+      : column.usage?.role === 'filter'
+        ? 'lineage-column-filter'
+        : column.usage?.role === 'unused'
+          ? 'lineage-column-unused'
+          : '';
 
   return (
     <div className="lineage-column-group">
@@ -451,6 +459,9 @@ function CommentBubble({
 }
 
 function formatUsageText(column: GraphNode['data']['lineageNode']['columns'][number]): string | undefined {
+  if (column.usage?.role === 'filter') {
+    return 'Filter';
+  }
   if (column.usage?.role !== 'condition') {
     return undefined;
   }

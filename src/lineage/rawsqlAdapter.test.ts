@@ -201,6 +201,8 @@ describe('rawsqlAdapter', () => {
       'quantity',
       'unit_price',
       'amount',
+      'condition 1',
+      'condition 2',
     ]);
     expect(columnsByNodeId.get('table_orders')).toEqual(['id', 'customer_id', 'order_date']);
     expect(columnsByNodeId.get('table_order_items')).toEqual(['product_id', 'quantity', 'unit_price', 'order_id']);
@@ -496,7 +498,7 @@ describe('rawsqlAdapter', () => {
     expect(doubleCase?.map((rule) => rule.caseLabel)).toEqual(['case 1', 'case 2']);
   });
 
-  it('records composite non-CASE expression rules when multiple columns are referenced', () => {
+  it('records composite non-CASE expression trees when multiple columns are referenced', () => {
     const { lineage } = analyzeSql(`
       SELECT a.id + b.id AS combined_id
       FROM accounts a
@@ -505,18 +507,20 @@ describe('rawsqlAdapter', () => {
     const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
     const combinedId = outputNode?.columns.find((column) => column.name === 'combined_id');
 
-    expect(combinedId?.caseRules).toEqual([
-      expect.objectContaining({
-        id: 'expression_1',
-        label: 'expression',
-        resultSql: 'a.id + b.id',
-        conditionUpstream: [],
-        resultUpstream: [
-          { nodeId: 'table_accounts', columnName: 'id' },
-          { nodeId: 'table_branches', columnName: 'id' },
-        ],
-      }),
-    ]);
+    expect(combinedId?.caseRules).toBeUndefined();
+    expect(combinedId?.expressionTree).toEqual({
+      children: [
+        { kind: 'column', ref: { nodeId: 'table_accounts', columnName: 'id' }, sql: 'a.id' },
+        { kind: 'column', ref: { nodeId: 'table_branches', columnName: 'id' }, sql: 'b.id' },
+      ],
+      kind: 'operator',
+      operator: '+',
+      sql: 'a.id + b.id',
+      upstream: [
+        { nodeId: 'table_accounts', columnName: 'id' },
+        { nodeId: 'table_branches', columnName: 'id' },
+      ],
+    });
     expect(combinedId?.upstream).toEqual([
       { nodeId: 'table_accounts', columnName: 'id' },
       { nodeId: 'table_branches', columnName: 'id' },
@@ -628,16 +632,16 @@ describe('rawsqlAdapter', () => {
 
     const rankedCustomers = lineage.nodes.find((node) => node.id === 'cte_ranked_customers');
     const tierRank = rankedCustomers?.columns.find((column) => column.name === 'tier_rank');
-    expect(tierRank?.caseRules).toEqual([
-      expect.objectContaining({
-        id: 'expression_1',
-        resultUpstream: [
-          { nodeId: 'cte_customer_order_summary', columnName: 'tier' },
-          { nodeId: 'cte_customer_order_summary', columnName: 'gross_amount' },
-          { nodeId: 'cte_customer_order_summary', columnName: 'customer_id' },
-        ],
-      }),
-    ]);
+    expect(tierRank?.caseRules).toBeUndefined();
+    expect(tierRank?.expressionTree).toMatchObject({
+      kind: 'expression',
+      upstream: [
+        { nodeId: 'cte_customer_order_summary', columnName: 'tier' },
+        { nodeId: 'cte_customer_order_summary', columnName: 'gross_amount' },
+        { nodeId: 'cte_customer_order_summary', columnName: 'customer_id' },
+      ],
+    });
+    expect(tierRank?.expressionTree?.sql).toContain('row_number() over');
   });
 
   it('records title comments for output and derived nodes', () => {
@@ -729,7 +733,7 @@ describe('rawsqlAdapter', () => {
     });
   });
 
-  it('adds scalar subquery sources and condition columns to lineage', () => {
+  it('adds scalar subquery sources and columns to lineage', () => {
     const { lineage } = analyzeSql(`
       WITH ranked_customers AS (
         SELECT c.id AS customer_id
@@ -752,7 +756,7 @@ describe('rawsqlAdapter', () => {
 
     expect(lineage.edges).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o2' })]));
     expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id', 'created_at', 'status']);
-    expect(orders?.columns.every((column) => column.usage?.role === 'condition')).toBe(true);
+    expect(orders?.columns.every((column) => column.usage === undefined)).toBe(true);
     expect(recentOrderCount?.upstream).toEqual(
       expect.arrayContaining([
         { nodeId: 'table_orders', columnName: 'customer_id' },
@@ -791,11 +795,19 @@ describe('rawsqlAdapter', () => {
     );
     expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'id' }]);
     expect(output?.columns.find((column) => column.name === 'name')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'name' }]);
+    expect(output?.columns.find((column) => column.name === 'condition 1')).toMatchObject({
+      expressionSql: expect.stringContaining('not exists'),
+      upstream: expect.arrayContaining([
+        { nodeId: 'table_customers', columnName: 'id' },
+        { nodeId: 'table_orders', columnName: 'customer_id' },
+      ]),
+      usage: { role: 'filter', reasons: ['where'] },
+    });
     expect(customers?.columns.find((column) => column.name === 'id')?.usage).toBeUndefined();
     expect(orders?.columns).toEqual([
       expect.objectContaining({
         name: 'customer_id',
-        usage: { role: 'condition', reasons: ['where'] },
+        usage: undefined,
       }),
     ]);
   });

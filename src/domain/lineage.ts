@@ -10,7 +10,7 @@ export interface LineageColumnRef {
 export type LineageColumnUsageReason = 'join' | 'where' | 'having' | 'groupBy' | 'orderBy' | 'subquery';
 
 export interface LineageColumnUsage {
-  role: 'condition' | 'unused';
+  role: 'condition' | 'filter' | 'unused';
   reasons?: LineageColumnUsageReason[];
 }
 
@@ -25,11 +25,31 @@ export interface LineageCaseRule {
   resultUpstream: LineageColumnRef[];
 }
 
+export type LineageExpressionTree =
+  | {
+      kind: 'column';
+      ref: LineageColumnRef;
+      sql: string;
+    }
+  | {
+      kind: 'operator';
+      operator: string;
+      sql: string;
+      children: LineageExpressionTree[];
+      upstream: LineageColumnRef[];
+    }
+  | {
+      kind: 'expression';
+      sql: string;
+      upstream: LineageColumnRef[];
+    };
+
 export interface LineageColumn {
   id: string;
   name: string;
   comments?: string[];
   caseRules?: LineageCaseRule[];
+  expressionTree?: LineageExpressionTree;
   expressionSql?: string;
   upstream?: LineageColumnRef[];
   usage?: LineageColumnUsage;

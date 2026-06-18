@@ -15,7 +15,7 @@ import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw } from 'lucide-react
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
-import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
@@ -89,7 +89,7 @@ interface InspectorColumnGroup {
 
 type SelectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => void;
 
-type InspectorColumnTreeNode = InspectorColumnTreeColumnNode | InspectorColumnTreeRuleNode;
+type InspectorColumnTreeNode = InspectorColumnTreeColumnNode | InspectorColumnTreeExpressionNode | InspectorColumnTreeRuleNode;
 
 interface InspectorColumnTreeColumnNode {
   children: InspectorColumnTreeNode[];
@@ -99,9 +99,17 @@ interface InspectorColumnTreeColumnNode {
 
 interface InspectorColumnTreeRuleNode {
   children: InspectorColumnTreeNode[];
+  item: InspectorColumnItem;
   kind: 'rule';
   ownerNode: LineageNode;
   rule: LineageCaseRule;
+}
+
+interface InspectorColumnTreeExpressionNode {
+  children: InspectorColumnTreeNode[];
+  expression: LineageExpressionTree;
+  kind: 'expression';
+  ownerNode: LineageNode;
 }
 
 export function LineageGraph({
@@ -758,10 +766,16 @@ export function LineageInspector({
                 className="lineage-output-title-input"
                 value={draftOutputTitle}
                 onChange={(event) => setDraftOutputTitle(event.target.value)}
+                onFocus={(event) => event.currentTarget.select()}
                 onKeyDown={(event) => {
                   if (event.key === 'Escape') {
                     event.preventDefault();
                     cancelEditingOutputTitle();
+                    return;
+                  }
+                  if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                    event.preventDefault();
+                    saveOutputTitle();
                   }
                 }}
               />
@@ -1236,9 +1250,30 @@ function InspectorColumnTreeNodes({
                 cardId={cardId}
                 onSelectInspectorCard={onSelectInspectorCard}
                 ownerNode={entry.node.ownerNode}
-                rootItem={rootItem}
+                rootItem={entry.node.item}
                 rule={entry.node.rule}
               />
+              {entry.node.children.length > 0 ? (
+                <InspectorColumnTreeNodes
+                  activeInspectorCardId={activeInspectorCardId}
+                  depth={depth + 1}
+                  expandedExpressionColumnIds={expandedExpressionColumnIds}
+                  nodes={entry.node.children}
+                  onFocusNode={onFocusNode}
+                  onSelectInspectorCard={onSelectInspectorCard}
+                  onToggleExpressionBreakdown={onToggleExpressionBreakdown}
+                  pathKey={cardId}
+                  rootItem={rootItem}
+                />
+              ) : null}
+            </div>
+          );
+        }
+
+        if (entry.node.kind === 'expression') {
+          return (
+            <div className="lineage-inspector-tree-node" key={cardId}>
+              <InspectorExpressionTreeCard expression={entry.node.expression} />
               {entry.node.children.length > 0 ? (
                 <InspectorColumnTreeNodes
                   activeInspectorCardId={activeInspectorCardId}
@@ -1263,7 +1298,7 @@ function InspectorColumnTreeNodes({
               active={activeInspectorCardId === cardId}
               cardId={cardId}
               expressionExpanded={expandedExpressionColumnIds?.has(treeNode.item.column.id)}
-              hasExpressionBreakdown={Boolean(onToggleExpressionBreakdown && treeNode.item.column.caseRules?.length)}
+              hasExpressionBreakdown={Boolean(onToggleExpressionBreakdown && (treeNode.item.column.caseRules?.length || treeNode.item.column.expressionTree))}
               item={treeNode.item}
               onFocusNode={onFocusNode}
               onSelectInspectorCard={onSelectInspectorCard}
@@ -1330,9 +1365,13 @@ function inspectorTreeEntryKey(entry: InspectorColumnTreeRenderEntry, depth: num
 }
 
 function inspectorTreeNodeKey(node: InspectorColumnTreeNode, depth: number, index: number) {
-  return node.kind === 'rule'
-    ? `rule:${node.ownerNode.id}:${node.rule.id}:${depth}:${index}`
-    : `${node.item.node.id}:${node.item.column.id}:${depth}:${index}`;
+  if (node.kind === 'rule') {
+    return `rule:${node.ownerNode.id}:${node.rule.id}:${depth}:${index}`;
+  }
+  if (node.kind === 'expression') {
+    return `expression:${node.ownerNode.id}:${node.expression.kind}:${node.expression.sql}:${depth}:${index}`;
+  }
+  return `${node.item.node.id}:${node.item.column.id}:${depth}:${index}`;
 }
 
 function InspectorColumnGroupCard({
@@ -1447,6 +1486,39 @@ function InspectorRuleSql({ label, sql }: { label: string; sql: string }) {
       <span className="lineage-inspector-rule-label-text">{label}</span>
       <SqlCodeMirror className="lineage-inspector-rule-code" value={sql} />
     </span>
+  );
+}
+
+function InspectorExpressionTreeCard({ expression }: { expression: LineageExpressionTree }) {
+  if (expression.kind === 'column') {
+    return (
+      <div className="lineage-inspector-rule-card lineage-inspector-expression-tree-card">
+        <div className="lineage-inspector-rule-heading">
+          <span className="lineage-inspector-type lineage-inspector-type-expression">COLUMN</span>
+          <span className="lineage-inspector-expression-node-text">{expression.sql}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (expression.kind === 'operator') {
+    return (
+      <div className="lineage-inspector-rule-card lineage-inspector-expression-tree-card">
+        <div className="lineage-inspector-rule-heading">
+          <span className="lineage-inspector-type lineage-inspector-type-expression">OPERATOR</span>
+          <span className="lineage-inspector-expression-node-text">{expression.operator}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="lineage-inspector-rule-card lineage-inspector-expression-tree-card">
+      <div className="lineage-inspector-rule-heading">
+        <span className="lineage-inspector-type lineage-inspector-type-expression">EXPRESSION</span>
+      </div>
+      <SqlCodeMirror className="lineage-inspector-rule-code" value={expression.sql} />
+    </div>
   );
 }
 
@@ -1679,11 +1751,11 @@ function resolveInspectorColumnSelection(
   const initialUpstreamRefs = upstreamRefs ?? selected.upstream ?? [];
   const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, initialUpstreamRefs);
   const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
-  const hasExpressionBreakdown = Boolean(selected.caseRules?.length);
+  const hasExpressionBreakdown = Boolean(selected.caseRules?.length || selected.expressionTree);
   const expressionExpanded = expandedExpressionColumnIds.has(selected.id);
   const upstreamTree =
-    expressionExpanded && selected.caseRules?.length && !upstreamRefs
-      ? collectCaseRuleUpstreamTree(nodesById, selectedNode.id, selected.name, selected.caseRules, expandedExpressionColumnIds)
+    expressionExpanded && (selected.caseRules?.length || selected.expressionTree) && !upstreamRefs
+      ? collectExpressionBreakdownTree(nodesById, selectedNode, selected, expandedExpressionColumnIds)
       : collectUpstreamColumnTree(nodesById, selectedNode.id, selected.name, expandedExpressionColumnIds, initialUpstreamRefs);
   const downstreamTree = collectDownstreamColumnTree(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
   const sources = upstream.filter((item) => (item.column.upstream ?? []).length === 0);
@@ -1788,15 +1860,65 @@ function collectCaseRuleUpstreamTree(
   if (!ownerNode) {
     return [];
   }
+  const ownerColumn = ownerNode.columns.find((column) => column.name === columnName);
+  if (!ownerColumn) {
+    return [];
+  }
   const rootPath = new Set([columnKey(nodeId, columnName)]);
   return rules.map((rule) => ({
     children: mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream)
       .map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, rootPath, expandedExpressionColumnIds))
       .filter(isInspectorTreeNode),
+    item: { column: ownerColumn, node: ownerNode },
     kind: 'rule' as const,
     ownerNode,
     rule,
   }));
+}
+
+function collectExpressionBreakdownTree(
+  nodesById: Map<string, LineageNode>,
+  ownerNode: LineageNode,
+  column: LineageColumn,
+  expandedExpressionColumnIds: Set<string>,
+): InspectorColumnTreeNode[] {
+  if (column.caseRules?.length) {
+    return collectCaseRuleUpstreamTree(nodesById, ownerNode.id, column.name, column.caseRules, expandedExpressionColumnIds);
+  }
+
+  if (column.expressionTree) {
+    return [buildExpressionTreeNode(nodesById, ownerNode, column.expressionTree, new Set([columnKey(ownerNode.id, column.name)]), expandedExpressionColumnIds)];
+  }
+
+  return [];
+}
+
+function buildExpressionTreeNode(
+  nodesById: Map<string, LineageNode>,
+  ownerNode: LineageNode,
+  expression: LineageExpressionTree,
+  path: Set<string>,
+  expandedExpressionColumnIds: Set<string>,
+): InspectorColumnTreeNode {
+  if (expression.kind === 'column') {
+    const resolvedColumn = buildUpstreamColumnTreeNode(nodesById, expression.ref, path, expandedExpressionColumnIds);
+    return {
+      children: resolvedColumn ? [resolvedColumn] : [],
+      expression,
+      kind: 'expression',
+      ownerNode,
+    };
+  }
+
+  return {
+    children:
+      expression.kind === 'operator'
+        ? expression.children.map((child) => buildExpressionTreeNode(nodesById, ownerNode, child, path, expandedExpressionColumnIds))
+        : expression.upstream.map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, path, expandedExpressionColumnIds)).filter(isInspectorTreeNode),
+    expression,
+    kind: 'expression',
+    ownerNode,
+  };
 }
 
 function buildUpstreamColumnTreeNode(
@@ -1819,8 +1941,8 @@ function buildUpstreamColumnTreeNode(
   const nextPath = new Set(path);
   nextPath.add(key);
   const expressionChildren =
-    expandedExpressionColumnIds.has(upstreamColumn.id) && upstreamColumn.caseRules?.length
-      ? collectCaseRuleUpstreamTree(nodesById, ref.nodeId, ref.columnName, upstreamColumn.caseRules, expandedExpressionColumnIds)
+    expandedExpressionColumnIds.has(upstreamColumn.id) && (upstreamColumn.caseRules?.length || upstreamColumn.expressionTree)
+      ? collectExpressionBreakdownTree(nodesById, upstreamNode, upstreamColumn, expandedExpressionColumnIds)
       : null;
   return {
     children:
@@ -1915,6 +2037,9 @@ function dedupeInspectorColumns(items: InspectorColumnItem[]) {
 function formatInspectorUsage(column: LineageColumn) {
   if (column.usage?.role === 'unused') {
     return 'Unused';
+  }
+  if (column.usage?.role === 'filter') {
+    return 'Filter';
   }
 
   const reasons = column.usage?.reasons?.map(formatUsageReason) ?? ['Condition'];
