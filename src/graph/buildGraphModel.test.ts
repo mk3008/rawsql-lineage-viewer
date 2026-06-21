@@ -51,12 +51,13 @@ describe('buildGraphModel', () => {
     expect(unaliasedDataFlow?.label).toBeUndefined();
     expect(preservedDataFlow?.style).toMatchObject({
       stroke: '#059669',
-      strokeWidth: 2,
+      strokeWidth: 1.5,
     });
+    expect(preservedDataFlow?.markerEnd).toBeUndefined();
     expect(preservedDataFlow?.style?.strokeDasharray).toBeUndefined();
     expect(outerDataFlow?.style).toMatchObject({
       stroke: '#059669',
-      strokeWidth: 2,
+      strokeWidth: 1.5,
       strokeDasharray: '8 5',
     });
     expect(innerDataFlow?.style?.strokeDasharray).toBeUndefined();
@@ -95,6 +96,68 @@ describe('buildGraphModel', () => {
     });
   });
 
+  it('renders scalar subqueries as graph nodes between output columns and their row sources', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        c.id,
+        (
+          SELECT SUM(oi.quantity * oi.unit_price)
+          FROM orders o
+          JOIN order_items oi ON oi.order_id = o.id
+          WHERE o.customer_id = c.id
+            AND o.order_date >= :from_date
+        ) AS period_order_amount
+      FROM customers c
+    `);
+    const graph = buildGraphModel(lineage, 'upstream');
+    const scalar = graph.nodes.find((node) => node.id === 'scalar_subquery_period_order_amount_1');
+    const outputToScalar = graph.edges.find((edge) => edge.id === 'scalar_subquery_period_order_amount_1-main_output');
+    const scalarToOrders = graph.edges.find((edge) => edge.id === 'table_orders-scalar_subquery_period_order_amount_1');
+    const correlation = graph.edges.find((edge) => edge.id === 'table_customers-scalar_subquery_period_order_amount_1');
+
+    expect(scalar?.data.lineageNode.type).toBe('scalar_subquery');
+    expect(outputToScalar).toMatchObject({
+      source: 'main_output',
+      target: 'scalar_subquery_period_order_amount_1',
+      data: {
+        lineageEdge: expect.objectContaining({ kind: 'subquery_value' }),
+      },
+    });
+    expect(scalarToOrders).toMatchObject({
+      source: 'scalar_subquery_period_order_amount_1',
+      target: 'table_orders',
+      data: {
+        lineageEdge: expect.objectContaining({ kind: 'row_source' }),
+      },
+    });
+    expect(correlation).toMatchObject({
+      source: 'scalar_subquery_period_order_amount_1',
+      target: 'table_customers',
+      data: {
+        lineageEdge: expect.objectContaining({ kind: 'correlation' }),
+      },
+    });
+  });
+
+  it('keeps transformation chains closer to a straight line than leaf table branches', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const upstream = buildGraphModel(lineage, 'upstream');
+    const output = upstream.nodes.find((node) => node.id === 'main_output');
+    const directTargets = upstream.edges
+      .filter((edge) => edge.source === 'main_output')
+      .map((edge) => upstream.nodes.find((node) => node.id === edge.target))
+      .filter((node): node is NonNullable<typeof node> => Boolean(node));
+    const cteTargets = directTargets.filter((node) => node.data.lineageNode.type === 'cte');
+    const tableTargets = directTargets.filter((node) => node.data.lineageNode.type === 'table');
+    const cteAverageY = cteTargets.reduce((sum, node) => sum + node.position.y, 0) / cteTargets.length;
+    const tableAverageY = tableTargets.reduce((sum, node) => sum + node.position.y, 0) / tableTargets.length;
+
+    expect(directTargets.length).toBeGreaterThan(1);
+    expect(cteTargets.length).toBeGreaterThan(0);
+    expect(tableTargets.length).toBeGreaterThan(0);
+    expect(Math.abs((output?.position.y ?? 0) - cteAverageY)).toBeLessThan(Math.abs((output?.position.y ?? 0) - tableAverageY));
+  });
+
   it('does not render recursive CTE self-reference edges as graph lines', () => {
     const { lineage } = analyzeSql(recursiveEmployeeSql);
     const graph = buildGraphModel(lineage, 'upstream');
@@ -108,5 +171,44 @@ describe('buildGraphModel', () => {
     expect(employeeTree?.data.lineageNode.recursive).toBe(true);
     expect(employeeTree?.position.x).toBeGreaterThan(output?.position.x ?? Number.POSITIVE_INFINITY);
     expect(employeeTree?.position.x).toBeLessThanOrEqual(720);
+  });
+
+  it('can render collapsed graph nodes at positions calculated from the uncollapsed graph', () => {
+    const uncollapsedLineage = {
+      kind: 'sql-lineage-model' as const,
+      modelVersion: 1 as const,
+      nodes: [
+        { id: 'source_a', type: 'table' as const, label: 'source_a', columns: [] },
+        { id: 'helper', type: 'cte' as const, label: 'helper', columns: [] },
+        { id: 'root', type: 'cte' as const, label: 'root', columns: [] },
+        { id: 'source_b', type: 'table' as const, label: 'source_b', columns: [] },
+      ],
+      edges: [
+        { id: 'source_a-helper', source: 'source_a', target: 'helper', type: 'dataFlow' as const },
+        { id: 'helper-root', source: 'helper', target: 'root', type: 'dataFlow' as const },
+        { id: 'source_b-root', source: 'source_b', target: 'root', type: 'dataFlow' as const },
+      ],
+      scopes: [],
+      analysisWarnings: [],
+      raw: { adapter: 'rawsql-ts-ast' as const },
+    };
+    const collapsedLineage = {
+      ...uncollapsedLineage,
+      nodes: uncollapsedLineage.nodes.filter((node) => node.id !== 'helper'),
+      edges: [
+        { id: 'source_a-root', source: 'source_a', target: 'root', type: 'dataFlow' as const },
+        { id: 'source_b-root', source: 'source_b', target: 'root', type: 'dataFlow' as const },
+      ],
+    };
+    const uncollapsed = buildGraphModel(uncollapsedLineage);
+    const collapsedWithUncollapsedLayout = buildGraphModel(collapsedLineage, 'downstream', uncollapsedLineage);
+    const collapsedWithoutLayout = buildGraphModel(collapsedLineage);
+
+    expect(collapsedWithUncollapsedLayout.nodes.find((node) => node.id === 'root')?.position).toEqual(
+      uncollapsed.nodes.find((node) => node.id === 'root')?.position,
+    );
+    expect(collapsedWithUncollapsedLayout.nodes.find((node) => node.id === 'root')?.position).not.toEqual(
+      collapsedWithoutLayout.nodes.find((node) => node.id === 'root')?.position,
+    );
   });
 });

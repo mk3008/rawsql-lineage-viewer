@@ -13,19 +13,26 @@ const layoutSpacing = {
   y: 180,
 };
 
-export function buildGraphModel(lineage: LineageModel, flowDirection: GraphFlowDirection = 'downstream'): GraphModel {
+export function buildGraphModel(
+  lineage: LineageModel,
+  flowDirection: GraphFlowDirection = 'downstream',
+  layoutLineage: LineageModel = lineage,
+): GraphModel {
   const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge));
+  const layoutVisibleEdges = layoutLineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge));
   const layoutEdges = flowDirection === 'upstream' ? visibleEdges.map(reverseLineageEdge) : visibleEdges;
-  const positioned = layoutNodes(lineage.nodes, layoutEdges);
+  const uncollapsedLayoutEdges = flowDirection === 'upstream' ? layoutVisibleEdges.map(reverseLineageEdge) : layoutVisibleEdges;
+  const layoutPositions = new Map(layoutNodes(layoutLineage.nodes, uncollapsedLayoutEdges).map((node) => [node.id, node.position]));
+  const fallbackPositions = new Map(layoutNodes(lineage.nodes, layoutEdges).map((node) => [node.id, node.position]));
 
   return {
-    nodes: positioned.map((node) => ({
+    nodes: lineage.nodes.map((node) => ({
       id: node.id,
       type: 'lineageNode',
-      position: node.position,
+      position: layoutPositions.get(node.id) ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
       draggable: true,
       data: {
-        lineageNode: node.lineageNode,
+        lineageNode: node,
       },
     })),
     edges: visibleEdges.map((edge) => toGraphEdge(edge, flowDirection)),
@@ -38,8 +45,10 @@ function isRecursiveDataFlow(edge: LineageEdge): boolean {
 
 function layoutNodes(nodes: LineageNode[], edges: LineageEdge[]): Array<{ id: string; lineageNode: LineageNode; position: { x: number; y: number } }> {
   const depthByNode = calculateDepths(nodes, edges);
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
   const groups = new Map<number, LineageNode[]>();
   const orderByNode = new Map<string, number>();
+  const yByNode = new Map<string, number>();
   const positioned: Array<{ id: string; lineageNode: LineageNode; position: { x: number; y: number } }> = [];
 
   for (const node of nodes) {
@@ -55,22 +64,135 @@ function layoutNodes(nodes: LineageNode[], edges: LineageEdge[]): Array<{ id: st
       }
       return nodeTypeRank(a) - nodeTypeRank(b) || a.label.localeCompare(b.label);
     });
-    const offset = Math.max(0, 2 - sorted.length) * 90 + (depth % 2) * 34;
-
+    groups.set(depth, sorted);
     sorted.forEach((node, index) => {
       orderByNode.set(node.id, index);
+      yByNode.set(node.id, index * layoutSpacing.y);
+    });
+  }
+
+  alignLayerYPositions(groups, edges, yByNode, nodeById);
+
+  for (const [depth, group] of [...groups.entries()].sort(([a], [b]) => a - b)) {
+    group.forEach((node) => {
       positioned.push({
         id: node.id,
         lineageNode: node,
         position: {
           x: depth * layoutSpacing.x,
-          y: index * layoutSpacing.y + offset,
+          y: yByNode.get(node.id) ?? 0,
         },
       });
     });
   }
 
   return positioned;
+}
+
+function alignLayerYPositions(
+  groups: Map<number, LineageNode[]>,
+  edges: LineageEdge[],
+  yByNode: Map<string, number>,
+  nodeById: Map<string, LineageNode>,
+) {
+  const depths = [...groups.keys()].sort((a, b) => a - b);
+  const incomingByNode = groupNeighborIds(edges, 'target');
+  const outgoingByNode = groupNeighborIds(edges, 'source');
+
+  for (let iteration = 0; iteration < 4; iteration += 1) {
+    for (const depth of depths) {
+      alignLayerToNeighbors(groups, depth, incomingByNode, yByNode, nodeById);
+    }
+    for (const depth of [...depths].reverse()) {
+      alignLayerToNeighbors(groups, depth, outgoingByNode, yByNode, nodeById);
+    }
+  }
+}
+
+function alignLayerToNeighbors(
+  groups: Map<number, LineageNode[]>,
+  depth: number,
+  neighborsByNode: Map<string, string[]>,
+  yByNode: Map<string, number>,
+  nodeById: Map<string, LineageNode>,
+) {
+  const group = groups.get(depth);
+  if (!group?.length) {
+    return;
+  }
+
+  const desiredYByNode = new Map(
+    group.map((node) => {
+      const neighborYs = (neighborsByNode.get(node.id) ?? [])
+        .map((neighborId) => {
+          const y = yByNode.get(neighborId);
+          const neighbor = nodeById.get(neighborId);
+          return y === undefined ? null : { weight: neighbor ? layoutAlignmentWeight(neighbor) : 1, y };
+        })
+        .filter((item): item is { weight: number; y: number } => item !== null);
+      const currentY = yByNode.get(node.id) ?? 0;
+      return [node.id, neighborYs.length ? weightedAverage(neighborYs) : currentY] as const;
+    }),
+  );
+
+  const sorted = [...group].sort((a, b) => {
+    const desiredDelta = (desiredYByNode.get(a.id) ?? 0) - (desiredYByNode.get(b.id) ?? 0);
+    if (desiredDelta !== 0) {
+      return desiredDelta;
+    }
+    return (yByNode.get(a.id) ?? 0) - (yByNode.get(b.id) ?? 0) || nodeTypeRank(a) - nodeTypeRank(b) || a.label.localeCompare(b.label);
+  });
+  const packedY = packLayer(sorted, desiredYByNode);
+  groups.set(depth, sorted);
+  for (const node of sorted) {
+    yByNode.set(node.id, packedY.get(node.id) ?? yByNode.get(node.id) ?? 0);
+  }
+}
+
+function packLayer(nodes: LineageNode[], desiredYByNode: Map<string, number>): Map<string, number> {
+  const packed = new Map<string, number>();
+  for (let index = 0; index < nodes.length; index += 1) {
+    const node = nodes[index];
+    const previous = nodes[index - 1];
+    const previousY = previous ? packed.get(previous.id) : undefined;
+    packed.set(node.id, Math.max(desiredYByNode.get(node.id) ?? 0, previousY === undefined ? Number.NEGATIVE_INFINITY : previousY + layoutSpacing.y));
+  }
+  for (let index = nodes.length - 1; index >= 0; index -= 1) {
+    const node = nodes[index];
+    const next = nodes[index + 1];
+    const nextY = next ? packed.get(next.id) : undefined;
+    packed.set(node.id, Math.min(packed.get(node.id) ?? 0, nextY === undefined ? desiredYByNode.get(node.id) ?? 0 : nextY - layoutSpacing.y));
+  }
+  const minY = Math.min(...nodes.map((node) => packed.get(node.id) ?? 0));
+  if (minY < 0) {
+    for (const node of nodes) {
+      packed.set(node.id, (packed.get(node.id) ?? 0) - minY);
+    }
+  }
+  return packed;
+}
+
+function groupNeighborIds(edges: LineageEdge[], nodeSide: 'source' | 'target'): Map<string, string[]> {
+  const result = new Map<string, string[]>();
+  for (const edge of edges) {
+    const nodeId = edge[nodeSide];
+    const neighborId = nodeSide === 'source' ? edge.target : edge.source;
+    result.set(nodeId, [...(result.get(nodeId) ?? []), neighborId]);
+  }
+  return result;
+}
+
+function layoutAlignmentWeight(node: LineageNode): number {
+  if (node.type === 'output') return 6;
+  if (node.type === 'cte') return 4;
+  if (node.type === 'scalar_subquery') return 3.5;
+  if (node.type === 'derived') return 3;
+  return 1;
+}
+
+function weightedAverage(values: Array<{ weight: number; y: number }>): number {
+  const weightSum = values.reduce((sum, value) => sum + value.weight, 0);
+  return values.reduce((sum, value) => sum + value.y * value.weight, 0) / weightSum;
 }
 
 function upstreamOrder(nodeId: string, edges: LineageEdge[], orderByNode: Map<string, number>): number {
@@ -88,6 +210,7 @@ function nodeTypeRank(node: LineageNode): number {
   if (node.type === 'table') return 0;
   if (node.type === 'cte') return 1;
   if (node.type === 'derived') return 2;
+  if (node.type === 'scalar_subquery') return 3;
   return 3;
 }
 
@@ -139,12 +262,8 @@ function toGraphEdge(edge: LineageEdge, flowDirection: GraphFlowDirection): Grap
     },
     style: {
       stroke: '#059669',
-      strokeWidth: 2,
+      strokeWidth: 1.5,
       strokeDasharray: isNullableByOuterJoin ? '8 5' : undefined,
-    },
-    markerEnd: {
-      type: 'arrowclosed',
-      color: '#059669',
     },
   };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LineageColumn } from '../domain/lineage';
-import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference } from './columnDisplay';
+import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference, isVisibleGraphColumn } from './columnDisplay';
 
 describe('column display helpers', () => {
   it('detects simple passthrough column references', () => {
@@ -24,6 +24,14 @@ describe('column display helpers', () => {
     expect(isPassthroughColumn(column({ expressionSql: 'c.customer_id', comments: ['Customer id.'] }))).toBe(false);
     expect(isPassthroughColumn(column({ expressionSql: 'false' }))).toBe(false);
     expect(isPassthroughColumn(column())).toBe(false);
+  });
+
+  it('shows only selected output columns in graph node cards', () => {
+    expect(isVisibleGraphColumn(column())).toBe(true);
+    expect(isVisibleGraphColumn(column({ usage: { role: 'condition', reasons: ['subquery'] } }))).toBe(false);
+    expect(isVisibleGraphColumn(column({ outputIndex: 0, selectItemId: 'select-1', usage: { role: 'condition', reasons: ['groupBy'] } }))).toBe(true);
+    expect(isVisibleGraphColumn(column({ usage: { role: 'filter', reasons: ['where'] } }))).toBe(false);
+    expect(isVisibleGraphColumn(column({ usage: { role: 'unused' } }))).toBe(false);
   });
 });
 

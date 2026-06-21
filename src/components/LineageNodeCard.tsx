@@ -1,10 +1,10 @@
 import { useLayoutEffect, useRef, useState, type CSSProperties, type MouseEvent, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Check, ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Maximize2, Minimize2, X } from 'lucide-react';
+import { Check, Copy, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react';
 import type { GraphNode } from '../domain/graph';
 import type { LineageColumnUsageReason } from '../domain/lineage';
-import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference } from '../lineage/columnDisplay';
+import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference, isVisibleGraphColumn } from '../lineage/columnDisplay';
 import { SqlCodeMirror } from './SqlCodeMirror';
 
 export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
@@ -15,18 +15,28 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
   const shouldRenderColumns = columnsVisible || hasForcedVisibleColumns;
   const nodeRef = useRef<HTMLDivElement>(null);
-  const canTogglePassthrough = node.type !== 'output' && node.columns.some(isPassthroughColumn);
-  const passthroughCompressed = data.passthroughColumnsCompressed ?? false;
   const isPassthroughOnly =
     shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
+  const populationImpactLabels = data.highlightedNodeImpactLabels?.get(node.id) ?? [];
+  const sourceDataLabels = data.highlightedSourceDataLabels?.get(node.id) ?? [];
 
   return (
     <div
       ref={nodeRef}
-      className={`lineage-node lineage-node-${node.type} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
+      className={`lineage-node lineage-node-${node.type} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
       data-testid={`lineage-node-${node.type}`}
     >
-      <Handle type="target" position={Position.Left} />
+      {sourceDataLabels.length > 0 || data.collapsedGroup || populationImpactLabels.length > 0 ? (
+        <div className="lineage-node-badge-stack">
+          {sourceDataLabels.length > 0 ? <SourceDataBadges labels={sourceDataLabels} /> : null}
+          {data.collapsedGroup ? (
+            <GroupPopulationImpactBadges group={data.collapsedGroup} highlightedLabels={data.highlightedNodeImpactLabels} />
+          ) : populationImpactLabels.length > 0 ? (
+            <PopulationImpactBadges labels={populationImpactLabels} />
+          ) : null}
+        </div>
+      ) : null}
+      <Handle className="lineage-node-handle lineage-node-handle-target" type="target" position={Position.Left} />
       <div className="lineage-node-header">
         <button
           className={`lineage-node-title lineage-node-title-button ${data.selectedNodeId === node.id ? 'lineage-comment-selected' : ''}`}
@@ -40,33 +50,6 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
         </button>
         <div className="lineage-node-actions">
           <div className="lineage-node-action-buttons">
-            {data.canToggleColumns === false ? null : (
-              <button
-                aria-label={`${columnsVisible ? 'Hide' : 'Show'} columns for ${node.label}`}
-                className="node-icon-button nodrag"
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  data.onToggleColumns?.(graphNodeId);
-                }}
-              >
-                {columnsVisible ? <EyeOff size={13} /> : <Eye size={13} />}
-              </button>
-            )}
-            {canTogglePassthrough ? (
-              <button
-                aria-label={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns for ${node.label}`}
-                className="node-icon-button nodrag"
-                title={`${passthroughCompressed ? 'Show' : 'Compress'} passthrough columns`}
-                type="button"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  data.onTogglePassthroughColumns?.(graphNodeId);
-                }}
-              >
-                {passthroughCompressed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-              </button>
-            ) : null}
             {data.collapsedGroup ? (
               <button
                 aria-label={`Expand ${data.collapsedGroup.label}`}
@@ -96,7 +79,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
             ) : null}
           </div>
           <span className={`lineage-node-kind ${node.recursive && !data.collapsedGroup ? 'lineage-node-kind-recursive' : ''}`}>
-            {data.collapsedGroup ? 'Group' : node.recursive ? 'Recursive' : node.type}
+            {data.collapsedGroup ? 'Group' : node.recursive ? 'Recursive' : formatNodeKind(node.type)}
           </span>
         </div>
       </div>
@@ -123,9 +106,87 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
           )}
         </div>
       ) : null}
-      <Handle type="source" position={Position.Right} />
+      <Handle className="lineage-node-handle lineage-node-handle-source" type="source" position={Position.Right} />
     </div>
   );
+}
+
+function formatNodeKind(type: GraphNode['data']['lineageNode']['type']) {
+  return type === 'scalar_subquery' ? 'Scalar' : type;
+}
+
+function PopulationImpactBadges({ labels }: { labels: string[] }) {
+  const visibleLabels = labels.slice(0, 3);
+  const overflowCount = labels.length - visibleLabels.length;
+
+  return (
+    <div className="lineage-node-impact-badges" aria-label={`Population impacts: ${labels.join(', ')}`}>
+      {visibleLabels.map((label) => (
+        <span key={label}>{label}</span>
+      ))}
+      {overflowCount > 0 ? <span>+{overflowCount}</span> : null}
+    </div>
+  );
+}
+
+function SourceDataBadges({ labels }: { labels: string[] }) {
+  const visibleLabels = labels.slice(0, 2);
+  const overflowCount = labels.length - visibleLabels.length;
+
+  return (
+    <div className="lineage-node-source-data-badges" aria-label={`Source data concerns: ${labels.join(', ')}`}>
+      {visibleLabels.map((label) => (
+        <span key={label} title="Source data values may be incorrect">
+          {label}
+        </span>
+      ))}
+      {overflowCount > 0 ? <span>+{overflowCount}</span> : null}
+    </div>
+  );
+}
+
+function GroupPopulationImpactBadges({
+  group,
+  highlightedLabels,
+}: {
+  group: NonNullable<GraphNode['data']['collapsedGroup']>;
+  highlightedLabels?: Map<string, string[]>;
+}) {
+  const highlightedBadges = highlightedLabels
+    ? [
+        ...uniqueStrings(highlightedLabels.get(group.rootNodeId) ?? []).map((label) => ({ label, origin: 'Self' as const })),
+        ...uniqueStrings(group.helperNodeIds.flatMap((nodeId) => highlightedLabels.get(nodeId) ?? [])).map((label) => ({ label, origin: 'Hidden' as const })),
+      ]
+    : [];
+  const badges = highlightedBadges;
+  if (badges.length === 0) {
+    return null;
+  }
+
+  const visibleBadges = badges.slice(0, 4);
+  const overflowCount = badges.length - visibleBadges.length;
+  const ariaLabel = badges.map((badge) => `${badge.origin}: ${badge.label}`).join(', ');
+
+  return (
+    <div className="lineage-node-impact-badges" aria-label={`Population impacts: ${ariaLabel}`}>
+      {visibleBadges.map((badge) => {
+        return (
+          <span
+            className={badge.origin === 'Self' ? 'lineage-node-impact-self' : 'lineage-node-impact-descendant'}
+            key={`${badge.origin}-${badge.label}`}
+            title={`${badge.origin === 'Self' ? 'Group self effect' : 'Hidden descendant effect'}: ${badge.label}`}
+          >
+            {badge.label}
+          </span>
+        );
+      })}
+      {overflowCount > 0 ? <span title={`${overflowCount} more population impacts`}>+{overflowCount}</span> : null}
+    </div>
+  );
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
 }
 
 function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId: string }) {
@@ -136,25 +197,11 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
 
   return (
     <div className="lineage-group-summary">
-      <div className="lineage-group-section">
-        <div className="lineage-group-summary-title">Output</div>
-        {data.lineageNode.columns.length > 0 ? (
-          <LineageColumnList columns={data.lineageNode.columns} data={data} forceOnly={data.columnsVisible === false} nodeId={nodeId} />
-        ) : (
-          <div className="lineage-column lineage-column-muted">columns unresolved</div>
-        )}
-      </div>
-      <div className="lineage-group-section">
-        <div className="lineage-group-summary-title">Input</div>
-        <ul className="lineage-group-hidden-list">
-          {group.helperNodes.map((node) => (
-            <li key={node.id}>
-              <span className="lineage-group-hidden-type">{node.type === 'cte' ? 'CTE' : 'Subquery'}</span>
-              <span className="lineage-group-hidden-name">{node.label}</span>
-            </li>
-          ))}
-        </ul>
-      </div>
+      {data.lineageNode.columns.length > 0 ? (
+        <LineageColumnList columns={data.lineageNode.columns} data={data} forceOnly={data.columnsVisible === false} nodeId={nodeId} />
+      ) : (
+        <div className="lineage-column lineage-column-muted">columns unresolved</div>
+      )}
     </div>
   );
 }
@@ -170,48 +217,20 @@ function LineageColumnList({
   forceOnly?: boolean;
   nodeId: string;
 }) {
-  const shouldCompress = data.passthroughColumnsCompressed ?? false;
-  const displayColumns = forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
-  const valueColumns = displayColumns.filter((column) => !column.usage);
-  const filterColumns = displayColumns.filter((column) => column.usage?.role === 'filter');
-  const conditionColumns = displayColumns.filter((column) => column.usage?.role === 'condition');
-  const unusedColumns = data.showUnusedColumns === false ? [] : displayColumns.filter((column) => column.usage?.role === 'unused');
-  const visibleValueColumns = shouldCompress ? valueColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : valueColumns;
-  const compressedCount = shouldCompress ? valueColumns.length - visibleValueColumns.length : 0;
+  const isOutputNode = data.lineageNode.type === 'output';
+  const shouldCompress = !isOutputNode && (data.passthroughColumnsCompressed ?? false);
+  const baseColumns = !isOutputNode && forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
+  const displayColumns = baseColumns.filter(isVisibleGraphColumn);
+  const visibleColumns = shouldCompress ? displayColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : displayColumns;
+  const compressedCount = shouldCompress ? displayColumns.length - visibleColumns.length : 0;
 
   return (
     <>
-      {visibleValueColumns.map((column) => (
+      {visibleColumns.map((column) => (
         <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
       ))}
       {compressedCount > 0 ? <PassthroughSummary count={compressedCount} /> : null}
-      {filterColumns.length > 0 ? <LineageColumnSection columns={filterColumns} data={data} label="Filter" nodeId={nodeId} /> : null}
-      {conditionColumns.length > 0 ? (
-        <LineageColumnSection columns={conditionColumns} data={data} label="Condition" nodeId={nodeId} />
-      ) : null}
-      {unusedColumns.length > 0 ? <LineageColumnSection columns={unusedColumns} data={data} label="Unused" nodeId={nodeId} /> : null}
     </>
-  );
-}
-
-function LineageColumnSection({
-  columns,
-  data,
-  label,
-  nodeId,
-}: {
-  columns: GraphNode['data']['lineageNode']['columns'];
-  data: GraphNode['data'];
-  label: string;
-  nodeId: string;
-}) {
-  return (
-    <div className="lineage-column-section">
-      <div className="lineage-column-section-title">{label}</div>
-      {columns.map((column) => (
-        <LineageColumnRow column={column} data={data} key={column.id} nodeId={nodeId} />
-      ))}
-    </div>
   );
 }
 
@@ -255,20 +274,11 @@ function LineageColumnRow({
     selectedRuleExpressionSql ??
     (column.expressionSql && (isSelected || !isSimpleColumnReference(column.expressionSql)) ? column.expressionSql : undefined);
   const fallbackText = isSelected && !column.comments?.length && !expressionSql && !formatUsageText(column) ? column.name : undefined;
-  const usageClass =
-    column.usage?.role === 'condition'
-      ? 'lineage-column-condition'
-      : column.usage?.role === 'filter'
-        ? 'lineage-column-filter'
-        : column.usage?.role === 'unused'
-          ? 'lineage-column-unused'
-          : '';
-
   return (
     <div className="lineage-column-group">
       <button
         ref={columnRef}
-        className={`lineage-column ${usageClass} ${isSelected || isActiveRoot ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+        className={`lineage-column ${isSelected || isActiveRoot ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
         onClick={(event) => {
           event.stopPropagation();
           data.onColumnSelect?.(nodeId, column);

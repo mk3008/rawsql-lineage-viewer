@@ -3,8 +3,12 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "bin": {
+    "rawsql-lineage": "./bin/rawsql-lineage.mjs"
+  },
   "scripts": {
     "dev": "vite",
+    "diagnose": "tsx src/cli/diagnose.ts diagnose",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "test": "vitest run",
@@ -12,9 +16,11 @@
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "tsx": "^4.22.4",
     "typescript": "~6.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.8"

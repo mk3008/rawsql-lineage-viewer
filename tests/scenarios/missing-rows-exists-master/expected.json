@@ -1,0 +1,30 @@
+{
+  "id": "missing-rows-exists-master",
+  "symptom": "missing_rows",
+  "wrongSymptom": "duplicate_rows",
+  "targetColumn": "id",
+  "rootCauseKind": "data_condition",
+  "expectedCorrectRows": [
+    {
+      "id": "10",
+      "name": "Alice"
+    },
+    {
+      "id": "20",
+      "name": "Bob"
+    }
+  ],
+  "expectedRows": [
+    {
+      "id": "20",
+      "name": "Bob"
+    }
+  ],
+  "expectedEffects": ["row_filter", "exists"],
+  "primaryEffects": ["exists"],
+  "expectedMechanisms": ["exists", "where"],
+  "expectedEvidenceContains": ["exists", "customer_favorites"],
+  "expectedCheckDomains": ["program_logic", "data_condition"],
+  "notExpectedEffects": [],
+  "notes": "A missing active favorite filters Alice out; diagnosis should point to EXISTS and related data."
+}

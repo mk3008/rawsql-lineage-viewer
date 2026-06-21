@@ -21,6 +21,11 @@ export type GraphNodeData = {
   viewportZoom?: number;
   activeLineageRootColumnIds?: Set<string>;
   highlightedColumnIds?: Set<string>;
+  highlightedNodeIds?: Set<string>;
+  highlightedNodeImpactLabels?: Map<string, string[]>;
+  highlightedNodeTone?: 'population' | 'value';
+  highlightedSourceDataLabels?: Map<string, string[]>;
+  highlightedSourceDataNodeIds?: Set<string>;
   passthroughColumnsCompressed?: boolean;
   showUnusedColumns?: boolean;
   sourceColumnIds?: Set<string>;

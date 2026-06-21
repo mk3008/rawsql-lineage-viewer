@@ -1,4 +1,4 @@
-import type { LineageColumnRef, LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageColumnRef, LineageEdge, LineageModel, LineageNode, LineagePopulationEffect } from '../domain/lineage';
 
 export interface CollapsedLineageGroup {
   id: string;
@@ -16,6 +16,15 @@ export interface CollapsedLineageGroup {
   };
   sourceNodeIds: string[];
   outputColumnCount: number;
+  summary: {
+    operations: string[];
+    groupBy: string[];
+    inputs: string[];
+  };
+  populationEffects: {
+    self: LineagePopulationEffect[];
+    descendants: LineagePopulationEffect[];
+  };
 }
 
 export interface CollapsedLineageResult {
@@ -36,6 +45,30 @@ export function collectCollapsibleUpstreamGroups(lineage: LineageModel): Map<str
     }
   }
   return result;
+}
+
+export function collectDefaultCollapsedGroupRootIds(lineage: LineageModel): Set<string> {
+  const groups = collectCollapsibleUpstreamGroups(lineage);
+  const nodesById = new Map(lineage.nodes.map((node) => [node.id, node]));
+  const candidateRootIds = new Set<string>();
+
+  for (const group of groups.values()) {
+    if (isMeaningfulCollapsedStep(nodesById.get(group.rootNodeId), group)) {
+      candidateRootIds.add(group.rootNodeId);
+    }
+  }
+
+  const nestedRootIds = new Set<string>();
+  for (const rootNodeId of candidateRootIds) {
+    const group = groups.get(rootNodeId);
+    for (const helperNodeId of group?.helperNodeIds ?? []) {
+      if (candidateRootIds.has(helperNodeId)) {
+        nestedRootIds.add(helperNodeId);
+      }
+    }
+  }
+
+  return new Set([...candidateRootIds].filter((rootNodeId) => !nestedRootIds.has(rootNodeId)));
 }
 
 export function collapseLineageGroups(lineage: LineageModel, rootNodeIds: Set<string>): CollapsedLineageResult {
@@ -148,6 +181,9 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
   if (!root || !isQueryBlockNodeType(root.type)) {
     return null;
   }
+  if (root.recursive || root.dependencyProfile?.isRecursive) {
+    return null;
+  }
 
   const dataFlowEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
   const incomingByTarget = groupEdgesBy(dataFlowEdges, 'target');
@@ -192,9 +228,13 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
   const visibleHelperNodes = helperNodes.filter((node): node is LineageNode & { type: 'cte' | 'derived' } =>
     node ? isCollapsibleHelperNodeType(node.type) : false,
   );
+  const selfPopulationEffects = uniquePopulationEffects(root.dependencyProfile?.populationEffects ?? []);
+  const descendantPopulationEffects = uniquePopulationEffects(
+    visibleHelperNodes.flatMap((node) => node.dependencyProfile?.populationEffects ?? []),
+  );
   return {
     id: `group_${rootNodeId}`,
-    label: `Build ${root.label}`,
+    label: root.label,
     rootNodeId,
     helperNodes: visibleHelperNodes.map((node) => ({
       id: node.id,
@@ -208,6 +248,11 @@ function collectCollapsibleUpstreamGroup(lineage: LineageModel, rootNodeId: stri
     },
     sourceNodeIds: [...sourceNodeIds],
     outputColumnCount: root.columns.length,
+    summary: buildGroupSummary(root, visibleHelperNodes),
+    populationEffects: {
+      self: selfPopulationEffects,
+      descendants: descendantPopulationEffects,
+    },
   };
 }
 
@@ -217,6 +262,75 @@ function isQueryBlockNodeType(type: string) {
 
 function isCollapsibleHelperNodeType(type: string) {
   return type === 'cte' || type === 'derived';
+}
+
+function buildGroupSummary(root: LineageNode, helperNodes: LineageNode[]): CollapsedLineageGroup['summary'] {
+  return {
+    operations: uniqueStrings(root.columns.map((column) => summarizeColumnOperation(column.expressionSql)).filter(isString)),
+    groupBy: uniqueStrings(root.columns
+      .filter((column) => column.usage?.reasons?.includes('groupBy'))
+      .map((column) => column.name)),
+    inputs: uniqueStrings(helperNodes.map((node) => node.label)),
+  };
+}
+
+function summarizeColumnOperation(expressionSql: string | undefined): string | null {
+  if (!expressionSql) {
+    return null;
+  }
+  const trimmed = expressionSql.trim();
+  const aggregateMatch = trimmed.match(/\b(count|sum|avg|min|max)\s*\(([^)]*)\)/i);
+  if (aggregateMatch) {
+    return `${aggregateMatch[1].toLowerCase()}(${aggregateMatch[2].trim()})`;
+  }
+  if (!/^[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?$/.test(trimmed)) {
+    return trimmed.length > 64 ? `${trimmed.slice(0, 61)}...` : trimmed;
+  }
+  return null;
+}
+
+function hasAggregateExpression(node: LineageNode): boolean {
+  return node.columns.some((column) => /\b(count|sum|avg|min|max)\s*\(/i.test(column.expressionSql ?? ''));
+}
+
+function hasPreparedDetailProjection(node: LineageNode): boolean {
+  return node.columns.some((column) =>
+    Boolean(column.expressionSql && !/^[A-Za-z_][\w$]*(?:\.[A-Za-z_][\w$]*)?$/.test(column.expressionSql.trim())),
+  );
+}
+
+function isMeaningfulCollapsedStep(node: LineageNode | undefined, group: CollapsedLineageGroup): boolean {
+  const profile = node?.dependencyProfile;
+  if (!node || !profile || !isCollapsibleHelperNodeType(node.type) || group.helperNodeIds.length === 0) {
+    return false;
+  }
+
+  if (profile.isRecursive || profile.hasSetOperation) {
+    return false;
+  }
+
+  return profile.inputNodeCount >= 1
+    && profile.consumerNodeCount <= 1
+    && (
+      profile.hasGroupBy
+      || profile.hasHaving
+      || profile.hasWhere
+      || profile.hasJoin
+      || hasAggregateExpression(node)
+      || hasPreparedDetailProjection(node)
+    );
+}
+
+function uniquePopulationEffects(effects: LineagePopulationEffect[]): LineagePopulationEffect[] {
+  return [...new Set(effects)].sort();
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function isString(value: string | null): value is string {
+  return typeof value === 'string' && value.length > 0;
 }
 
 function collapseEdge(edge: LineageEdge, hiddenNodeIds: Set<string>, rootByHiddenNodeId: Map<string, string>): LineageEdge[] {

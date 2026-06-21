@@ -5,8 +5,11 @@ import {
   ColumnReference,
   CreateTableQuery,
   FunctionSource,
+  InsertQuery,
+  InlineQuery,
   ParenSource,
   SelectQueryParser,
+  SelectValueCollector,
   SimpleSelectQuery,
   SqlParser,
   SqlFormatter,
@@ -19,18 +22,30 @@ import type {
   AnalysisWarning,
   LineageColumn,
   LineageCaseRule,
+  LineageCondition,
   LineageColumnRef,
   LineageColumnUsageReason,
   LineageEdge,
   LineageExpressionTree,
+  LineageExpressionInfluence,
+  LineageJoinInfluence,
   LineageModel,
   LineageNode,
+  LineageScope,
+  LineageSourceReference,
 } from '../domain/lineage';
 import { isSimpleColumnReference } from './columnDisplay';
+import { attachNodeDependencyProfiles } from './nodeDependencyProfile';
+import type { SchemaFacts } from './schemaFacts';
+import { createTableColumnResolver } from './schemaFacts';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
   parserVersion: string;
+}
+
+export interface AnalyzeSqlOptions {
+  schemaFacts?: SchemaFacts;
 }
 
 const parserVersion = 'rawsql-ts';
@@ -84,7 +99,17 @@ const nodeSqlFormatter = new SqlFormatter({
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 function parseLineageSelectQuery(sql: string): SelectQuery {
-  const statement = SqlParser.parse(sql);
+  let statement: unknown;
+  try {
+    statement = SqlParser.parse(sql);
+  } catch (error) {
+    const wrappedSelectSql = extractWrappedSelectSql(sql);
+    if (wrappedSelectSql) {
+      return parseLineageSelectQuery(wrappedSelectSql);
+    }
+    throw error;
+  }
+
   if (statement instanceof CreateTableQuery) {
     if (!statement.asSelectQuery) {
       throw new Error('CREATE TABLE lineage requires an AS SELECT query.');
@@ -92,22 +117,40 @@ function parseLineageSelectQuery(sql: string): SelectQuery {
     return statement.asSelectQuery;
   }
 
+  if (statement instanceof InsertQuery) {
+    if (!statement.selectQuery || statement.selectQuery instanceof ValuesQuery) {
+      throw new Error('INSERT lineage requires a SELECT query.');
+    }
+    return statement.selectQuery;
+  }
+
   if (isSelectQuery(statement)) {
     return statement;
   }
 
-  throw new Error('Only SELECT and CREATE TABLE AS SELECT statements are supported.');
+  throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
 }
 
 function isSelectQuery(value: unknown): value is SelectQuery {
   return value instanceof SimpleSelectQuery || value instanceof BinarySelectQuery || value instanceof ValuesQuery;
 }
 
-export function analyzeSql(sql: string): ParserAdapterResult {
-  const warnings: AnalysisWarning[] = [];
+function extractWrappedSelectSql(sql: string): string | undefined {
+  const match = sql.match(/^\s*(?:(?:--[^\r\n]*(?:\r?\n|$)|\/\*[\s\S]*?\*\/)\s*)*create\s+(?:or\s+replace\s+)?(?:(?:temporary|temp)\s+)?(?:(?:materialized)\s+)?(?:table|view)\b[\s\S]*?\bas\s+([\s\S]+?)\s*;?\s*$/i);
+  return match?.[1]?.trim();
+}
+
+export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): ParserAdapterResult {
+  const warnings: AnalysisWarning[] = [...(options.schemaFacts?.diagnostics ?? []).map((diagnostic) => ({
+    code: diagnostic.code,
+    message: diagnostic.filePath ? `${diagnostic.message} (${diagnostic.filePath})` : diagnostic.message,
+  }))];
   const nodes = new Map<string, LineageNode>();
   const edges: LineageEdge[] = [];
+  const scopes: LineageScope[] = [];
   const derivedCounter = { value: 0 };
+  const scalarSubqueryCounter = { value: 0 };
+  const scopeCounter = { value: 0 };
 
   let query: SelectQuery;
   try {
@@ -127,7 +170,7 @@ export function analyzeSql(sql: string): ParserAdapterResult {
   const ctes = new CTECollector().collect(query);
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
   const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
-  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings);
+  const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings, cteCommentsByName);
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -152,8 +195,12 @@ export function analyzeSql(sql: string): ParserAdapterResult {
       cteNames,
       nodes,
       edges,
+      scopes,
       warnings,
       derivedCounter,
+      scalarSubqueryCounter,
+      scopeCounter,
+      schemaFacts: options.schemaFacts,
     });
   }
 
@@ -164,23 +211,28 @@ export function analyzeSql(sql: string): ParserAdapterResult {
     cteNames,
     nodes,
     edges,
+    scopes,
     warnings,
     derivedCounter,
+    scalarSubqueryCounter,
+    scopeCounter,
+    schemaFacts: options.schemaFacts,
   });
-  nodes.get('main_output')!.querySql = formatNodeQuerySql(query);
+  nodes.get('main_output')!.querySql = formatOutputQuerySql(query, cteCommentsByName);
 
   classifyColumnUsage(nodes);
 
-  const lineage: LineageModel = {
+  const lineage: LineageModel = attachNodeDependencyProfiles({
     kind: 'sql-lineage-model',
     modelVersion: 1,
     nodes: [...nodes.values()],
     edges: dedupeEdges(edges),
+    scopes,
     analysisWarnings: warnings,
     raw: {
       adapter: 'rawsql-ts-ast',
     },
-  };
+  });
 
   return {
     lineage,
@@ -196,8 +248,13 @@ interface CollectQueryEdgesOptions {
   cteNames: Set<string>;
   nodes: Map<string, LineageNode>;
   edges: LineageEdge[];
+  scopes: LineageScope[];
   warnings: AnalysisWarning[];
   derivedCounter: { value: number };
+  scalarSubqueryCounter: { value: number };
+  scopeCounter: { value: number };
+  parentScopeId?: string;
+  schemaFacts?: SchemaFacts;
 }
 
 interface ResolvedSource {
@@ -208,12 +265,15 @@ interface ResolvedSource {
 }
 
 function collectQueryEdges(options: CollectQueryEdgesOptions): void {
-  const { query, targetId, targetLabel, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId } = options;
+  const { query, targetId, targetLabel, cteNames, nodes, edges, scopes, warnings, derivedCounter, recursiveRootId, parentScopeId } = options;
 
   if (query instanceof SimpleSelectQuery) {
     const fromClause = query.fromClause;
+    const scopeId = nextScopeId(options, targetId);
     if (!fromClause) {
-      setNodeColumns(nodes, targetId, collectOutputColumns(query, [], options));
+      const outputColumns = collectOutputColumns(query, [], options, scopeId);
+      scopes.push(createLineageScope(query, [], [], outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
+      setNodeColumns(nodes, targetId, outputColumns);
       warnings.push({
         code: 'select-without-source',
         message: `${targetLabel} has no FROM source, so no upstream lineage edge was created.`,
@@ -222,7 +282,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     }
 
     const sources = [
-      resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId),
+      resolveSourceExpression(fromClause.source, cteNames, nodes, edges, scopes, warnings, derivedCounter, options.scalarSubqueryCounter, options.scopeCounter, recursiveRootId, options.schemaFacts),
     ];
     const joins = fromClause.joins ?? [];
 
@@ -231,6 +291,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         source: source.node.id,
         target: targetId,
         type: 'dataFlow',
+        kind: nodes.get(targetId)?.type === 'scalar_subquery' ? 'row_source' : 'value_flow',
         sourceAlias: source.sourceAlias,
         recursive: source.recursive ? { reason: 'cteSelfReference' } : undefined,
         confidence: 'high',
@@ -238,7 +299,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     }
 
     for (const join of joins) {
-      const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId);
+      const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, scopes, warnings, derivedCounter, options.scalarSubqueryCounter, options.scopeCounter, recursiveRootId, options.schemaFacts);
       const joinType = normalizeJoinType(join);
       sources.push(joinedSource);
 
@@ -246,6 +307,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
         source: joinedSource.node.id,
         target: targetId,
         type: 'dataFlow',
+        kind: nodes.get(targetId)?.type === 'scalar_subquery' ? 'row_source' : 'value_flow',
         label: normalizeJoinLabel(join),
         sourceAlias: joinedSource.sourceAlias,
         joinNullability: toJoinNullability(joinType),
@@ -254,7 +316,8 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       });
     }
 
-    const outputColumns = collectOutputColumns(query, sources, options);
+    const outputColumns = collectOutputColumns(query, sources, options, scopeId);
+    scopes.push(createLineageScope(query, sources, joins, outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
     setNodeColumns(nodes, targetId, outputColumns);
     setValueSourceColumns(outputColumns, nodes);
     setReferencedSourceColumns(query, sources, nodes);
@@ -317,9 +380,9 @@ function collectBinaryPart(query: unknown, side: string, operator: string, optio
     label: `${operator} ${side}`,
     columns: [],
     comments: extractQueryNodeComments(query),
-    querySql: formatNodeQuerySql(query),
+    querySql: formatStandaloneQuerySql(query),
   });
-  collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}` });
+  collectQueryEdges({ ...options, query, targetId: id, targetLabel: `${operator} ${side}`, parentScopeId: options.parentScopeId });
   return id;
 }
 
@@ -385,6 +448,7 @@ function collectCteExecutableSql(
   query: unknown,
   ctes: CommonTable[],
   warnings: AnalysisWarning[],
+  cteCommentsByName: Map<string, string[] | undefined>,
 ): Map<string, string> {
   const sqlByName = new Map<string, string>();
   if (ctes.length === 0) {
@@ -405,7 +469,7 @@ function collectCteExecutableSql(
     const cteName = cte.getSourceAliasName();
     try {
       const result = decomposer.extractCTE(query, cteName);
-      sqlByName.set(cteName, formatCteExecutableSql(cteName, result.executableSql, result.dependencies, cteByName));
+      sqlByName.set(cteName, formatCteExecutableSql(cteName, result.executableSql, result.dependencies, cteByName, cteCommentsByName));
       for (const warning of result.warnings) {
         warnings.push({
           code: 'cte-executable-sql-warning',
@@ -428,10 +492,11 @@ function formatCteExecutableSql(
   sql: string,
   dependencies: string[],
   cteByName: Map<string, CommonTable>,
+  cteCommentsByName: Map<string, string[] | undefined>,
 ): string {
   const targetCte = cteByName.get(cteName);
   if (targetCte) {
-    const formattedTargetSql = formatNodeQuerySql(targetCte.query);
+    const formattedTargetSql = prependHeaderCommentsIfMissing(formatNodeQuerySql(targetCte.query), cteCommentsByName.get(cteName));
     if (formattedTargetSql) {
       const dependencySql = dependencies
         .map((dependencyName) => {
@@ -448,7 +513,9 @@ function formatCteExecutableSql(
       const withSql = dependencySql
         .map((dependency, index) => {
           const suffix = index === dependencySql.length - 1 ? '' : ',';
-          return `  ${dependency.name} as (\n${indentSql(dependency.sql)}\n  )${suffix}`;
+          const comments = cteCommentsByName.get(dependency.name)?.filter((comment) => !dependency.sql.includes(comment));
+          const commentSql = comments?.length ? `${comments.map((comment) => formatLineComment(comment, '  ')).join('\n')}\n` : '';
+          return `${commentSql}  ${dependency.name} as (\n${indentSql(dependency.sql)}\n  )${suffix}`;
         })
         .join('\n');
       return `with\n${withSql}\n${formattedTargetSql}`;
@@ -471,6 +538,69 @@ function formatNodeQuerySql(query: unknown): string | undefined {
   }
 }
 
+function formatStandaloneQuerySql(query: unknown): string | undefined {
+  return prependHeaderCommentsIfMissing(formatNodeQuerySql(query), extractQueryNodeComments(query));
+}
+
+function formatScopeQuerySql(query: SimpleSelectQuery): string | undefined {
+  return formatStandaloneQuerySql(cloneSelectQueryWithoutCtes(query));
+}
+
+function cloneSelectQueryWithoutCtes(query: SimpleSelectQuery): SimpleSelectQuery {
+  if (!query.withClause) {
+    return query;
+  }
+  return Object.assign(Object.create(Object.getPrototypeOf(query)), query, {
+    cteNameCache: new Set(),
+    withClause: undefined,
+  }) as SimpleSelectQuery;
+}
+
+function formatOutputQuerySql(query: unknown, cteCommentsByName: Map<string, string[] | undefined>): string | undefined {
+  const formattedSql = formatNodeQuerySql(query);
+  if (!formattedSql || cteCommentsByName.size === 0) {
+    return formattedSql;
+  }
+  return restoreCteHeaderComments(formattedSql, cteCommentsByName);
+}
+
+function prependHeaderCommentsIfMissing(sql: string | undefined, comments: string[] | undefined): string | undefined {
+  if (!sql || !comments?.length || comments.every((comment) => sql.includes(comment))) {
+    return sql;
+  }
+  const missingComments = comments.filter((comment) => !sql.includes(comment));
+  return `${missingComments.map((comment) => formatLineComment(comment, '')).join('\n')}\n${sql}`;
+}
+
+function restoreCteHeaderComments(sql: string, cteCommentsByName: Map<string, string[] | undefined>): string {
+  let restoredSql = sql;
+  for (const [cteName, comments] of cteCommentsByName) {
+    if (!comments) {
+      continue;
+    }
+    if (!comments.length || comments.every((comment) => restoredSql.includes(comment))) {
+      continue;
+    }
+    const declarationPattern = new RegExp(`^(\\s*)(${escapeRegExp(cteName)}\\s+as\\s*\\()`, 'im');
+    restoredSql = restoredSql.replace(declarationPattern, (_match, indent: string, declaration: string) => {
+      const commentSql = comments.map((comment) => formatLineComment(comment, indent)).join('\n');
+      return `${commentSql}\n${indent}${declaration}`;
+    });
+  }
+  return restoredSql;
+}
+
+function formatLineComment(comment: string, indent: string): string {
+  return comment
+    .split(/\r?\n/)
+    .map((line) => `${indent}-- ${line}`)
+    .join('\n');
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function indentSql(sql: string): string {
   return sql
     .split('\n')
@@ -483,9 +613,13 @@ function resolveSourceExpression(
   cteNames: Set<string>,
   nodes: Map<string, LineageNode>,
   edges: LineageEdge[],
+  scopes: LineageScope[],
   warnings: AnalysisWarning[],
   derivedCounter: { value: number },
+  scalarSubqueryCounter: { value: number },
+  scopeCounter: { value: number },
   recursiveRootId?: string,
+  schemaFacts?: SchemaFacts,
 ): ResolvedSource {
   const datasource = source.datasource;
 
@@ -508,7 +642,7 @@ function resolveSourceExpression(
       };
     }
     return {
-      node: createTableNode(sourceName, nodes),
+      node: createTableNode(sourceName, nodes, schemaFacts),
       aliases,
       sourceAlias: alias ?? undefined,
     };
@@ -524,20 +658,25 @@ function resolveSourceExpression(
       label: alias,
       columns: [],
       comments: extractQueryNodeComments(datasource.query),
-      querySql: formatNodeQuerySql(datasource.query),
+      querySql: formatStandaloneQuerySql(datasource.query),
     };
     nodes.set(id, node);
     collectQueryEdges({
       query: datasource.query,
       targetId: id,
       targetLabel: alias,
-      cteNames,
-      nodes,
-      edges,
-      warnings,
-      derivedCounter,
-      recursiveRootId,
-    });
+        cteNames,
+        nodes,
+        edges,
+        scopes,
+        warnings,
+        derivedCounter,
+        scalarSubqueryCounter,
+        scopeCounter,
+        recursiveRootId,
+        parentScopeId: undefined,
+        schemaFacts,
+      });
     return {
       node,
       aliases: [alias],
@@ -554,9 +693,13 @@ function resolveSourceExpression(
       cteNames,
       nodes,
       edges,
+      scopes,
       warnings,
       derivedCounter,
+      scalarSubqueryCounter,
+      scopeCounter,
       recursiveRootId,
+      schemaFacts,
     );
   }
 
@@ -581,18 +724,289 @@ function resolveSourceExpression(
   };
 }
 
-function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
-  const selectedColumns: LineageColumn[] = query.selectClause.items.flatMap((item, index): LineageColumn | LineageColumn[] => {
-    const wildcardColumns = expandWildcardSelectItem(item, sources);
-    if (wildcardColumns) {
-      return wildcardColumns;
-    }
+function nextScopeId(options: CollectQueryEdgesOptions, targetId: string): string {
+  const baseId = `scope_${sanitizeId(targetId)}`;
+  if (!options.scopes.some((scope) => scope.id === baseId)) {
+    return baseId;
+  }
+  options.scopeCounter.value += 1;
+  return `${baseId}_${options.scopeCounter.value}`;
+}
 
-    const upstream = mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
+function createLineageScope(
+  query: SimpleSelectQuery,
+  sources: ResolvedSource[],
+  joins: JoinClause[],
+  outputColumns: LineageColumn[],
+  targetId: string,
+  targetLabel: string,
+  scopeId: string,
+  options: CollectQueryEdgesOptions,
+  parentScopeId?: string,
+): LineageScope {
+  const where = collectConditionInfluences(query.whereClause?.condition, 'where', scopeId, sources, ['may_filter_rows'], options);
+  const having = collectConditionInfluences(query.havingClause?.condition, 'having', scopeId, sources, ['may_filter_rows'], options);
+  const groupBy = collectExpressionInfluences(query.groupByClause?.grouping ?? [], 'group_by', scopeId, sources, ['may_change_grain']);
+  const orderBy = collectOrderByInfluences(query.orderByClause?.order ?? [], scopeId, sources, targetId, outputColumns);
+  const limit = collectLimitInfluence(query.limitClause, 'limit', scopeId);
+  const offset = collectLimitInfluence(query.offsetClause, 'offset', scopeId);
+  const joinInfluences = joins
+    .map((join, index) => createJoinInfluence(join, sources[index + 1], index, scopeId, sources))
+    .filter((join): join is LineageJoinInfluence => join !== null);
+
+  return {
+    groupBy,
+    having,
+    id: scopeId,
+    joins: joinInfluences,
+    kind: nodeIdToScopeKind(targetId),
+    label: `${nodeIdToScopeKind(targetId)}:${targetLabel}`,
+    limit,
+    nodeId: targetId,
+    offset,
+    orderBy,
+    parentScopeId,
+    querySql: formatScopeQuerySql(query),
+    where,
+  };
+}
+
+function nodeIdToScopeKind(nodeId: string): LineageScope['kind'] {
+  if (nodeId === 'main_output') {
+    return 'select';
+  }
+  if (nodeId.startsWith('cte_')) {
+    return 'cte';
+  }
+  if (nodeId.startsWith('derived_')) {
+    return 'derived';
+  }
+  if (nodeId.startsWith('scalar_subquery_')) {
+    return 'scalar_subquery';
+  }
+  return 'select';
+}
+
+function collectConditionInfluences(
+  condition: unknown,
+  kind: LineageCondition['kind'],
+  scopeId: string,
+  sources: ResolvedSource[],
+  impact: LineageCondition['impact'],
+  options?: CollectQueryEdgesOptions,
+): LineageCondition[] {
+  if (!condition) {
+    return [];
+  }
+
+  const conditions = kind === 'where' || kind === 'having' ? splitAndConditions(condition) : [condition];
+  const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
+  return conditions.flatMap((item, index) => {
+    const expressionSql = formatExpressionSql(item);
+    const references = toSourceReferences(
+      mergeColumnRefs(resolveColumnReferences(item, sources), options ? collectNestedQueryReferences(item, options) : []),
+      scopeId,
+      'population_origin',
+    );
+    if (!expressionSql && references.length === 0) {
+      return [];
+    }
+    return [{
+      expressionSql: expressionSql ?? 'unknown expression',
+      id: `${scopeId}_${kind}_${index + 1}`,
+      impact,
+      kind,
+      references,
+      scopeId,
+      splitStrategy,
+    }];
+  });
+}
+
+function collectOrderByInfluences(
+  orderItems: unknown[],
+  scopeId: string,
+  sources: ResolvedSource[],
+  targetId: string,
+  outputColumns: LineageColumn[],
+): LineageExpressionInfluence[] {
+  return orderItems.flatMap((orderItem, index) => {
+    const expression = orderItem && typeof orderItem === 'object' && 'value' in orderItem ? (orderItem as { value?: unknown }).value : orderItem;
+    const expressionSql = formatExpressionSql(orderItem) ?? formatExpressionSql(expression);
+    const outputRefs = resolveOutputColumnReferences(expression, targetId, outputColumns);
+    const sourceRefs = outputRefs.length > 0 ? [] : resolveColumnReferences(expression, sources);
+    const references = toSourceReferences(mergeColumnRefs(sourceRefs, outputRefs), scopeId, 'population_origin');
+    if (!expressionSql && references.length === 0) {
+      return [];
+    }
+    return [{
+      expressionSql: expressionSql ?? 'unknown order expression',
+      id: `${scopeId}_order_by_${index + 1}`,
+      impact: ['may_change_order'],
+      kind: 'order_by',
+      references,
+      scopeId,
+    }];
+  });
+}
+
+function collectLimitInfluence(
+  clause: unknown,
+  kind: 'limit' | 'offset',
+  scopeId: string,
+): LineageExpressionInfluence | undefined {
+  if (!clause) {
+    return undefined;
+  }
+  const expressionSql = formatExpressionSql(clause);
+  return {
+    expressionSql: expressionSql ?? kind,
+    id: `${scopeId}_${kind}_1`,
+    impact: ['may_limit_rows'],
+    kind,
+    references: [],
+    scopeId,
+  };
+}
+
+function resolveOutputColumnReferences(value: unknown, targetId: string, outputColumns: LineageColumn[]): LineageColumnRef[] {
+  const outputColumnNames = new Set(outputColumns.map((column) => column.name));
+  const refs: LineageColumnRef[] = [];
+  const seen = new Set<string>();
+  for (const reference of collectColumnReferences(value)) {
+    const columnName = reference.column.name;
+    if (reference.getNamespace() || !outputColumnNames.has(columnName)) {
+      continue;
+    }
+    const key = `${targetId}.${columnName}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      refs.push({ columnName, nodeId: targetId });
+    }
+  }
+  return refs;
+}
+
+function collectNestedQueryReferences(value: unknown, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+  const refs: LineageColumnRef[] = [];
+  for (const query of collectNestedSimpleSelectQueries(value)) {
+    refs.push(...collectQueryLocalReferences(query, options));
+  }
+  return refs;
+}
+
+function collectQueryLocalReferences(query: SimpleSelectQuery, options: CollectQueryEdgesOptions): LineageColumnRef[] {
+  const fromClause = query.fromClause;
+  if (!fromClause) {
+    return [];
+  }
+  const localEdges: LineageEdge[] = [];
+  const sources = [
+    resolveSourceExpression(
+      fromClause.source,
+      options.cteNames,
+      options.nodes,
+      localEdges,
+      options.scopes,
+      options.warnings,
+      options.derivedCounter,
+      options.scalarSubqueryCounter,
+      options.scopeCounter,
+      options.recursiveRootId,
+      options.schemaFacts,
+    ),
+  ];
+  for (const join of fromClause.joins ?? []) {
+    sources.push(resolveSourceExpression(
+      join.source,
+      options.cteNames,
+      options.nodes,
+      localEdges,
+      options.scopes,
+      options.warnings,
+      options.derivedCounter,
+      options.scalarSubqueryCounter,
+      options.scopeCounter,
+      options.recursiveRootId,
+      options.schemaFacts,
+    ));
+  }
+  return resolveColumnReferences(query, sources);
+}
+
+function collectExpressionInfluences(
+  expressions: unknown[],
+  kind: LineageExpressionInfluence['kind'],
+  scopeId: string,
+  sources: ResolvedSource[],
+  impact: LineageExpressionInfluence['impact'],
+): LineageExpressionInfluence[] {
+  return expressions.flatMap((expression, index) => {
+    const expressionSql = formatExpressionSql(expression);
+    const references = toSourceReferences(resolveColumnReferences(expression, sources), scopeId, 'population_origin');
+    if (!expressionSql && references.length === 0) {
+      return [];
+    }
+    return [{
+      expressionSql: expressionSql ?? 'unknown expression',
+      id: `${scopeId}_${kind}_${index + 1}`,
+      impact,
+      kind,
+      references,
+      scopeId,
+    }];
+  });
+}
+
+function createJoinInfluence(
+  join: JoinClause,
+  joinedSource: ResolvedSource | undefined,
+  index: number,
+  scopeId: string,
+  sources: ResolvedSource[],
+): LineageJoinInfluence | null {
+  const joinType = normalizeJoinType(join);
+  const condition = collectConditionInfluences(join.condition, 'join_on', scopeId, sources, joinType === 'inner' ? ['may_filter_rows'] : ['may_null_extend_rows'])[0];
+  return {
+    condition,
+    id: `${scopeId}_join_${index + 1}`,
+    impact: joinType === 'inner' ? ['may_filter_rows', 'may_multiply_rows'] : ['may_null_extend_rows', 'may_multiply_rows'],
+    joinType,
+    references: condition?.references ?? [],
+    scopeId,
+    sourceNodeId: joinedSource?.node.id ?? 'unknown',
+  };
+}
+
+function toSourceReferences(
+  refs: LineageColumnRef[],
+  scopeId: string,
+  role: LineageSourceReference['role'],
+): LineageSourceReference[] {
+  return refs.map((ref) => ({
+    columnName: ref.columnName,
+    nodeId: ref.nodeId,
+    role,
+    scopeId,
+  }));
+}
+
+function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
+  if (hasWildcardSelectItem(query)) {
+    const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
+    return [...rawsqlColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+  }
+
+  const selectedColumns: LineageColumn[] = query.selectClause.items.flatMap((item, index): LineageColumn | LineageColumn[] => {
     const comments = extractSelectItemComments(query.selectClause.items, index);
     const caseRules = collectExpressionBreakdownRules(item.value, sources);
     const expressionTree = collectExpressionTree(item.value, sources);
     const name = getSelectItemOutputName(item, index);
+    const outputIndex = index;
+    const scalarSubqueryRefs = collectScalarSubqueryLineage(item.value, name, sources, options, scopeId);
+    const upstream = scalarSubqueryRefs.length > 0
+      ? scalarSubqueryRefs
+      : mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
     return {
       id: '',
       name,
@@ -600,14 +1014,342 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       caseRules,
       expressionTree,
       expressionSql: formatExpressionSql(item.value),
+      outputIndex,
+      selectItemId: createSelectItemId(scopeId, outputIndex),
+      scopeId,
       upstream,
       usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
     };
   });
-  return [...selectedColumns, ...collectFilterColumns(query, sources, options)];
+  return [...selectedColumns, ...collectFilterColumns(query, sources, options, scopeId)];
 }
 
-function collectFilterColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions): LineageColumn[] {
+function collectScalarSubqueryLineage(
+  value: unknown,
+  ownerOutputColumnName: string,
+  outerSources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+  parentScopeId: string,
+): LineageColumnRef[] {
+  const inlineQueries = collectInlineQueries(value);
+  if (inlineQueries.length === 0) {
+    return [];
+  }
+  const isWholeColumnExpression = value instanceof InlineQuery && inlineQueries.length === 1;
+
+  return inlineQueries.flatMap((inlineQuery, index) => {
+    const query = inlineQuery.selectQuery;
+    if (!isSelectQuery(query)) {
+      return [];
+    }
+
+    options.scalarSubqueryCounter.value += 1;
+    const id = `scalar_subquery_${sanitizeId(ownerOutputColumnName)}_${options.scalarSubqueryCounter.value}`;
+    const ownerExpressionRole = isWholeColumnExpression ? 'whole_column' : 'expression_part';
+    const ownerExpressionPartIndex = ownerExpressionRole === 'expression_part' ? index + 1 : undefined;
+    const label = ownerExpressionRole === 'whole_column'
+      ? ownerOutputColumnName
+      : `${ownerOutputColumnName}_${ownerExpressionPartIndex}`;
+    const outputExpressionSql = getScalarSubqueryOutputExpressionSql(query);
+    const correlatedRefs = query instanceof SimpleSelectQuery ? collectCorrelationReferences(query, outerSources, options) : [];
+
+    options.nodes.set(id, {
+      id,
+      type: 'scalar_subquery',
+      label,
+      columns: [],
+      querySql: formatStandaloneQuerySql(query),
+      scalarSubquery: {
+        correlated: correlatedRefs.length > 0,
+        outputExpressionSql,
+        ownerOutputColumnName,
+        ownerOutputNodeId: options.targetId,
+        ownerExpressionRole,
+        ownerExpressionPartIndex,
+        parentScopeId,
+        sql: formatExpressionSql(inlineQuery),
+      },
+    });
+
+    collectQueryEdges({
+      ...options,
+      query,
+      targetId: id,
+      targetLabel: label,
+      parentScopeId,
+    });
+
+    addLineageEdge(options.edges, {
+      source: id,
+      target: options.targetId,
+      type: 'dataFlow',
+      kind: 'subquery_value',
+      confidence: 'high',
+    });
+
+    const scalarNode = options.nodes.get(id);
+    const scalarScopeId = scalarNode?.dependencyProfile?.scopeIds?.[0] ?? options.scopes.find((scope) => scope.nodeId === id)?.id;
+    if (scalarNode?.scalarSubquery && scalarScopeId) {
+      scalarNode.scalarSubquery.scopeId = scalarScopeId;
+      if (query instanceof SimpleSelectQuery) {
+        scalarNode.scalarSubquery.correlationConditions = collectCorrelationConditions(query, outerSources, options, scalarScopeId);
+      }
+    }
+
+    for (const ref of correlatedRefs) {
+      addLineageEdge(options.edges, {
+        source: ref.nodeId,
+        target: id,
+        type: 'dataFlow',
+        kind: 'correlation',
+        sourceAlias: findSourceAlias(ref.nodeId, outerSources),
+        confidence: 'medium',
+      });
+      setNodeColumns(options.nodes, ref.nodeId, [ref.columnName]);
+    }
+
+    const outputColumnName = scalarNode?.columns[0]?.name ?? ownerOutputColumnName;
+    return [{ nodeId: id, columnName: outputColumnName, scopeId: scalarScopeId }];
+  });
+}
+
+function collectInlineQueries(value: unknown): InlineQuery[] {
+  const queries: InlineQuery[] = [];
+  const visited = new Set<unknown>();
+
+  const visit = (current: unknown): void => {
+    if (!current || typeof current !== 'object' || visited.has(current)) {
+      return;
+    }
+    visited.add(current);
+
+    if (current instanceof InlineQuery) {
+      queries.push(current);
+      return;
+    }
+
+    for (const nested of Object.values(current)) {
+      if (Array.isArray(nested)) {
+        nested.forEach(visit);
+      } else {
+        visit(nested);
+      }
+    }
+  };
+
+  visit(value);
+  return queries;
+}
+
+function getScalarSubqueryOutputExpressionSql(query: SelectQuery): string | undefined {
+  if (!(query instanceof SimpleSelectQuery)) {
+    return formatExpressionSql(query);
+  }
+  const value = query.selectClause.items[0]?.value;
+  return value ? formatExpressionSql(value) : undefined;
+}
+
+function collectCorrelationReferences(
+  query: SimpleSelectQuery,
+  outerSources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+): LineageColumnRef[] {
+  const innerSources = collectQuerySourcesForReferenceResolution(query, options);
+  if (innerSources.length === 0) {
+    return [];
+  }
+
+  const localRefs = resolveColumnReferences(query, innerSources);
+  const localKeys = new Set(localRefs.map((ref) => `${ref.nodeId}.${ref.columnName}`));
+  return resolveColumnReferences(query, outerSources)
+    .filter((ref) => !localKeys.has(`${ref.nodeId}.${ref.columnName}`));
+}
+
+function collectCorrelationConditions(
+  query: SimpleSelectQuery,
+  outerSources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+  scopeId: string,
+): NonNullable<NonNullable<LineageNode['scalarSubquery']>['correlationConditions']> {
+  const innerSources = collectQuerySourcesForReferenceResolution(query, options);
+  if (innerSources.length === 0) {
+    return [];
+  }
+
+  return splitAndConditions(query.whereClause?.condition).flatMap((condition) => {
+    const outerRefs = resolveColumnReferences(condition, outerSources);
+    if (outerRefs.length === 0) {
+      return [];
+    }
+    const innerRefs = resolveColumnReferences(condition, innerSources);
+    return [{
+      expressionSql: formatExpressionSql(condition) ?? 'unknown correlation condition',
+      references: toSourceReferences(mergeColumnRefs(innerRefs, outerRefs), scopeId, 'population_origin'),
+      scopeId,
+    }];
+  });
+}
+
+function collectQuerySourcesForReferenceResolution(
+  query: SimpleSelectQuery,
+  options: CollectQueryEdgesOptions,
+): ResolvedSource[] {
+  const fromClause = query.fromClause;
+  if (!fromClause) {
+    return [];
+  }
+
+  const localEdges: LineageEdge[] = [];
+  const innerSources = [
+    resolveSourceExpression(
+      fromClause.source,
+      options.cteNames,
+      options.nodes,
+      localEdges,
+      options.scopes,
+      options.warnings,
+      options.derivedCounter,
+      options.scalarSubqueryCounter,
+      options.scopeCounter,
+      options.recursiveRootId,
+      options.schemaFacts,
+    ),
+  ];
+  for (const join of fromClause.joins ?? []) {
+    innerSources.push(resolveSourceExpression(
+      join.source,
+      options.cteNames,
+      options.nodes,
+      localEdges,
+      options.scopes,
+      options.warnings,
+      options.derivedCounter,
+      options.scalarSubqueryCounter,
+      options.scopeCounter,
+      options.recursiveRootId,
+      options.schemaFacts,
+    ));
+  }
+  return innerSources;
+}
+
+function findSourceAlias(nodeId: string, sources: ResolvedSource[]): string | undefined {
+  return sources.find((source) => source.node.id === nodeId)?.sourceAlias;
+}
+
+function hasWildcardSelectItem(query: SimpleSelectQuery): boolean {
+  return query.selectClause.items.some((item) =>
+    item.value instanceof ColumnReference && item.value.column.name === '*',
+  );
+}
+
+function collectRawsqlExpandedSelectColumns(
+  query: SimpleSelectQuery,
+  sources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+  scopeId: string,
+): LineageColumn[] {
+  const rawsqlValues = new SelectValueCollector(
+    options.schemaFacts ? createTableColumnResolver(options.schemaFacts) : null,
+  ).collect(query);
+  warnIfRawsqlDedupedWildcardColumns(query, sources, rawsqlValues.map((value) => value.name), options);
+
+  if (rawsqlValues.length === 0) {
+    options.warnings.push({
+      code: 'wildcard_unresolved_without_schema',
+      message: 'Wildcard columns could not be expanded because schema facts were not provided or the source columns are unknown.',
+    });
+    return [];
+  }
+
+  return rawsqlValues.map((value, index) => {
+    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sources), collectNestedExpressionLineage(value.value, options));
+    const matchingItem = findSelectItemForRawsqlValue(query, value.value);
+    const comments = matchingItem ? extractSelectItemComments(query.selectClause.items, query.selectClause.items.indexOf(matchingItem)) : undefined;
+    return {
+      id: '',
+      name: value.name,
+      comments,
+      caseRules: collectExpressionBreakdownRules(value.value, sources),
+      expressionTree: collectExpressionTree(value.value, sources),
+      expressionSql: formatExpressionSql(value.value),
+      outputIndex: index,
+      selectItemId: createSelectItemId(scopeId, index),
+      scopeId,
+      upstream,
+      usage: matchingItem && isGroupedSelectItem(matchingItem.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
+    };
+  });
+}
+
+function createSelectItemId(scopeId: string, outputIndex: number): string {
+  return `${scopeId}_output_${outputIndex + 1}`;
+}
+
+function warnIfRawsqlDedupedWildcardColumns(
+  query: SimpleSelectQuery,
+  sources: ResolvedSource[],
+  rawsqlColumnNames: string[],
+  options: CollectQueryEdgesOptions,
+): void {
+  if (!options.schemaFacts) {
+    return;
+  }
+
+  const expectedColumns = collectExpectedWildcardColumnNames(query, sources);
+  if (expectedColumns.length === 0 || rawsqlColumnNames.length >= expectedColumns.length) {
+    return;
+  }
+
+  const duplicateNames = [...new Set(expectedColumns.filter((name, index) => expectedColumns.indexOf(name) !== index))];
+  if (duplicateNames.length === 0) {
+    return;
+  }
+
+  options.warnings.push({
+    code: 'rawsql_duplicate_output_columns_deduped',
+    message: `rawsql-ts returned ${rawsqlColumnNames.length} wildcard output column(s), while schema facts indicate ${expectedColumns.length} source column(s). Duplicate output column name(s) appear to have been deduplicated by rawsql-ts: ${duplicateNames.join(', ')}.`,
+  });
+}
+
+function collectExpectedWildcardColumnNames(query: SimpleSelectQuery, sources: ResolvedSource[]): string[] {
+  return query.selectClause.items.flatMap((item) => {
+    if (!(item.value instanceof ColumnReference) || item.value.column.name !== '*') {
+      return [];
+    }
+
+    const qualifier = getWildcardQualifier(item.value);
+    const matchingSources = qualifier
+      ? sources.filter((source) => source.aliases.some((alias) => sameIdentifier(alias, qualifier)))
+      : sources;
+    return matchingSources.flatMap((source) => source.node.columns.map((column) => column.name));
+  });
+}
+
+function getWildcardQualifier(reference: ColumnReference): string | undefined {
+  const namespaces = reference.qualifiedName.namespaces;
+  if (!namespaces || namespaces.length === 0) {
+    return undefined;
+  }
+  return namespaces.map((namespace) => namespace.name).join('.');
+}
+
+function sameIdentifier(left: string, right: string): boolean {
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+function findSelectItemForRawsqlValue(
+  query: SimpleSelectQuery,
+  value: unknown,
+): SimpleSelectQuery['selectClause']['items'][number] | undefined {
+  const valueSql = formatExpressionSql(value);
+  return query.selectClause.items.find((item) =>
+    !(item.value instanceof ColumnReference && item.value.column.name === '*')
+    && formatExpressionSql(item.value) === valueSql,
+  );
+}
+
+function collectFilterColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
   const whereCondition = query.whereClause?.condition;
   if (!whereCondition) {
     return [];
@@ -624,6 +1366,7 @@ function collectFilterColumns(query: SimpleSelectQuery, sources: ResolvedSource[
         id: '',
         name: `condition ${index + 1}`,
         expressionSql: formatExpressionSql(condition),
+        scopeId,
         upstream,
         usage: { role: 'filter', reasons: ['where'] },
       },
@@ -638,26 +1381,9 @@ function splitAndConditions(condition: unknown): unknown[] {
   return [condition];
 }
 
-function expandWildcardSelectItem(item: SimpleSelectQuery['selectClause']['items'][number], sources: ResolvedSource[]): LineageColumn[] | null {
-  if (!(item.value instanceof ColumnReference) || item.value.column.name !== '*') {
-    return null;
-  }
-
-  const namespace = item.value.getNamespace();
-  const targetSources = namespace
-    ? sources.filter((source) => source.aliases.includes(namespace))
-    : sources;
-  const columns = targetSources.flatMap((source) =>
-    source.node.columns.map((column) => ({
-      id: '',
-      name: column.name,
-      expressionSql: namespace ? `${namespace}.${column.name}` : column.name,
-      upstream: [{ nodeId: source.node.id, columnName: column.name }],
-    })),
-  );
-
-  return columns.length > 0 ? columns : null;
-}
+// SQL analysis is owned by rawsql-ts. Wildcard select items are expanded through
+// SelectValueCollector above; the lineage adapter only enriches those results
+// with scopeId, nodeId/upstream mapping, usage metadata, and diagnostics.
 
 function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'][number], index: number): string {
   if (item.identifier) {
@@ -947,12 +1673,15 @@ function resolveUnqualifiedColumnSource(columnName: string, sources: ResolvedSou
 }
 
 function collectQueryConditionReferences(query: SimpleSelectQuery): Array<{ reason: LineageColumnUsageReason; refs: ColumnReference[] }> {
+  const outputColumnNames = new Set(query.selectClause.items.map((item, index) => getSelectItemOutputName(item, index)));
+  const orderByRefs = collectColumnReferences(query.orderByClause?.order ?? [])
+    .filter((reference) => reference.getNamespace() || !outputColumnNames.has(reference.column.name));
   const references: Array<{ reason: LineageColumnUsageReason; refs: ColumnReference[] }> = [
     { reason: 'join', refs: collectColumnReferences((query.fromClause?.joins ?? []).map((join) => join.condition)) },
     { reason: 'where', refs: collectColumnReferences(query.whereClause?.condition) },
     { reason: 'groupBy', refs: collectColumnReferences(query.groupByClause?.grouping ?? []) },
     { reason: 'having', refs: collectColumnReferences(query.havingClause?.condition) },
-    { reason: 'orderBy', refs: collectColumnReferences(query.orderByClause?.order ?? []) },
+    { reason: 'orderBy', refs: orderByRefs },
   ];
   return references.filter((item) => item.refs.length > 0);
 }
@@ -980,7 +1709,7 @@ function collectNestedQueryLineage(
     return [];
   }
 
-  const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId)];
+  const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, options.scopes, warnings, derivedCounter, options.scalarSubqueryCounter, options.scopeCounter, recursiveRootId, options.schemaFacts)];
   addLineageEdge(edges, {
     source: sources[0].node.id,
     target: targetId,
@@ -991,7 +1720,7 @@ function collectNestedQueryLineage(
   });
 
   for (const join of fromClause.joins ?? []) {
-    const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, warnings, derivedCounter, recursiveRootId);
+    const joinedSource = resolveSourceExpression(join.source, cteNames, nodes, edges, options.scopes, warnings, derivedCounter, options.scalarSubqueryCounter, options.scopeCounter, recursiveRootId, options.schemaFacts);
     sources.push(joinedSource);
     addLineageEdge(edges, {
       source: joinedSource.node.id,
@@ -1099,6 +1828,9 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     const caseRules = typeof column === 'string' ? undefined : column.caseRules;
     const expressionTree = typeof column === 'string' ? undefined : column.expressionTree;
     const expressionSql = typeof column === 'string' ? undefined : column.expressionSql;
+    const outputIndex = typeof column === 'string' ? undefined : column.outputIndex;
+    const selectItemId = typeof column === 'string' ? undefined : column.selectItemId;
+    const scopeId = typeof column === 'string' ? undefined : column.scopeId;
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     const usage = typeof column === 'string' ? undefined : column.usage;
     if (!seen.has(name)) {
@@ -1110,6 +1842,9 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         caseRules,
         expressionTree,
         expressionSql,
+        outputIndex,
+        selectItemId,
+        scopeId,
         upstream,
         usage,
       });
@@ -1129,6 +1864,15 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
       }
       if (existing && expressionSql) {
         existing.expressionSql = expressionSql;
+      }
+      if (existing && outputIndex !== undefined) {
+        existing.outputIndex = outputIndex;
+      }
+      if (existing && selectItemId) {
+        existing.selectItemId = selectItemId;
+      }
+      if (existing && scopeId) {
+        existing.scopeId = scopeId;
       }
       if (existing && usage) {
         existing.usage = mergeColumnUsage(existing.usage, usage);
@@ -1336,20 +2080,36 @@ function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): L
   return merged;
 }
 
-function createTableNode(tableName: string, nodes: Map<string, LineageNode>): LineageNode {
+function createTableNode(tableName: string, nodes: Map<string, LineageNode>, schemaFacts?: SchemaFacts): LineageNode {
   const id = toTableId(tableName);
   const existing = nodes.get(id);
   if (existing) {
+    if (existing.columns.length === 0) {
+      const columnNames = resolveSchemaColumnNames(schemaFacts, tableName);
+      if (columnNames.length > 0) {
+        setNodeColumns(nodes, existing.id, columnNames);
+      }
+    }
     return existing;
   }
+  const columnNames = resolveSchemaColumnNames(schemaFacts, tableName);
   const node: LineageNode = {
     id,
     type: 'table',
     label: tableName,
-    columns: [],
+    columns: columnNames.length > 0
+      ? columnNames.map((name) => ({
+          id: `${id}.${sanitizeId(name)}`,
+          name,
+        }))
+      : [],
   };
   nodes.set(id, node);
   return node;
+}
+
+function resolveSchemaColumnNames(schemaFacts: SchemaFacts | undefined, tableName: string): string[] {
+  return schemaFacts ? createTableColumnResolver(schemaFacts)(tableName) : [];
 }
 
 function createCteNode(cteName: string, nodes: Map<string, LineageNode>): LineageNode {

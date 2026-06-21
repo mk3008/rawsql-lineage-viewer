@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, Play, Share2, Trash2 } from 'lucide-react';
-import { LineageGraph, LineageInspector, type CaseRuleSelection, type GraphHighlightTarget, type InspectorSelection } from './components/LineageGraph';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2 } from 'lucide-react';
+import { LineageGraph, LineageInspector, type CaseRuleSelection, type GraphHighlightTarget, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
 import type { GraphFlowDirection } from './graph/buildGraphModel';
+import type { ProblemIntent } from './lineage/problemIntent';
 import { analyzeSql } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
+const legendPanelStorageKey = 'rawsql-lineage-viewer:legend-panel-open';
+const inspectorCardHistoryStateKey = 'rawsqlLineageViewerInspectorCard';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
 
@@ -24,22 +27,26 @@ export function App() {
   const initialHistory = useMemo(() => readSqlHistory(initialSql), [initialSql]);
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
+  const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
   const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
   const [graphHighlightTarget, setGraphHighlightTarget] = useState<{ nonce: number; target: GraphHighlightTarget } | null>(null);
+  const [problemIntent, setProblemIntent] = useState<ProblemIntent>('logic_review');
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
-  const [flowDirection, setFlowDirection] = useState<GraphFlowDirection>('upstream');
+  const flowDirection: GraphFlowDirection = 'upstream';
   const lastHandledAutoInspectOutputNonceRef = useRef(0);
   const pendingAutoInspectOutputNonceRef = useRef<number | null>(null);
   const suppressNullInspectorSelectionRef = useRef(false);
+  const lastCommittedInspectorCardRef = useRef<InspectorCardSelection | null>(null);
 
   const analysis = useMemo(() => {
     try {
@@ -100,10 +107,14 @@ export function App() {
         tables: adapterResult.lineage.nodes.filter((node) => node.type === 'table').length,
         ctes: adapterResult.lineage.nodes.filter((node) => node.type === 'cte').length,
         derived: adapterResult.lineage.nodes.filter((node) => node.type === 'derived').length,
+        scalarSubqueries: adapterResult.lineage.nodes.filter((node) => node.type === 'scalar_subquery').length,
         outputs: adapterResult.lineage.nodes.filter((node) => node.type === 'output').length,
         dataFlows: adapterResult.lineage.edges.filter((edge) => edge.type === 'dataFlow').length,
       }
     : null;
+  useEffect(() => {
+    writeLegendPanelOpen(isLegendPanelOpen);
+  }, [isLegendPanelOpen]);
   const handleInspectorSelectionChange = useCallback((selection: InspectorSelection) => {
     if (selection && !(selection.kind === 'node' && selection.node.type === 'output')) {
       setForcedInspectorSelection(null);
@@ -117,6 +128,8 @@ export function App() {
       }
       if (!isSameInspectorSelection(current, selection)) {
         setCaseRuleSelection(null);
+        setActiveInspectorCardId(null);
+        lastCommittedInspectorCardRef.current = null;
       }
       return selection;
     });
@@ -125,6 +138,71 @@ export function App() {
       setPanelTab('inspector');
     }
   }, []);
+  const applyInspectorCardSelection = useCallback((selection: InspectorCardSelection | null) => {
+    setActiveInspectorCardId(selection?.cardId ?? null);
+    if (!selection) {
+      return;
+    }
+    if (selection.focusNodeId) {
+      setGraphFocusTarget({ nodeId: selection.focusNodeId, nonce: Date.now() });
+    }
+    if (selection.highlightTarget !== undefined) {
+      setGraphHighlightTarget({ target: selection.highlightTarget, nonce: Date.now() });
+    }
+  }, []);
+  const commitInspectorCardHistory = useCallback((selection: InspectorCardSelection | null, mode: 'push' | 'replace' = 'push') => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (mode === 'push' && isSameInspectorCardSelection(lastCommittedInspectorCardRef.current, selection)) {
+      return;
+    }
+
+    const currentState = isRecord(window.history.state) ? window.history.state : {};
+    const nextState = { ...currentState };
+    if (selection) {
+      nextState[inspectorCardHistoryStateKey] = selection;
+    } else {
+      delete nextState[inspectorCardHistoryStateKey];
+    }
+
+    if (mode === 'replace') {
+      window.history.replaceState(nextState, '', window.location.href);
+    } else {
+      window.history.pushState(nextState, '', window.location.href);
+    }
+    lastCommittedInspectorCardRef.current = selection;
+  }, []);
+  const selectInspectorCard = useCallback((selection: InspectorCardSelection) => {
+    commitInspectorCardHistory(selection);
+    applyInspectorCardSelection(selection);
+  }, [applyInspectorCardSelection, commitInspectorCardHistory]);
+  const clearInspectorCard = useCallback((recordHistory = false) => {
+    if (recordHistory) {
+      commitInspectorCardHistory(null);
+    } else {
+      lastCommittedInspectorCardRef.current = null;
+    }
+    applyInspectorCardSelection(null);
+  }, [applyInspectorCardSelection, commitInspectorCardHistory]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const currentSelection = readInspectorCardHistoryState(window.history.state);
+    lastCommittedInspectorCardRef.current = currentSelection;
+    applyInspectorCardSelection(currentSelection);
+
+    const handlePopState = (event: PopStateEvent) => {
+      const selection = readInspectorCardHistoryState(event.state);
+      lastCommittedInspectorCardRef.current = selection;
+      applyInspectorCardSelection(selection);
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [applyInspectorCardSelection]);
   const toggleExpressionBreakdown = useCallback((columnId: string) => {
     setCaseRuleSelection(null);
     setExpandedExpressionColumnIds((current) => {
@@ -228,10 +306,19 @@ export function App() {
             <GitHubMark />
             GitHub
           </a>
+          <button
+            className="icon-button"
+            type="button"
+            onClick={() => setIsLegendPanelOpen((value) => !value)}
+            aria-label={isLegendPanelOpen ? 'Hide legend panel' : 'Show legend panel'}
+            title={isLegendPanelOpen ? 'Hide legend panel' : 'Show legend panel'}
+          >
+            {isLegendPanelOpen ? <PanelRightClose size={18} /> : <PanelRightOpen size={18} />}
+          </button>
         </div>
       </header>
 
-      <main className={`workspace ${isPanelOpen ? '' : 'workspace-panel-collapsed'}`}>
+      <main className={`workspace ${isPanelOpen ? '' : 'workspace-panel-collapsed'} ${isLegendPanelOpen ? '' : 'workspace-legend-collapsed'}`}>
         <aside className="sql-panel" aria-label="SQL and inspector panel">
           <div className="panel-heading">
             <div className="panel-tabs" role="tablist" aria-label="Side panel">
@@ -326,21 +413,29 @@ export function App() {
               </div>
             </div>
           ) : panelTab === 'inspector' ? (
-            <LineageInspector
-              activeCaseRule={caseRuleSelection}
-              expandedExpressionColumnIds={expandedExpressionColumnIds}
-              flowDirection={flowDirection}
-              onClearCaseRule={() => setCaseRuleSelection(null)}
-              onRenameOutputTitle={renameOutputTitle}
-              onToggleExpressionBreakdown={toggleExpressionBreakdown}
-              onFocusNode={(nodeId) => {
-                setGraphFocusTarget({ nodeId, nonce: Date.now() });
-              }}
-              onHighlightTarget={(target) => {
-                setGraphHighlightTarget({ target, nonce: Date.now() });
-              }}
-              selection={forcedInspectorSelection ?? inspectorSelection}
-            />
+            adapterResult ? (
+              <LineageInspector
+                activeInspectorCardId={activeInspectorCardId}
+                activeCaseRule={caseRuleSelection}
+                expandedExpressionColumnIds={expandedExpressionColumnIds}
+                lineage={adapterResult.lineage}
+                onClearCaseRule={() => setCaseRuleSelection(null)}
+                onClearInspectorCard={clearInspectorCard}
+                onRenameOutputTitle={renameOutputTitle}
+                onSelectInspectorCard={selectInspectorCard}
+                onToggleExpressionBreakdown={toggleExpressionBreakdown}
+                onFocusNode={(nodeId) => {
+                  setGraphFocusTarget({ nodeId, nonce: Date.now() });
+                }}
+                onHighlightTarget={(target) => {
+                  setGraphHighlightTarget({ target, nonce: Date.now() });
+                }}
+                problemIntent={problemIntent}
+                selection={forcedInspectorSelection ?? inspectorSelection}
+              />
+            ) : (
+              <div className="lineage-inspector-empty">Analyze SQL to inspect lineage details.</div>
+            )
           ) : (
             <SqlHistoryPanel
               history={sqlHistory}
@@ -361,35 +456,6 @@ export function App() {
         </aside>
 
         <section className="canvas-area">
-          <div className="canvas-toolbar">
-            <div className="flow-direction-toggle" role="group" aria-label="Flow direction">
-              <button
-                aria-pressed={flowDirection === 'downstream'}
-                className={flowDirection === 'downstream' ? 'active' : ''}
-                type="button"
-                onClick={() => setFlowDirection('downstream')}
-              >
-                Downstream
-              </button>
-              <button
-                aria-pressed={flowDirection === 'upstream'}
-                className={flowDirection === 'upstream' ? 'active' : ''}
-                type="button"
-                onClick={() => setFlowDirection('upstream')}
-              >
-                Upstream
-              </button>
-            </div>
-            <div className="legend">
-              <span><i className="legend-dot table" />Table</span>
-              <span><i className="legend-dot cte" />CTE</span>
-              <span><i className="legend-dot derived" />Derived</span>
-              <span><i className="legend-dot output" />Output</span>
-              <span><i className="legend-line data" />Data flow</span>
-              <span title="Nullable by OUTER JOIN"><i className="legend-line outer" />Nullable flow</span>
-            </div>
-          </div>
-
           {adapterResult ? (
             <>
               <LineageGraph
@@ -401,12 +467,15 @@ export function App() {
                 highlightTargetRequest={graphHighlightTarget}
                 lineage={adapterResult.lineage}
                 onInspectorSelectionChange={handleInspectorSelectionChange}
+                onProblemIntentChange={setProblemIntent}
                 outputTitle={outputTitle}
+                problemIntent={problemIntent}
               />
               <div className="graph-info" data-testid="graph-info">
                 <span>Tables <strong>{graphStats?.tables}</strong></span>
                 <span>CTEs <strong>{graphStats?.ctes}</strong></span>
                 <span>Derived <strong>{graphStats?.derived}</strong></span>
+                <span>Scalar Subqueries <strong>{graphStats?.scalarSubqueries}</strong></span>
                 <span>Output <strong>{graphStats?.outputs}</strong></span>
                 <span>DataFlow <strong>{graphStats?.dataFlows}</strong></span>
               </div>
@@ -419,8 +488,52 @@ export function App() {
             </div>
           )}
         </section>
+        {isLegendPanelOpen ? <LegendPanel /> : null}
       </main>
     </div>
+  );
+}
+
+function LegendPanel() {
+  return (
+    <aside className="legend-panel" aria-label="Legend panel">
+      <div className="legend-panel-heading">
+        <div>
+          <h2>Legend</h2>
+          <p>How to read graph symbols and population risk badges.</p>
+        </div>
+      </div>
+      <section className="legend-panel-section">
+        <h3>Node types</h3>
+        <div className="legend-panel-list">
+          <span><i className="legend-dot table" />Table</span>
+          <span><i className="legend-dot cte" />CTE</span>
+          <span><i className="legend-dot derived" />Derived</span>
+          <span><i className="legend-dot scalar-subquery" />Scalar Subquery</span>
+          <span><i className="legend-dot output" />Output</span>
+        </div>
+      </section>
+      <section className="legend-panel-section">
+        <h3>Lines</h3>
+        <div className="legend-panel-list">
+          <span><i className="legend-line data" />Data flow</span>
+          <span><i className="legend-line outer" />Nullable flow</span>
+        </div>
+      </section>
+      <section className="legend-panel-section">
+        <h3>Population badges</h3>
+        <dl className="legend-impact-list">
+          <div><dt><i className="legend-badge">Where</i></dt><dd>WHERE / EXISTS may filter rows</dd></div>
+          <div><dt><i className="legend-badge">Having</i></dt><dd>HAVING may filter groups</dd></div>
+          <div><dt><i className="legend-badge">Join xN</i></dt><dd>JOIN may drop or multiply rows</dd></div>
+          <div><dt><i className="legend-badge">Outer Join</i></dt><dd>OUTER JOIN may add NULLs</dd></div>
+          <div><dt><i className="legend-badge">Group By</i></dt><dd>GROUP BY may change grain/counts</dd></div>
+          <div><dt><i className="legend-badge">Limit</i></dt><dd>LIMIT / OFFSET may cap rows</dd></div>
+          <div><dt><i className="legend-badge">Order By</i></dt><dd>ORDER BY may change selected rows</dd></div>
+          <div><dt><i className="legend-badge legend-badge-source-data">Data?</i></dt><dd>Source data values may be incorrect</dd></div>
+        </dl>
+      </section>
+    </aside>
   );
 }
 
@@ -597,6 +710,38 @@ function writeSqlHistory(history: SqlHistoryItem[]) {
   }
 }
 
+function readLegendPanelOpen() {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  try {
+    const stored = window.localStorage.getItem(legendPanelStorageKey);
+    if (stored === 'true') {
+      return true;
+    }
+    if (stored === 'false') {
+      return false;
+    }
+  } catch {
+    // Ignore storage failures and use the default open state.
+  }
+
+  return true;
+}
+
+function writeLegendPanelOpen(isOpen: boolean) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(legendPanelStorageKey, String(isOpen));
+  } catch {
+    // Ignore storage quota or privacy mode failures.
+  }
+}
+
 function createSqlHistoryItem(sql: string): SqlHistoryItem {
   const normalizedSql = sql.trim();
   return {
@@ -681,6 +826,38 @@ function isSameInspectorSelection(left: InspectorSelection, right: InspectorSele
     return left.node.id === right.node.id;
   }
   return false;
+}
+
+function isSameInspectorCardSelection(left: InspectorCardSelection | null, right: InspectorCardSelection | null) {
+  if (!left || !right) {
+    return left === right;
+  }
+  return (
+    left.cardId === right.cardId &&
+    left.focusNodeId === right.focusNodeId &&
+    JSON.stringify(left.highlightTarget ?? null) === JSON.stringify(right.highlightTarget ?? null)
+  );
+}
+
+function readInspectorCardHistoryState(state: unknown): InspectorCardSelection | null {
+  if (!isRecord(state)) {
+    return null;
+  }
+
+  const value = state[inspectorCardHistoryStateKey];
+  if (!isRecord(value) || typeof value.cardId !== 'string') {
+    return null;
+  }
+
+  return {
+    cardId: value.cardId,
+    focusNodeId: typeof value.focusNodeId === 'string' ? value.focusNodeId : undefined,
+    highlightTarget: 'highlightTarget' in value ? (value.highlightTarget as GraphHighlightTarget) : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function GitHubMark() {

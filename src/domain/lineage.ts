@@ -1,13 +1,118 @@
-export type LineageNodeType = 'table' | 'cte' | 'derived' | 'output';
+export type LineageNodeType = 'table' | 'cte' | 'derived' | 'scalar_subquery' | 'output';
 
 export type LineageEdgeType = 'dataFlow' | 'expression' | 'unknown';
+export type LineageEdgeKind = 'correlation' | 'join_condition' | 'row_source' | 'subquery_value' | 'value_flow' | 'where_filter';
 
 export interface LineageColumnRef {
   nodeId: string;
   columnName: string;
+  scopeId?: string;
 }
 
 export type LineageColumnUsageReason = 'join' | 'where' | 'having' | 'groupBy' | 'orderBy' | 'subquery';
+
+export type LineageImpact =
+  | 'may_filter_rows'
+  | 'may_multiply_rows'
+  | 'may_null_extend_rows'
+  | 'may_change_grain'
+  | 'may_change_value'
+  | 'may_change_order'
+  | 'may_limit_rows'
+  | 'unknown';
+
+export type LineagePopulationEffect =
+  | 'grain_change'
+  | 'null_extension'
+  | 'output_cap'
+  | 'output_selection'
+  | 'row_filter'
+  | 'row_multiplication';
+
+export interface LineageNodeDependencyProfile {
+  consumerNodeCount: number;
+  consumerNodeIds: string[];
+  hasGroupBy: boolean;
+  hasHaving: boolean;
+  hasJoin: boolean;
+  hasLimit: boolean;
+  hasOffset: boolean;
+  hasOrderBy: boolean;
+  hasSetOperation: boolean;
+  hasWhere: boolean;
+  inputNodeCount: number;
+  inputNodeIds: string[];
+  isRecursive: boolean;
+  populationEffects: LineagePopulationEffect[];
+  scopeIds: string[];
+}
+
+export interface SourceSpan {
+  end?: number;
+  start?: number;
+}
+
+export interface LineageSourceReference {
+  columnName: string;
+  nodeId: string;
+  role?: 'population_origin' | 'unknown' | 'value_origin';
+  scopeId: string;
+}
+
+export interface LineageCondition {
+  expressionSql: string;
+  id: string;
+  impact: LineageImpact[];
+  kind: 'aggregate_filter' | 'case_when' | 'having' | 'join_on' | 'where';
+  references: LineageSourceReference[];
+  scopeId: string;
+  sourceSpan?: SourceSpan;
+  splitStrategy: 'none' | 'top_level_and' | 'unsupported_complex_expression' | 'whole_expression';
+}
+
+export interface LineageExpressionInfluence {
+  expressionSql: string;
+  id: string;
+  impact: LineageImpact[];
+  kind: 'group_by' | 'limit' | 'offset' | 'order_by' | 'window_order_by' | 'window_partition_by';
+  references: LineageSourceReference[];
+  scopeId: string;
+  sourceSpan?: SourceSpan;
+}
+
+export interface LineageJoinInfluence {
+  condition?: LineageCondition;
+  id: string;
+  impact: LineageImpact[];
+  joinType: 'full' | 'inner' | 'left' | 'right' | 'unknown';
+  references: LineageSourceReference[];
+  scopeId: string;
+  sourceNodeId: string;
+}
+
+export interface LineageDiagnostic {
+  code: string;
+  message: string;
+  scopeId?: string;
+  severity?: 'info' | 'warning';
+}
+
+export interface LineageScope {
+  diagnostics?: LineageDiagnostic[];
+  groupBy?: LineageExpressionInfluence[];
+  having?: LineageCondition[];
+  id: string;
+  joins?: LineageJoinInfluence[];
+  kind: 'cte' | 'derived' | 'scalar_subquery' | 'select' | 'set_operation' | 'subquery';
+  label?: string;
+  nodeId: string;
+  orderBy?: LineageExpressionInfluence[];
+  parentScopeId?: string;
+  limit?: LineageExpressionInfluence;
+  offset?: LineageExpressionInfluence;
+  where?: LineageCondition[];
+  querySql?: string;
+}
 
 export interface LineageColumnUsage {
   role: 'condition' | 'filter' | 'unused';
@@ -51,6 +156,9 @@ export interface LineageColumn {
   caseRules?: LineageCaseRule[];
   expressionTree?: LineageExpressionTree;
   expressionSql?: string;
+  outputIndex?: number;
+  selectItemId?: string;
+  scopeId?: string;
   upstream?: LineageColumnRef[];
   usage?: LineageColumnUsage;
 }
@@ -62,9 +170,26 @@ export interface LineageNode {
   columns: LineageColumn[];
   comments?: string[];
   cteExecutableSql?: string;
+  dependencyProfile?: LineageNodeDependencyProfile;
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
   querySql?: string;
   recursive?: boolean;
+  scalarSubquery?: {
+    correlated: boolean;
+    correlationConditions?: Array<{
+      expressionSql: string;
+      references: LineageSourceReference[];
+      scopeId?: string;
+    }>;
+    outputExpressionSql?: string;
+    ownerOutputColumnName: string;
+    ownerOutputNodeId: string;
+    ownerExpressionRole: 'whole_column' | 'expression_part';
+    ownerExpressionPartIndex?: number;
+    parentScopeId: string;
+    scopeId?: string;
+    sql?: string;
+  };
 }
 
 export interface LineageEdge {
@@ -72,6 +197,7 @@ export interface LineageEdge {
   source: string;
   target: string;
   type: LineageEdgeType;
+  kind?: LineageEdgeKind;
   label?: string;
   sourceAlias?: string;
   joinNullability?: {
@@ -94,6 +220,7 @@ export interface LineageModel {
   modelVersion: 1;
   nodes: LineageNode[];
   edges: LineageEdge[];
+  scopes: LineageScope[];
   analysisWarnings: AnalysisWarning[];
   raw: {
     adapter: 'rawsql-ts-ast';

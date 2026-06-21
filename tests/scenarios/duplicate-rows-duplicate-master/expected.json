@@ -1,0 +1,33 @@
+{
+  "id": "duplicate-rows-duplicate-master",
+  "symptom": "duplicate_rows",
+  "wrongSymptom": "value_missing",
+  "targetColumn": "id",
+  "rootCauseKind": "data_condition",
+  "expectedCorrectRows": [
+    {
+      "id": "10",
+      "name": "Alice",
+      "tag": "vip"
+    }
+  ],
+  "expectedRows": [
+    {
+      "id": "10",
+      "name": "Alice",
+      "tag": "vip"
+    },
+    {
+      "id": "10",
+      "name": "Alice",
+      "tag": "priority"
+    }
+  ],
+  "expectedEffects": ["row_multiplication", "row_filter"],
+  "primaryEffects": ["row_multiplication"],
+  "expectedMechanisms": ["join", "where"],
+  "expectedEvidenceContains": ["customer_id", "is_active"],
+  "expectedCheckDomains": ["data_condition", "schema_assumption"],
+  "notExpectedEffects": [],
+  "notes": "Duplicate active master rows create duplicate output rows."
+}

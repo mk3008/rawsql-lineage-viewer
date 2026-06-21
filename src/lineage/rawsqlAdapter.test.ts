@@ -139,6 +139,95 @@ describe('rawsqlAdapter', () => {
     ]);
   });
 
+  it('analyzes CREATE TEMPORARY TABLE AS SELECT using only the AS SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      create temporary table customer_sales_tmp as
+      select
+        c.id as customer_id,
+        sum(o.amount) as total_amount
+      from customers c
+      join orders o on o.customer_id = c.id
+      group by c.id
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales_tmp')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
+    expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+  });
+
+  it('analyzes CREATE VIEW AS SELECT using only the AS SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      create view customer_sales as
+      select
+        c.id as customer_id,
+        c.name as customer_name
+      from customers c
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'customer_name']);
+    expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id', 'name']));
+  });
+
+  it('analyzes CREATE TEMPORARY VIEW AS SELECT using only the AS SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      create temporary view customer_sales_view_tmp as
+      select
+        c.id as customer_id
+      from customers c
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales_view_tmp')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id']));
+  });
+
+  it('analyzes CREATE MATERIALIZED VIEW AS SELECT using only the AS SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      create materialized view customer_sales_mv as
+      select
+        c.id as customer_id,
+        sum(o.amount) as total_amount
+      from customers c
+      join orders o on o.customer_id = c.id
+      group by c.id
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales_mv')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+  });
+
+  it('analyzes INSERT SELECT using only the SELECT query', () => {
+    const { lineage } = analyzeSql(`
+      insert into mart.customer_sales (customer_id, total_amount)
+      select
+        c.id as customer_id,
+        sum(o.amount) as total_amount
+      from customers c
+      join orders o on o.customer_id = c.id
+      group by c.id
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.has('table_customer_sales')).toBe(false);
+    expect(nodeById.has('table_mart.customer_sales')).toBe(false);
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
+    expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+  });
+
+  it('rejects INSERT statements without SELECT', () => {
+    expect(() => analyzeSql('insert into customer_sales (customer_id) values (1)')).toThrow(
+      'INSERT lineage requires a SELECT query.',
+    );
+  });
+
   it('rejects CREATE TABLE statements without AS SELECT', () => {
     expect(() => analyzeSql('create table customer_sales (customer_id int, total_amount numeric)')).toThrow(
       'CREATE TABLE lineage requires an AS SELECT query.',
@@ -676,6 +765,7 @@ describe('rawsqlAdapter', () => {
     `);
     const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
     const derivedNode = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'src');
+    const derivedSql = derivedNode?.querySql ?? '';
 
     expect(outputNode?.comments).toEqual(['Final output comment.']);
     expect(outputNode?.columns.find((column) => column.name === 'user_id')?.comments).toEqual(['Output id comment.']);
@@ -683,8 +773,9 @@ describe('rawsqlAdapter', () => {
     expect(outputNode?.querySql).toContain('id as user_id -- Output id comment.');
     expect(derivedNode?.comments).toEqual(['Derived source comment.']);
     expect(derivedNode?.columns.find((column) => column.name === 'id')?.comments).toEqual(['Derived id comment.']);
-    expect(derivedNode?.querySql).toContain('-- Derived source comment.');
-    expect(derivedNode?.querySql).toContain('id -- Derived id comment.');
+    expect(derivedSql).toContain('-- Derived source comment.');
+    expect(derivedSql.indexOf('-- Derived source comment.')).toBeLessThan(derivedSql.indexOf('select'));
+    expect(derivedSql).toContain('id -- Derived id comment.');
   });
 
   it('uses rawsql-ts formatting for long expression display SQL', () => {
@@ -753,7 +844,7 @@ describe('rawsqlAdapter', () => {
     });
   });
 
-  it('adds scalar subquery sources and columns to lineage', () => {
+  it('adds correlated scalar subqueries as independent lineage nodes', () => {
     const { lineage } = analyzeSql(`
       WITH ranked_customers AS (
         SELECT c.id AS customer_id
@@ -772,18 +863,136 @@ describe('rawsqlAdapter', () => {
     `);
     const orders = lineage.nodes.find((node) => node.id === 'table_orders');
     const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scalar = lineage.nodes.find((node) => node.type === 'scalar_subquery');
     const recentOrderCount = output?.columns.find((column) => column.name === 'recent_order_count');
+    const scalarScope = lineage.scopes.find((scope) => scope.nodeId === scalar?.id);
 
-    expect(lineage.edges).toEqual(expect.arrayContaining([expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o2' })]));
+    expect(scalar).toMatchObject({
+      id: 'scalar_subquery_recent_order_count_1',
+      label: 'recent_order_count',
+      scalarSubquery: expect.objectContaining({
+        correlated: true,
+        ownerExpressionRole: 'whole_column',
+        ownerOutputColumnName: 'recent_order_count',
+        ownerOutputNodeId: 'main_output',
+        parentScopeId: 'scope_main_output',
+      }),
+    });
+    expect(scalar?.scalarSubquery?.scopeId).toBe(scalarScope?.id);
+    expect(scalar?.scalarSubquery?.correlationConditions).toEqual([
+      expect.objectContaining({
+        expressionSql: 'o2.customer_id = rc.customer_id',
+        references: expect.arrayContaining([
+          expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id' }),
+          expect.objectContaining({ nodeId: 'cte_ranked_customers', columnName: 'customer_id' }),
+        ]),
+      }),
+    ]);
+    expect(lineage.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'scalar_subquery_recent_order_count_1',
+        target: 'main_output',
+        kind: 'subquery_value',
+      }),
+      expect.objectContaining({
+        source: 'table_orders',
+        target: 'scalar_subquery_recent_order_count_1',
+        kind: 'row_source',
+        sourceAlias: 'o2',
+      }),
+      expect.objectContaining({
+        source: 'cte_ranked_customers',
+        target: 'scalar_subquery_recent_order_count_1',
+        kind: 'correlation',
+        sourceAlias: 'rc',
+      }),
+    ]));
     expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id', 'created_at', 'status']);
     expect(orders?.columns.every((column) => column.usage === undefined)).toBe(true);
-    expect(recentOrderCount?.upstream).toEqual(
-      expect.arrayContaining([
-        { nodeId: 'table_orders', columnName: 'customer_id' },
-        { nodeId: 'table_orders', columnName: 'created_at' },
-        { nodeId: 'table_orders', columnName: 'status' },
-      ]),
-    );
+    expect(recentOrderCount?.upstream).toEqual([
+      expect.objectContaining({
+        nodeId: 'scalar_subquery_recent_order_count_1',
+        columnName: 'expr_1',
+        scopeId: scalarScope?.id,
+      }),
+    ]);
+    expect(scalarScope).toMatchObject({
+      kind: 'scalar_subquery',
+      parentScopeId: 'scope_main_output',
+    });
+    expect(scalarScope?.where?.map((condition) => condition.expressionSql)).toEqual([
+      'o2.customer_id = rc.customer_id',
+      'o2.created_at >= :recent_order_from',
+      'o2.status <> :refunded_status',
+    ]);
+  });
+
+  it('adds non-correlated scalar subqueries without correlation edges', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        c.id,
+        (SELECT count(*) FROM orders o) AS total_orders
+      FROM customers c
+    `);
+    const scalar = lineage.nodes.find((node) => node.type === 'scalar_subquery');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(scalar?.scalarSubquery?.correlated).toBe(false);
+    expect(lineage.edges).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'scalar_subquery_total_orders_1', target: 'main_output', kind: 'subquery_value' }),
+      expect.objectContaining({ source: 'table_orders', target: 'scalar_subquery_total_orders_1', kind: 'row_source' }),
+    ]));
+    expect(lineage.edges.some((edge) => edge.kind === 'correlation')).toBe(false);
+    expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: 'table_customers', columnName: 'id' },
+    ]);
+    expect(output?.columns.find((column) => column.name === 'total_orders')?.upstream).toEqual([
+      expect.objectContaining({ nodeId: 'scalar_subquery_total_orders_1', columnName: 'expr_1' }),
+    ]);
+  });
+
+  it('suffixes scalar subquery node labels when the scalar is only part of a column expression', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        (
+          SELECT SUM(o.total_amount)
+          FROM orders o
+        ) * 1.1 AS tax
+      FROM customers c
+    `);
+    const scalar = lineage.nodes.find((node) => node.type === 'scalar_subquery');
+
+    expect(scalar).toMatchObject({
+      id: 'scalar_subquery_tax_1',
+      label: 'tax_1',
+      scalarSubquery: expect.objectContaining({
+        ownerExpressionPartIndex: 1,
+        ownerExpressionRole: 'expression_part',
+        ownerOutputColumnName: 'tax',
+      }),
+    });
+  });
+
+  it('keeps scalar subquery output aliases out of source table columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        c.id,
+        c.name,
+        (
+          SELECT SUM(o.total_amount)
+          FROM orders o
+          WHERE o.customer_id = c.id
+        ) AS period_order_amount
+      FROM customers c
+      ORDER BY period_order_amount DESC
+    `);
+    const customers = lineage.nodes.find((node) => node.id === 'table_customers');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(customers?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(output?.columns.find((column) => column.name === 'period_order_amount')?.upstream).toEqual([
+      expect.objectContaining({ nodeId: 'scalar_subquery_period_order_amount_1', columnName: 'expr_1' }),
+    ]);
   });
 
   it('adds WHERE EXISTS subquery sources as condition lineage', () => {
@@ -864,10 +1073,49 @@ describe('rawsqlAdapter', () => {
     const paymentSummarySql = nodeById.get('cte_payment_summary')?.cteExecutableSql?.toLowerCase();
 
     expect(recentOrdersSql).toMatch(/from\s+orders as o/);
-    expect(orderTotalsSql).toMatch(/with\s+recent_orders as/);
+    expect(orderTotalsSql).toContain('recent_orders as');
     expect(orderTotalsSql).toContain('sum(amount) as total_amount');
     expect(paymentSummarySql).toMatch(/from\s+payments as p/);
     expect(nodeById.get('cte_order_totals')?.querySql).toBe(nodeById.get('cte_order_totals')?.cteExecutableSql);
+  });
+
+  it('keeps CTE header comments in CTE executable query SQL', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+    const recentOrdersSql = nodeById.get('cte_recent_orders')?.querySql ?? '';
+    const orderTotalsSql = nodeById.get('cte_order_totals')?.querySql ?? '';
+
+    expect(recentOrdersSql).toContain('-- Recent order line items used as the base sales fact.');
+    expect(recentOrdersSql.indexOf('-- Recent order line items')).toBeLessThan(recentOrdersSql.indexOf('select'));
+    expect(orderTotalsSql).toContain('-- Recent order line items used as the base sales fact.');
+    expect(orderTotalsSql).toContain('-- Aggregates order metrics by customer.');
+    expect(orderTotalsSql.indexOf('-- Recent order line items')).toBeLessThan(orderTotalsSql.indexOf('recent_orders as ('));
+    expect(orderTotalsSql.indexOf('-- Aggregates order metrics')).toBeLessThan(orderTotalsSql.lastIndexOf('select'));
+  });
+
+  it('keeps CTE header comments in the output query SQL', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const outputSql = lineage.nodes.find((node) => node.id === 'main_output')?.querySql ?? '';
+
+    expect(outputSql).toContain('-- Recent order line items used as the base sales fact.');
+    expect(outputSql).toContain('-- Aggregates order metrics by customer.');
+    expect(outputSql).toContain('-- Captures succeeded payment totals by customer.');
+    expect(outputSql.indexOf('-- Recent order line items')).toBeLessThan(outputSql.indexOf('recent_orders as ('));
+    expect(outputSql.indexOf('-- Aggregates order metrics')).toBeLessThan(outputSql.indexOf('order_totals as ('));
+    expect(outputSql.indexOf('-- Captures succeeded payment')).toBeLessThan(outputSql.indexOf('payment_summary as ('));
+  });
+
+  it('records the owning SELECT SQL on column scopes without CTE definitions', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const outputColumn = lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === 'customer_id');
+    const scopeSql = lineage.scopes.find((scope) => scope.id === outputColumn?.scopeId)?.querySql ?? '';
+
+    expect(scopeSql).toMatch(/^select\b/i);
+    expect(scopeSql).toMatch(/from\s+customers as c/i);
+    expect(scopeSql).toMatch(/where\s+exists/i);
+    expect(scopeSql).toMatch(/limit\s+100/i);
+    expect(scopeSql).not.toMatch(/\brecent_orders\s+as\s*\(/i);
+    expect(scopeSql).not.toMatch(/^with\b/i);
   });
 
   it('keeps CTE comments in their owning CTE query when building executable SQL', () => {

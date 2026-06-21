@@ -15,10 +15,14 @@ import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw } from 'lucide-react
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
-import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
+import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
-import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
+import { collectCollapsibleUpstreamGroups, collectDefaultCollapsedGroupRootIds, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
+import { buildColumnDiagnosticPacket, type ColumnDiagnosticPacket } from '../lineage/diagnostics';
+import { buildDiagnosticTreeViewModel } from '../lineage/diagnosticViewModel';
+import { problemIntentLabels, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
+import { populationImpactLabelsByNodeIdForIntent, sourceDataValueLabelsByNodeIdForIntent } from '../lineage/problemIntentViewModel';
 import { LineageNodeCard } from './LineageNodeCard';
 import { SqlCodeMirror } from './SqlCodeMirror';
 
@@ -31,6 +35,7 @@ const edgeTypes = {
 };
 
 const defaultViewport = { x: 16, y: 72, zoom: 1 };
+const inspectorCardHistoryStateKey = 'rawsqlLineageViewerInspectorCard';
 const selectionHistoryStateKey = 'rawsqlLineageViewerSelection';
 
 interface SelectedColumn {
@@ -40,12 +45,24 @@ interface SelectedColumn {
 }
 
 export interface GraphHighlightColumnTarget extends SelectedColumn {
+  populationImpactLabelsByNodeId?: Record<string, string[]>;
+  populationNodeIds?: string[];
+  scopeId?: string;
+  sourceDataLabelsByNodeId?: Record<string, string[]>;
+  sourceDataNodeIds?: string[];
   upstreamRefs?: LineageColumnRef[];
 }
 
 export type GraphHighlightTarget =
   | { column: GraphHighlightColumnTarget; kind: 'column' }
   | { columns: GraphHighlightColumnTarget[]; kind: 'columns' }
+  | {
+      kind: 'nodes';
+      nodeIds: string[];
+      populationImpactLabelsByNodeId?: Record<string, string[]>;
+      sourceDataLabelsByNodeId?: Record<string, string[]>;
+      targetColumn?: GraphHighlightColumnTarget;
+    }
   | null;
 
 type GraphSelectionSnapshot =
@@ -79,6 +96,7 @@ export type InspectorSelection =
 
 export interface InspectorColumnItem {
   column: LineageColumn;
+  lineage?: LineageModel;
   node: LineageNode;
 }
 
@@ -88,6 +106,12 @@ interface InspectorColumnGroup {
 }
 
 type SelectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => void;
+
+export interface InspectorCardSelection {
+  cardId: string;
+  focusNodeId?: string;
+  highlightTarget?: GraphHighlightTarget;
+}
 
 type InspectorColumnTreeNode = InspectorColumnTreeColumnNode | InspectorColumnTreeExpressionNode | InspectorColumnTreeRuleNode;
 
@@ -121,7 +145,9 @@ export function LineageGraph({
   highlightTargetRequest,
   lineage,
   onInspectorSelectionChange,
+  onProblemIntentChange,
   outputTitle,
+  problemIntent,
 }: {
   autoInspectOutputNonce?: number;
   caseRuleSelection?: CaseRuleSelection | null;
@@ -131,7 +157,9 @@ export function LineageGraph({
   highlightTargetRequest?: { nonce: number; target: GraphHighlightTarget } | null;
   lineage: LineageModel;
   onInspectorSelectionChange?: (selection: InspectorSelection) => void;
+  onProblemIntentChange?: (intent: ProblemIntent) => void;
   outputTitle?: string;
+  problemIntent: ProblemIntent;
 }) {
   const previousLineageRef = useRef(lineage);
   const previousFlowDirectionRef = useRef(flowDirection);
@@ -142,45 +170,43 @@ export function LineageGraph({
   const lastCommittedSelectionRef = useRef<GraphSelectionSnapshot>({ kind: 'none' });
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
-  const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => new Set());
+  const problemIntentRef = useRef(problemIntent);
+  const suppressInitialOutputSelectionRef = useRef(true);
+  const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => collectDefaultCollapsedGroupRootIds(lineage));
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
   const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
   const viewLineage = collapsedLineage.lineage;
   const displayLineage = useMemo(() => applyOutputTitle(viewLineage, outputTitle), [outputTitle, viewLineage]);
+  const layoutLineage = useMemo(() => applyOutputTitle(lineage, outputTitle), [lineage, outputTitle]);
   const displayLineageRef = useRef(displayLineage);
-  const graph = useMemo(() => buildGraphModel(displayLineage, flowDirection), [displayLineage, flowDirection]);
+  const layoutLineageRef = useRef(layoutLineage);
+  const graph = useMemo(() => buildGraphModel(displayLineage, flowDirection, layoutLineage), [displayLineage, flowDirection, layoutLineage]);
   const hideableColumnNodeIds = useMemo(() => new Set(displayLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [displayLineage.nodes, flowDirection]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(displayLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<GraphHighlightTarget>(null);
-  const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(null);
-  const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(null);
+  const initialOutputNodeId = useMemo(() => displayLineage.nodes.find((node) => node.type === 'output')?.id ?? null, [displayLineage.nodes]);
+  const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(() =>
+    initialOutputNodeId ? nodeCommentTargetId(initialOutputNodeId) : null,
+  );
+  const [autoExpandedColumnNodeId, setAutoExpandedColumnNodeId] = useState<string | null>(() => initialOutputNodeId);
+  const [activeCommentTargetId, setActiveCommentTargetId] = useState<string | null>(() =>
+    initialOutputNodeId ? nodeCommentTargetId(initialOutputNodeId) : null,
+  );
   const [dismissedCommentTargetIds, setDismissedCommentTargetIds] = useState<Set<string>>(() => new Set());
   const showColumnCallouts = false;
   const showHeaderCallouts = false;
-  const [showUnusedColumns, setShowUnusedColumns] = useState(true);
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
+  const [showEdgeAliases, setShowEdgeAliases] = useState(false);
   const resetZoom = useCallback(() => {
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
   const allColumnsHidden = hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => hiddenColumnNodeIds.has(nodeId));
-  const toggleColumns = useCallback((nodeId: string) => {
-    if (!hideableColumnNodeIds.has(nodeId)) {
-      return;
-    }
-
-    setHiddenColumnNodeIds((current) => {
-      const next = new Set(current);
-      if (next.has(nodeId)) {
-        next.delete(nodeId);
-      } else {
-        next.add(nodeId);
-      }
-      return next;
-    });
-  }, [hideableColumnNodeIds]);
+  useEffect(() => {
+    problemIntentRef.current = problemIntent;
+  }, [problemIntent]);
   const toggleAllColumns = useCallback(() => {
     setHiddenColumnNodeIds((current) => {
       if (hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => current.has(nodeId))) {
@@ -208,9 +234,12 @@ export function LineageGraph({
     setCollapsedGroupRootIds((current) => {
       const next = new Set(current);
       next.delete(nodeId);
+      for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
+        next.delete(helperNodeId);
+      }
       return next;
     });
-  }, []);
+  }, [collapsibleGroups]);
   const commitSelectionHistory = useCallback((selection: GraphSelectionSnapshot, mode: 'push' | 'replace' = 'push') => {
     if (typeof window === 'undefined') {
       return;
@@ -233,6 +262,7 @@ export function LineageGraph({
   }, []);
   const applySelectionSnapshot = useCallback((selection: GraphSelectionSnapshot) => {
     const currentLineage = displayLineageRef.current;
+    const diagnosticLineage = layoutLineageRef.current;
     setDismissedCommentTargetIds(new Set());
 
     if (selection.kind === 'node') {
@@ -242,6 +272,7 @@ export function LineageGraph({
         setSelectedColumn(null);
         setHighlightTarget(null);
         setSelectedNodeCommentTargetId(targetId);
+        setAutoExpandedColumnNodeId(node.id);
         setActiveCommentTargetId(targetId);
         return;
       }
@@ -257,10 +288,18 @@ export function LineageGraph({
           columnId: column.id,
           columnName: column.name,
           nodeId: node.id,
+          ...resolvePopulationHighlightContext(diagnosticLineage, {
+            columnId: column.id,
+            columnName: column.name,
+            nodeId: node.id,
+            scopeId: column.scopeId,
+          }, problemIntentRef.current),
+          scopeId: column.scopeId,
         };
         setSelectedColumn(nextColumn);
         setHighlightTarget({ column: nextColumn, kind: 'column' });
         setActiveCommentTargetId(targetId);
+        setAutoExpandedColumnNodeId(node.id);
         return;
       }
     }
@@ -268,20 +307,24 @@ export function LineageGraph({
     setSelectedColumn(null);
     setHighlightTarget(null);
     setSelectedNodeCommentTargetId(null);
+    setAutoExpandedColumnNodeId(null);
     setActiveCommentTargetId(null);
   }, []);
   const selectNode = useCallback((nodeId: string) => {
+    suppressInitialOutputSelectionRef.current = false;
     const targetId = nodeCommentTargetId(nodeId);
     const nextSelection: GraphSelectionSnapshot = selectedNodeCommentTargetId === targetId ? { kind: 'none' } : { kind: 'node', nodeId };
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
   }, [applySelectionSnapshot, commitSelectionHistory, selectedNodeCommentTargetId]);
   const inspectNode = useCallback((nodeId: string) => {
+    suppressInitialOutputSelectionRef.current = false;
     const nextSelection: GraphSelectionSnapshot = { kind: 'node', nodeId };
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
   }, [applySelectionSnapshot, commitSelectionHistory]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
+    suppressInitialOutputSelectionRef.current = false;
     const nextSelection: GraphSelectionSnapshot =
       selectedColumn?.columnId === column.id
         ? { kind: 'none' }
@@ -302,8 +345,8 @@ export function LineageGraph({
     setActiveCommentTargetId(targetId);
   }, []);
   const columnHighlights = useMemo(
-    () => resolveHighlightTarget(displayLineage.nodes, highlightTarget),
-    [displayLineage.nodes, highlightTarget],
+    () => resolveHighlightTarget(displayLineage.nodes, displayLineage.edges, highlightTarget),
+    [displayLineage.edges, displayLineage.nodes, highlightTarget],
   );
   const activeLineageRootColumnIds = useMemo(() => {
     if (!highlightTarget) {
@@ -312,10 +355,19 @@ export function LineageGraph({
     if (highlightTarget.kind === 'column') {
       return new Set([highlightTarget.column.columnId]);
     }
+    if (highlightTarget.kind === 'nodes') {
+      return highlightTarget.targetColumn ? new Set([highlightTarget.targetColumn.columnId]) : new Set<string>();
+    }
     return new Set(highlightTarget.columns.map((column) => column.columnId));
   }, [highlightTarget]);
   const forcedVisibleColumnIds = useMemo(() => {
     const columnIds = new Set<string>();
+    if (autoExpandedColumnNodeId) {
+      const selectedNode = displayLineage.nodes.find((node) => node.id === autoExpandedColumnNodeId);
+      for (const column of selectedNode?.columns ?? []) {
+        columnIds.add(column.id);
+      }
+    }
     if (selectedColumn) {
       columnIds.add(selectedColumn.columnId);
     }
@@ -329,8 +381,8 @@ export function LineageGraph({
       columnIds.add(columnId);
     }
     return columnIds;
-  }, [activeLineageRootColumnIds, columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, selectedColumn]);
-  const graphSelectedColumnId = activeLineageRootColumnIds.size === 1 ? [...activeLineageRootColumnIds][0] : null;
+  }, [activeLineageRootColumnIds, autoExpandedColumnNodeId, columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, displayLineage.nodes, selectedColumn]);
+  const graphSelectedColumnId = activeLineageRootColumnIds.size === 1 ? [...activeLineageRootColumnIds][0] : selectedColumn?.columnId ?? null;
   const selectedRuleExpressionByColumnId = useMemo(() => {
     if (!selectedColumn) {
       return undefined;
@@ -346,38 +398,42 @@ export function LineageGraph({
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
       return resolveInspectorColumnSelection(
-        displayLineage.nodes,
+        layoutLineage,
         selectedColumn,
         expandedExpressionColumnIds ?? new Set(),
-        resolveSelectedCaseRuleRefs(displayLineage.nodes, selectedColumn, caseRuleSelection),
+        resolveSelectedCaseRuleRefs(layoutLineage.nodes, selectedColumn, caseRuleSelection),
       );
     }
 
     if (selectedNodeCommentTargetId) {
       const nodeId = selectedNodeCommentTargetId.replace(/^node:/, '');
-      const node = displayLineage.nodes.find((item) => item.id === nodeId);
+      const node = layoutLineage.nodes.find((item) => item.id === nodeId);
       return node ? { kind: 'node', node } : null;
     }
 
     return null;
-  }, [caseRuleSelection, displayLineage.edges, displayLineage.nodes, expandedExpressionColumnIds, selectedColumn, selectedNodeCommentTargetId]);
+  }, [caseRuleSelection, expandedExpressionColumnIds, layoutLineage, selectedColumn, selectedNodeCommentTargetId]);
   useEffect(() => {
     displayLineageRef.current = displayLineage;
   }, [displayLineage]);
+  useEffect(() => {
+    layoutLineageRef.current = layoutLineage;
+  }, [layoutLineage]);
   useEffect(() => {
     if (typeof window === 'undefined') {
       return;
     }
 
-    const currentSelection = readSelectionHistoryState(window.history.state);
-    if (currentSelection) {
-      lastCommittedSelectionRef.current = currentSelection;
-      applySelectionSnapshot(currentSelection);
-    } else {
-      commitSelectionHistory({ kind: 'none' }, 'replace');
-    }
+    const initialSelection: GraphSelectionSnapshot = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
+    suppressInitialOutputSelectionRef.current = true;
+    lastCommittedSelectionRef.current = initialSelection;
+    applySelectionSnapshot(initialSelection);
+    commitSelectionHistory(initialSelection, 'replace');
 
     const handlePopState = (event: PopStateEvent) => {
+      if (isRecord(event.state) && inspectorCardHistoryStateKey in event.state) {
+        return;
+      }
       const selection = readSelectionHistoryState(event.state) ?? { kind: 'none' };
       lastCommittedSelectionRef.current = selection;
       applySelectionSnapshot(selection);
@@ -385,10 +441,18 @@ export function LineageGraph({
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [applySelectionSnapshot, commitSelectionHistory]);
+  }, [applySelectionSnapshot, commitSelectionHistory, initialOutputNodeId]);
   useEffect(() => {
+    if (
+      suppressInitialOutputSelectionRef.current &&
+      inspectorSelection?.kind === 'node' &&
+      inspectorSelection.node.id === initialOutputNodeId
+    ) {
+      return;
+    }
+    suppressInitialOutputSelectionRef.current = false;
     onInspectorSelectionChange?.(inspectorSelection);
-  }, [inspectorSelection, onInspectorSelectionChange]);
+  }, [initialOutputNodeId, inspectorSelection, onInspectorSelectionChange]);
   useEffect(() => {
     if (!autoInspectOutputNonce || lastHandledAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
       return;
@@ -397,6 +461,7 @@ export function LineageGraph({
     lastHandledAutoInspectOutputNonceRef.current = autoInspectOutputNonce;
     const outputNode = displayLineage.nodes.find((node) => node.type === 'output');
     if (outputNode) {
+      suppressInitialOutputSelectionRef.current = false;
       inspectNode(outputNode.id);
       onInspectorSelectionChange?.({ kind: 'node', node: outputNode });
     }
@@ -435,6 +500,32 @@ export function LineageGraph({
     showColumnCallouts,
     showHeaderCallouts,
   ]);
+  useEffect(() => {
+    if (!selectedColumn) {
+      return;
+    }
+
+    const node = displayLineage.nodes.find((item) => item.id === selectedColumn.nodeId);
+    const column = node?.columns.find((item) => item.id === selectedColumn.columnId);
+    if (!node || !column) {
+      return;
+    }
+
+    const nextColumn = {
+      columnId: column.id,
+      columnName: column.name,
+      nodeId: node.id,
+      ...resolvePopulationHighlightContext(layoutLineage, {
+        columnId: column.id,
+        columnName: column.name,
+        nodeId: node.id,
+        scopeId: column.scopeId,
+      }, problemIntent),
+      scopeId: column.scopeId,
+    };
+    setSelectedColumn(nextColumn);
+    setHighlightTarget({ column: nextColumn, kind: 'column' });
+  }, [displayLineage.nodes, layoutLineage, problemIntent, selectedColumn?.columnId, selectedColumn?.columnName, selectedColumn?.nodeId]);
   const graphNodes = useMemo<GraphNode[]>(
     () =>
       graph.nodes.map((node) => ({
@@ -442,14 +533,13 @@ export function LineageGraph({
         zIndex: nodeHasSelectedComment(node.data.lineageNode, selectedCommentTargetIds) ? 1000 : node.zIndex,
         data: {
           ...node.data,
-          canToggleColumns: hideableColumnNodeIds.has(node.id),
+          canToggleColumns: false,
           canCollapseUpstream: collapsibleGroups.has(node.id),
           collapsedGroup: collapsedLineage.groups.get(node.id),
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
           forcedVisibleColumnIds,
           onCollapseUpstream: collapseUpstream,
           onExpandGroup: expandGroup,
-          onToggleColumns: toggleColumns,
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
           selectedNodeId: selectedNodeCommentTargetId?.replace(/^node:/, '') ?? null,
@@ -459,10 +549,14 @@ export function LineageGraph({
           activeCommentTargetId,
           viewportZoom,
           activeLineageRootColumnIds,
+          highlightedNodeIds: columnHighlights.highlightedNodeIds,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
+          highlightedNodeImpactLabels: columnHighlights.highlightedNodeImpactLabels,
+          highlightedNodeTone: columnHighlights.nodeTone,
+          highlightedSourceDataLabels: columnHighlights.highlightedSourceDataLabels,
+          highlightedSourceDataNodeIds: columnHighlights.highlightedSourceDataNodeIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
           passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
-          showUnusedColumns,
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
@@ -471,6 +565,10 @@ export function LineageGraph({
     [
       columnHighlights.highlightedEdgeIds,
       columnHighlights.highlightedColumnIds,
+      columnHighlights.highlightedNodeImpactLabels,
+      columnHighlights.highlightedNodeIds,
+      columnHighlights.highlightedSourceDataLabels,
+      columnHighlights.highlightedSourceDataNodeIds,
       columnHighlights.sourceColumnIds,
       collapseUpstream,
       collapsedLineage.groups,
@@ -493,38 +591,45 @@ export function LineageGraph({
       selectedRuleExpressionByColumnId,
       selectedCommentTargetIds,
       selectedNodeCommentTargetId,
-      showUnusedColumns,
-      toggleColumns,
       togglePassthroughColumns,
     ],
   );
   const graphEdges = useMemo<GraphEdge[]>(
     () =>
       graph.edges.map((edge) => {
+        const displayEdge = showEdgeAliases
+          ? edge
+          : {
+              ...edge,
+              label: undefined,
+              labelBgPadding: undefined,
+              labelBgBorderRadius: undefined,
+            };
+
         if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
-          return edge;
+          return displayEdge;
         }
 
-        const baseStyle = edge.style ?? {};
+        const baseStyle = displayEdge.style ?? {};
         return {
-          ...edge,
+          ...displayEdge,
           animated: false,
           zIndex: 1000,
           style: {
             ...baseStyle,
-            stroke: '#2563eb',
-            strokeWidth: 2,
+            stroke: columnHighlights.edgeTone === 'population' ? '#f59e0b' : '#2563eb',
+            strokeWidth: 4,
           },
           markerEnd:
             edge.markerEnd && typeof edge.markerEnd === 'object'
               ? {
                   ...edge.markerEnd,
-                  color: '#2563eb',
+                  color: columnHighlights.edgeTone === 'population' ? '#f59e0b' : '#2563eb',
                 }
               : edge.markerEnd,
         };
       }),
-    [columnHighlights.highlightedEdgeIds, graph.edges],
+    [columnHighlights.edgeTone, columnHighlights.highlightedEdgeIds, graph.edges, showEdgeAliases],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
@@ -616,27 +721,27 @@ export function LineageGraph({
   }, [highlightTargetRequest?.nonce, highlightTargetRequest?.target]);
 
   useEffect(() => {
-    setSelectedColumn(null);
-    setHighlightTarget(null);
-    setSelectedNodeCommentTargetId(null);
-    setActiveCommentTargetId(null);
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(createDefaultHiddenColumnNodeIds(lineage.nodes, flowDirection));
-    setCollapsedGroupRootIds(new Set());
+    setCollapsedGroupRootIds(collectDefaultCollapsedGroupRootIds(lineage));
     setExpandedPassthroughNodeIds(new Set());
-    commitSelectionHistory({ kind: 'none' });
-  }, [commitSelectionHistory, flowDirection, lineage]);
+    const initialSelection: GraphSelectionSnapshot = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
+    suppressInitialOutputSelectionRef.current = true;
+    applySelectionSnapshot(initialSelection);
+    commitSelectionHistory(initialSelection, 'replace');
+  }, [applySelectionSnapshot, commitSelectionHistory, flowDirection, initialOutputNodeId, lineage]);
 
   return (
     <div className="graph-shell" data-testid="lineage-graph" ref={graphShellRef}>
       <div className="graph-display-controls nodrag" aria-label="Graph display options">
+        <ProblemIntentSelector intent={problemIntent} onChange={onProblemIntentChange} />
         <button className="graph-column-toggle" type="button" onClick={toggleAllColumns}>
           {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
-          {allColumnsHidden ? 'Show all columns' : 'Hide all columns'}
+          {allColumnsHidden ? 'Always show columns' : 'Minimize columns'}
         </button>
-        <label className="graph-callout-toggle">
-          <input type="checkbox" checked={showUnusedColumns} onChange={(event) => setShowUnusedColumns(event.target.checked)} />
-          Unused columns
+        <label className="graph-alias-toggle">
+          <input aria-label="Show aliases" type="checkbox" checked={showEdgeAliases} onChange={(event) => setShowEdgeAliases(event.target.checked)} />
+          Aliases
         </label>
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
@@ -685,22 +790,30 @@ export function LineageGraph({
 export function LineageInspector({
   activeCaseRule,
   expandedExpressionColumnIds,
-  flowDirection,
+  lineage,
   onClearCaseRule,
   onFocusNode,
   onHighlightTarget,
+  onClearInspectorCard,
   onRenameOutputTitle,
+  onSelectInspectorCard,
   onToggleExpressionBreakdown,
+  problemIntent,
   selection,
+  activeInspectorCardId,
 }: {
+  activeInspectorCardId?: string | null;
   activeCaseRule?: CaseRuleSelection | null;
   expandedExpressionColumnIds?: Set<string>;
-  flowDirection: GraphFlowDirection;
+  lineage: LineageModel;
+  onClearInspectorCard?: (recordHistory?: boolean) => void;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
   onHighlightTarget?: (target: GraphHighlightTarget) => void;
   onRenameOutputTitle?: (title: string) => void;
+  onSelectInspectorCard?: (selection: InspectorCardSelection) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
+  problemIntent: ProblemIntent;
   selection: InspectorSelection;
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
@@ -798,11 +911,15 @@ export function LineageInspector({
           <ColumnInspector
             activeCaseRule={activeCaseRule}
             expandedExpressionColumnIds={expandedExpressionColumnIds}
-            flowDirection={flowDirection}
+            lineage={lineage}
+            activeInspectorCardId={activeInspectorCardId}
             onClearCaseRule={onClearCaseRule}
+            onClearInspectorCard={onClearInspectorCard}
             onFocusNode={onFocusNode}
             onHighlightTarget={onHighlightTarget}
+            onSelectInspectorCard={onSelectInspectorCard}
             onToggleExpressionBreakdown={onToggleExpressionBreakdown}
+            problemIntent={problemIntent}
             selection={selection}
           />
         ) : (
@@ -818,49 +935,82 @@ export function LineageInspector({
 function ColumnInspector({
   activeCaseRule,
   expandedExpressionColumnIds,
-  flowDirection,
+  lineage,
   onClearCaseRule,
   onFocusNode,
   onHighlightTarget,
+  onClearInspectorCard,
+  onSelectInspectorCard,
   onToggleExpressionBreakdown,
+  problemIntent,
   selection,
+  activeInspectorCardId,
 }: {
+  activeInspectorCardId?: string | null;
   activeCaseRule?: CaseRuleSelection | null;
   expandedExpressionColumnIds?: Set<string>;
-  flowDirection: GraphFlowDirection;
+  lineage: LineageModel;
   onClearCaseRule?: () => void;
+  onClearInspectorCard?: (recordHistory?: boolean) => void;
   onFocusNode?: (nodeId: string) => void;
   onHighlightTarget?: (target: GraphHighlightTarget) => void;
+  onSelectInspectorCard?: (selection: InspectorCardSelection) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
+  problemIntent: ProblemIntent;
   selection: Extract<InspectorSelection, { kind: 'column' }>;
 }) {
-  const defaultTab = flowDirection === 'downstream' ? 'downstream' : 'upstream';
-  const [activeTab, setActiveTab] = useState<'upstream' | 'downstream'>(defaultTab);
-  const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'diagnostics' | 'sql' | 'upstream'>('upstream');
+  const [diagnosticCopyState, setDiagnosticCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const diagnosticPacket = useMemo(
+    () => buildColumnDiagnosticPacket(lineage, {
+      columnName: selection.selected.column.name,
+      nodeId: selection.selected.node.id,
+      scopeId: selection.selected.column.scopeId,
+    }),
+    [lineage, selection.selected.column.name, selection.selected.column.scopeId, selection.selected.node.id],
+  );
+  const scopeSql = useMemo(
+    () => getColumnScopeSql(lineage, selection.selected.column.scopeId, selection.selected.node.id),
+    [lineage, selection.selected.column.scopeId, selection.selected.node.id],
+  );
+  const executableScopeSql = useMemo(
+    () => getColumnExecutableSql(lineage, selection.selected.column.scopeId, selection.selected.node.id) ?? scopeSql,
+    [lineage, scopeSql, selection.selected.column.scopeId, selection.selected.node.id],
+  );
   useEffect(() => {
-    setActiveTab(defaultTab);
-  }, [defaultTab, selection.selected.column.id, selection.selected.node.id]);
-  useEffect(() => {
-    setActiveInspectorCardId(null);
+    setActiveTab('upstream');
   }, [selection.selected.column.id, selection.selected.node.id]);
   const selectWholeColumn = () => {
-    setActiveInspectorCardId(null);
+    onClearInspectorCard?.(true);
     onFocusNode?.(selection.selected.node.id);
-    onHighlightTarget?.({ column: inspectorItemToHighlightColumn(selection.selected), kind: 'column' });
+    onHighlightTarget?.({
+      column: {
+        ...inspectorItemToHighlightColumn(selection.selected),
+        populationNodeIds: populationNodeIdsFromPacket(diagnosticPacket, problemIntent),
+        populationImpactLabelsByNodeId: populationImpactLabelsByNodeIdFromPacket(diagnosticPacket, problemIntent),
+        sourceDataLabelsByNodeId: sourceDataLabelsByNodeIdFromPacket(diagnosticPacket, problemIntent),
+        sourceDataNodeIds: sourceDataNodeIdsFromPacket(diagnosticPacket, problemIntent),
+      },
+      kind: 'column',
+    });
     onClearCaseRule?.();
   };
   const toggleExpressionBreakdown = () => {
-    setActiveInspectorCardId(null);
+    onClearInspectorCard?.();
     onClearCaseRule?.();
     onToggleExpressionBreakdown?.(selection.selected.column.id);
   };
   const selectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => {
-    setActiveInspectorCardId(cardId);
-    if (nodeId) {
-      onFocusNode?.(nodeId);
-    }
-    if (target !== undefined) {
-      onHighlightTarget?.(target);
+    onSelectInspectorCard?.({ cardId, focusNodeId: nodeId, highlightTarget: target });
+  };
+  const copyDiagnosticJson = async () => {
+    try {
+      await navigator.clipboard.writeText(JSON.stringify(diagnosticPacket, null, 2));
+      setDiagnosticCopyState('copied');
+      window.setTimeout(() => setDiagnosticCopyState('idle'), 1600);
+    } catch {
+      setDiagnosticCopyState('failed');
+      window.setTimeout(() => setDiagnosticCopyState('idle'), 2200);
     }
   };
 
@@ -873,7 +1023,16 @@ function ColumnInspector({
         onSelectInspectorCard={selectInspectorCard}
       />
       <section className="lineage-inspector-section">
-        <div className="lineage-inspector-tabs" role="tablist" aria-label="Lineage direction">
+        <div className="lineage-inspector-tabs lineage-inspector-tabs-three" role="tablist" aria-label="Inspector details">
+          <button
+            aria-selected={activeTab === 'sql'}
+            className={activeTab === 'sql' ? 'lineage-inspector-tab-active' : ''}
+            role="tab"
+            type="button"
+            onClick={() => setActiveTab('sql')}
+          >
+            SQL
+          </button>
           <button
             aria-selected={activeTab === 'upstream'}
             className={activeTab === 'upstream' ? 'lineage-inspector-tab-active' : ''}
@@ -881,20 +1040,22 @@ function ColumnInspector({
             type="button"
             onClick={() => setActiveTab('upstream')}
           >
-            Upstream <span>{selection.upstream.length}</span>
+            Upstream
           </button>
           <button
-            aria-selected={activeTab === 'downstream'}
-            className={activeTab === 'downstream' ? 'lineage-inspector-tab-active' : ''}
+            aria-selected={activeTab === 'diagnostics'}
+            className={activeTab === 'diagnostics' ? 'lineage-inspector-tab-active' : ''}
             role="tab"
             type="button"
-            onClick={() => setActiveTab('downstream')}
+            onClick={() => setActiveTab('diagnostics')}
           >
-            Downstream <span>{selection.downstream.length}</span>
+            Diagnostics
           </button>
         </div>
         <div className="lineage-inspector-tab-panel" role="tabpanel">
-          {activeTab === 'upstream' ? (
+          {activeTab === 'sql' ? (
+            <ColumnScopeSqlPanel executableSql={executableScopeSql} sql={scopeSql} />
+          ) : activeTab === 'upstream' ? (
             <InspectorUpstreamTree
               activeInspectorCardId={activeInspectorCardId}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
@@ -910,25 +1071,202 @@ function ColumnInspector({
               tree={selection.upstreamTree}
             />
           ) : (
-            <InspectorColumnTree
+            <ColumnDiagnosticPacketPanel
               activeInspectorCardId={activeInspectorCardId}
+              activeRoot={!activeCaseRule && activeInspectorCardId === null}
+              copyState={diagnosticCopyState}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
-              emptyText="No downstream columns."
-              onFocusNode={onFocusNode}
-              onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
-              onSelectRoot={selectWholeColumn}
-              onSelectInspectorCard={selectInspectorCard}
-              onToggleExpressionBreakdown={toggleExpressionBreakdown}
               expressionExpanded={selection.expressionExpanded}
               hasExpressionBreakdown={selection.hasExpressionBreakdown}
-              rootActive={!activeCaseRule && activeInspectorCardId === null}
+              onClearRoot={selectWholeColumn}
+              packet={diagnosticPacket}
+              problemIntent={problemIntent}
               rootItem={selection.selected}
-              title="Downstream"
-              tree={selection.downstreamTree}
+              tree={selection.upstreamTree}
+              onFocusNode={onFocusNode}
+              onHighlightTarget={onHighlightTarget}
+              onCopyJson={() => void copyDiagnosticJson()}
+              onSelectInspectorCard={selectInspectorCard}
+              onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
+              onToggleRootExpressionBreakdown={toggleExpressionBreakdown}
             />
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function ColumnScopeSqlPanel({ executableSql, sql }: { executableSql?: string; sql?: string }) {
+  const [includeCtes, setIncludeCtes] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const displaySql = includeCtes ? executableSql ?? sql : sql ?? executableSql;
+
+  const copyExecutableSql = async () => {
+    if (!executableSql) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(executableSql);
+      setCopyState('copied');
+      window.setTimeout(() => setCopyState('idle'), 1600);
+    } catch {
+      setCopyState('failed');
+      window.setTimeout(() => setCopyState('idle'), 2200);
+    }
+  };
+
+  if (!displaySql) {
+    return (
+      <section className="lineage-inspector-section">
+        <p className="lineage-inspector-muted">No SQL is available for this scope.</p>
+      </section>
+    );
+  }
+
+  return (
+    <section className="lineage-inspector-section lineage-inspector-sql-section">
+      <div className="lineage-inspector-actions lineage-inspector-sql-actions">
+        <a
+          aria-disabled={!executableSql}
+          className={`lineage-open-link nodrag ${executableSql ? '' : 'lineage-action-disabled'}`}
+          href={executableSql ? buildViewerSqlUrl(executableSql) : undefined}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <ExternalLink size={12} aria-hidden="true" />
+          Open in viewer
+        </a>
+        <button className="lineage-copy-button nodrag" type="button" disabled={!executableSql} onClick={() => void copyExecutableSql()}>
+          <Copy size={12} aria-hidden="true" />
+          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
+        </button>
+        <label className="lineage-inspector-sql-toggle">
+          <input type="checkbox" checked={includeCtes} onChange={(event) => setIncludeCtes(event.currentTarget.checked)} />
+          <span>CTE</span>
+        </label>
+      </div>
+      <SqlCodeMirror className="lineage-inspector-code" value={displaySql} />
+    </section>
+  );
+}
+
+function ColumnDiagnosticPacketPanel({
+  copyState,
+  onCopyJson,
+  packet,
+}: {
+  activeInspectorCardId?: string | null;
+  activeRoot: boolean;
+  copyState: 'idle' | 'copied' | 'failed';
+  expandedExpressionColumnIds?: Set<string>;
+  expressionExpanded?: boolean;
+  hasExpressionBreakdown?: boolean;
+  onClearRoot: () => void;
+  onCopyJson: () => void;
+  onFocusNode?: (nodeId: string) => void;
+  onHighlightTarget?: (target: GraphHighlightTarget) => void;
+  onSelectInspectorCard?: SelectInspectorCard;
+  onToggleColumnExpressionBreakdown?: (columnId: string) => void;
+  onToggleRootExpressionBreakdown?: () => void;
+  packet: ColumnDiagnosticPacket;
+  problemIntent: ProblemIntent;
+  rootItem: InspectorColumnItem;
+  tree: InspectorColumnTreeNode[];
+}) {
+  const viewModel = useMemo(() => buildDiagnosticTreeViewModel(packet), [packet]);
+  return (
+    <section className="lineage-inspector-section lineage-diagnostic-section">
+      <div className="lineage-inspector-section-heading">
+        <span aria-hidden="true" />
+        <button className="lineage-copy-button nodrag" type="button" onClick={onCopyJson}>
+          <Copy size={12} aria-hidden="true" />
+          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy JSON'}
+        </button>
+      </div>
+      <DiagnosticOutputBlock value={viewModel.json} />
+    </section>
+  );
+}
+
+function DiagnosticOutputBlock({
+  value,
+}: {
+  value: string;
+}) {
+  return (
+    <div className="lineage-diagnostic-output">
+      <pre className="lineage-diagnostic-output-json">{value}</pre>
+    </div>
+  );
+}
+
+function populationNodeIdsFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): string[] {
+  return Object.keys(populationImpactLabelsByNodeIdFromPacket(packet, problemIntent));
+}
+
+function resolvePopulationHighlightContext(
+  lineage: LineageModel,
+  target: GraphHighlightColumnTarget,
+  problemIntent: ProblemIntent,
+): Pick<GraphHighlightColumnTarget, 'populationImpactLabelsByNodeId' | 'populationNodeIds' | 'sourceDataLabelsByNodeId' | 'sourceDataNodeIds'> {
+  try {
+    const packet = buildColumnDiagnosticPacket(lineage, {
+      columnName: target.columnName,
+      nodeId: target.nodeId,
+      scopeId: target.scopeId,
+    });
+    const impactLabelsByNodeId = populationImpactLabelsByNodeIdFromPacket(packet, problemIntent);
+    const sourceDataLabelsByNodeId = sourceDataLabelsByNodeIdFromPacket(packet, problemIntent);
+    return {
+      populationImpactLabelsByNodeId: impactLabelsByNodeId,
+      populationNodeIds: Object.keys(impactLabelsByNodeId),
+      sourceDataLabelsByNodeId,
+      sourceDataNodeIds: Object.keys(sourceDataLabelsByNodeId),
+    };
+  } catch {
+    return { populationImpactLabelsByNodeId: {}, populationNodeIds: [target.nodeId], sourceDataLabelsByNodeId: {}, sourceDataNodeIds: [] };
+  }
+}
+
+function populationImpactLabelsByNodeIdFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): Record<string, string[]> {
+  return populationImpactLabelsByNodeIdForIntent(packet, problemIntent);
+}
+
+function sourceDataNodeIdsFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): string[] {
+  return Object.keys(sourceDataLabelsByNodeIdFromPacket(packet, problemIntent));
+}
+
+function sourceDataLabelsByNodeIdFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): Record<string, string[]> {
+  return sourceDataValueLabelsByNodeIdForIntent(packet, problemIntent);
+}
+
+function toNodeImpactLabelMap(record?: Record<string, string[]>): Map<string, string[]> {
+  return new Map(Object.entries(record ?? {}).filter(([, labels]) => labels.length > 0));
+}
+
+function ProblemIntentSelector({
+  intent,
+  onChange,
+}: {
+  intent: ProblemIntent;
+  onChange?: (intent: ProblemIntent) => void;
+}) {
+  return (
+    <div className="graph-problem-intent" aria-label="Diagnostic focus">
+      <label htmlFor="problem-intent-select">Focus</label>
+      <select
+        id="problem-intent-select"
+        value={intent}
+        onChange={(event) => onChange?.(event.currentTarget.value as ProblemIntent)}
+      >
+        {problemIntentOptions.map((option) => (
+          <option key={option} value={option}>
+            {problemIntentLabels[option]}
+          </option>
+        ))}
+      </select>
     </div>
   );
 }
@@ -985,9 +1323,7 @@ function InspectorSourceGroups({
   const groups = groupInspectorItemsByNode(items);
   return (
     <section className="lineage-inspector-section">
-      <h3>
-        Sources <span>{items.length}</span>
-      </h3>
+      <h3>Sources</h3>
       {groups.length > 0 ? (
         <div className="lineage-inspector-source-list">
           {groups.map((group) => (
@@ -1022,12 +1358,33 @@ function InspectorSourceGroup({
   if (!node) {
     return null;
   }
+  const cardId = inspectorSourceGroupKey(node);
+  const active = activeInspectorCardId === cardId;
   const focusNode = () => onFocusNode?.(node.id);
+  const selectGroup = () => onSelectInspectorCard?.(cardId, node.id, { kind: 'nodes', nodeIds: [node.id] });
   return (
-    <div className="lineage-inspector-source-group">
+    <div
+      className={`lineage-inspector-source-group lineage-inspector-source-group-selectable ${active ? 'lineage-inspector-source-group-active' : ''}`}
+      role="button"
+      tabIndex={0}
+      onClick={selectGroup}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          selectGroup();
+        }
+      }}
+    >
       <div className="lineage-inspector-source-heading">
         <InspectorTypeBadge node={node} />
-        <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
+        <button
+          className="lineage-inspector-node-link lineage-inspector-focus-button"
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            focusNode();
+          }}
+        >
           {node.label}
         </button>
       </div>
@@ -1035,21 +1392,10 @@ function InspectorSourceGroup({
         {group.items.map((item, index) => {
           const expressionSql =
             item.column.expressionSql && !isSimpleColumnReference(item.column.expressionSql) ? item.column.expressionSql : undefined;
-          const cardId = inspectorSourceItemKey(item, index);
-          const active = activeInspectorCardId === cardId;
           return (
             <div
-              className={`lineage-inspector-source-column lineage-inspector-source-column-selectable ${active ? 'lineage-inspector-source-column-active' : ''}`}
-              key={item.column.id}
-              role="button"
-              tabIndex={0}
-              onClick={() => onSelectInspectorCard?.(cardId, item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' })}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  onSelectInspectorCard?.(cardId, item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' });
-                }
-              }}
+              className="lineage-inspector-source-column"
+              key={`${item.column.id}:${index}`}
             >
               <span className="lineage-inspector-column-name">{item.column.name}</span>
               {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
@@ -1091,9 +1437,7 @@ function InspectorUpstreamTree({
 }) {
   return (
     <section className="lineage-inspector-section">
-      <h3>
-        Upstream <span>{tree.length}</span>
-      </h3>
+      <h3>Upstream</h3>
       <div className="lineage-inspector-tree">
         <div className="lineage-inspector-tree-node">
           <InspectorColumnCard
@@ -1123,78 +1467,6 @@ function InspectorUpstreamTree({
             />
           ) : (
             <div className="lineage-inspector-muted">No upstream columns.</div>
-          )}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function InspectorColumnTree({
-  activeInspectorCardId,
-  emptyText,
-  expandedExpressionColumnIds,
-  expressionExpanded,
-  hasExpressionBreakdown,
-  onFocusNode,
-  onToggleColumnExpressionBreakdown,
-  onSelectRoot,
-  onSelectInspectorCard,
-  onToggleExpressionBreakdown,
-  rootActive,
-  rootItem,
-  title,
-  tree,
-}: {
-  activeInspectorCardId?: string | null;
-  emptyText: string;
-  expandedExpressionColumnIds?: Set<string>;
-  expressionExpanded?: boolean;
-  hasExpressionBreakdown?: boolean;
-  onFocusNode?: (nodeId: string) => void;
-  onToggleColumnExpressionBreakdown?: (columnId: string) => void;
-  onSelectRoot: () => void;
-  onSelectInspectorCard?: SelectInspectorCard;
-  onToggleExpressionBreakdown?: () => void;
-  rootActive: boolean;
-  rootItem: InspectorColumnItem;
-  title: string;
-  tree: InspectorColumnTreeNode[];
-}) {
-  return (
-    <section className="lineage-inspector-section">
-      <h3>
-        {title} <span>{tree.length}</span>
-      </h3>
-      <div className="lineage-inspector-tree">
-        <div className="lineage-inspector-tree-node">
-          <InspectorColumnCard
-            active={rootActive}
-            item={rootItem}
-            onClearCaseRule={onSelectRoot}
-            onFocusNode={onFocusNode}
-            onToggleExpressionBreakdown={onToggleExpressionBreakdown}
-            expressionExpanded={expressionExpanded}
-            hasExpressionBreakdown={hasExpressionBreakdown}
-            root
-            selectable
-            showSimpleExpression
-            showUsage
-          />
-          {tree.length > 0 ? (
-            <InspectorColumnTreeNodes
-              activeInspectorCardId={activeInspectorCardId}
-              depth={1}
-              expandedExpressionColumnIds={expandedExpressionColumnIds}
-              nodes={tree}
-              onFocusNode={onFocusNode}
-              onSelectInspectorCard={onSelectInspectorCard}
-              onToggleExpressionBreakdown={onToggleColumnExpressionBreakdown}
-              pathKey="root"
-              rootItem={rootItem}
-            />
-          ) : (
-            <div className="lineage-inspector-muted">{emptyText}</div>
           )}
         </div>
       </div>
@@ -1561,6 +1833,7 @@ function InspectorColumnCard({
     event?.stopPropagation();
     onFocusNode?.(item.node.id);
   };
+  const groupDetails = collectInspectorGroupDetails(item);
   const selectWholeColumn = () => {
     if (selectable) {
       if (onClearCaseRule) {
@@ -1598,6 +1871,7 @@ function InspectorColumnCard({
       {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
+      {groupDetails ? <InspectorGroupDetails details={groupDetails} /> : null}
       {hasExpressionBreakdown ? (
         <button
           className="lineage-inspector-expression-toggle"
@@ -1615,6 +1889,64 @@ function InspectorColumnCard({
   );
 }
 
+function InspectorGroupDetails({ details }: { details: { grainSql?: string; inputSql?: string } }) {
+  return (
+    <div className="lineage-inspector-group-details">
+      {details.inputSql ? (
+        <pre className="lineage-inspector-group-sql">{details.inputSql}</pre>
+      ) : null}
+      {details.grainSql ? (
+        <pre className="lineage-inspector-group-sql">{details.grainSql}</pre>
+      ) : null}
+    </div>
+  );
+}
+
+function collectInspectorGroupDetails(item: InspectorColumnItem): { grainSql?: string; inputSql?: string } | null {
+  if (!item.lineage || !item.node.dependencyProfile?.hasGroupBy) {
+    return null;
+  }
+
+  const scopeIds = new Set(item.node.dependencyProfile.scopeIds);
+  const grain = uniqueStrings(item.lineage.scopes
+    .filter((scope) => scopeIds.has(scope.id))
+    .flatMap((scope) => scope.groupBy ?? [])
+    .map((expression) => expression.expressionSql));
+  const nodesById = new Map(item.lineage.nodes.map((node) => [node.id, node]));
+  const inputNodeIds = new Set(item.node.dependencyProfile.inputNodeIds);
+  const incomingInputEdges = item.lineage.edges.filter((edge) => edge.target === item.node.id && inputNodeIds.has(edge.source));
+  const inputEdgeBySourceId = new Map(incomingInputEdges.map((edge) => [edge.source, edge]));
+  const inputs = uniqueStrings(item.node.dependencyProfile.inputNodeIds
+    .map((nodeId) => formatInputSourceSql(nodesById.get(nodeId), inputEdgeBySourceId.get(nodeId)))
+    .filter((label): label is string => Boolean(label)));
+  const grainSql = formatSqlList('group by', grain);
+  const inputSql = formatSqlList('from', inputs);
+
+  return grainSql || inputSql ? { grainSql, inputSql } : null;
+}
+
+function formatInputSourceSql(node?: LineageNode, edge?: LineageEdge): string | undefined {
+  if (!node) {
+    return undefined;
+  }
+  const alias = edge?.sourceAlias?.trim();
+  if (!alias || sameIdentifier(alias, node.label)) {
+    return node.label;
+  }
+  return `${node.label} as ${alias}`;
+}
+
+function formatSqlList(prefix: string, values: string[]) {
+  if (!values.length) {
+    return undefined;
+  }
+  return `${prefix} ${values.join(', ')}`;
+}
+
+function sameIdentifier(left: string, right: string): boolean {
+  return left.replace(/["`[\]]/g, '').toLowerCase() === right.replace(/["`[\]]/g, '').toLowerCase();
+}
+
 function inspectorItemKey(item: InspectorColumnItem) {
   return `${item.node.id}:${item.column.id}`;
 }
@@ -1624,12 +1956,13 @@ function inspectorItemToHighlightColumn(item: InspectorColumnItem, upstreamRefs?
     columnId: item.column.id,
     columnName: item.column.name,
     nodeId: item.node.id,
+    scopeId: item.column.scopeId,
     upstreamRefs,
   };
 }
 
-function inspectorSourceItemKey(item: InspectorColumnItem, index: number) {
-  return `source:${item.node.id}:${item.column.id}:${index}`;
+function inspectorSourceGroupKey(node: LineageNode) {
+  return `source:${node.id}`;
 }
 
 function applyOutputTitle(lineage: LineageModel, outputTitle: string | undefined): LineageModel {
@@ -1735,11 +2068,12 @@ function InspectorTextSection({ title, values }: { title: string; values: string
 }
 
 function resolveInspectorColumnSelection(
-  nodes: LineageNode[],
+  lineage: LineageModel,
   selectedColumn: SelectedColumn,
   expandedExpressionColumnIds: Set<string>,
   upstreamRefs?: LineageColumnRef[],
 ): Extract<InspectorSelection, { kind: 'column' }> | null {
+  const nodes = lineage.nodes;
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const selectedNode = nodesById.get(selectedColumn.nodeId);
   const selected = selectedNode?.columns.find((column) => column.id === selectedColumn.columnId);
@@ -1749,19 +2083,19 @@ function resolveInspectorColumnSelection(
 
   const downstreamByColumnKey = buildDownstreamColumnIndex(nodes);
   const initialUpstreamRefs = upstreamRefs ?? selected.upstream ?? [];
-  const upstream = collectUpstreamColumns(nodesById, selectedNode.id, selected.name, initialUpstreamRefs);
-  const downstream = collectDownstreamColumns(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
+  const upstream = collectUpstreamColumns(nodesById, lineage, selectedNode.id, selected.name, initialUpstreamRefs);
+  const downstream = collectDownstreamColumns(nodesById, lineage, downstreamByColumnKey, selectedNode.id, selected.name);
   const hasExpressionBreakdown = Boolean(selected.caseRules?.length || selected.expressionTree);
   const expressionExpanded = expandedExpressionColumnIds.has(selected.id);
   const upstreamTree =
     expressionExpanded && (selected.caseRules?.length || selected.expressionTree) && !upstreamRefs
-      ? collectExpressionBreakdownTree(nodesById, selectedNode, selected, expandedExpressionColumnIds)
-      : collectUpstreamColumnTree(nodesById, selectedNode.id, selected.name, expandedExpressionColumnIds, initialUpstreamRefs);
-  const downstreamTree = collectDownstreamColumnTree(nodesById, downstreamByColumnKey, selectedNode.id, selected.name);
+      ? collectExpressionBreakdownTree(nodesById, lineage, selectedNode, selected, expandedExpressionColumnIds)
+      : collectUpstreamColumnTree(nodesById, lineage, selectedNode.id, selected.name, expandedExpressionColumnIds, initialUpstreamRefs);
+  const downstreamTree = collectDownstreamColumnTree(nodesById, lineage, downstreamByColumnKey, selectedNode.id, selected.name);
   const sources = upstream.filter((item) => (item.column.upstream ?? []).length === 0);
   return {
     kind: 'column',
-    selected: { column: selected, node: selectedNode },
+    selected: createInspectorColumnItem(lineage, selectedNode, selected),
     sources: dedupeInspectorColumns(sources),
     upstream: dedupeInspectorColumns(upstream),
     upstreamTree,
@@ -1787,6 +2121,7 @@ function buildDownstreamColumnIndex(nodes: LineageNode[]) {
 
 function collectUpstreamColumns(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   nodeId: string,
   columnName: string,
   upstreamRefs?: LineageColumnRef[],
@@ -1808,7 +2143,7 @@ function collectUpstreamColumns(
       if (!upstreamNode || !upstreamColumn) {
         continue;
       }
-      result.push({ column: upstreamColumn, node: upstreamNode });
+      result.push(createInspectorColumnItem(lineage, upstreamNode, upstreamColumn));
       visit(ref.nodeId, ref.columnName);
     }
   };
@@ -1820,7 +2155,7 @@ function collectUpstreamColumns(
       if (!upstreamNode || !upstreamColumn) {
         continue;
       }
-      result.push({ column: upstreamColumn, node: upstreamNode });
+      result.push(createInspectorColumnItem(lineage, upstreamNode, upstreamColumn));
       visit(ref.nodeId, ref.columnName);
     }
   } else {
@@ -1831,6 +2166,7 @@ function collectUpstreamColumns(
 
 function collectUpstreamColumnTree(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   nodeId: string,
   columnName: string,
   expandedExpressionColumnIds: Set<string>,
@@ -1838,19 +2174,20 @@ function collectUpstreamColumnTree(
 ): InspectorColumnTreeNode[] {
   if (upstreamRefs) {
     return upstreamRefs
-      .map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, new Set([columnKey(nodeId, columnName)]), expandedExpressionColumnIds))
+      .map((ref) => buildUpstreamColumnTreeNode(nodesById, lineage, ref, new Set([columnKey(nodeId, columnName)]), expandedExpressionColumnIds))
       .filter(isInspectorTreeNode);
   }
 
   const node = nodesById.get(nodeId);
   const column = node?.columns.find((item) => item.name === columnName);
   return (column?.upstream ?? [])
-    .map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, new Set([columnKey(nodeId, columnName)]), expandedExpressionColumnIds))
+    .map((ref) => buildUpstreamColumnTreeNode(nodesById, lineage, ref, new Set([columnKey(nodeId, columnName)]), expandedExpressionColumnIds))
     .filter(isInspectorTreeNode);
 }
 
 function collectCaseRuleUpstreamTree(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   nodeId: string,
   columnName: string,
   rules: LineageCaseRule[],
@@ -1867,9 +2204,9 @@ function collectCaseRuleUpstreamTree(
   const rootPath = new Set([columnKey(nodeId, columnName)]);
   return rules.map((rule) => ({
     children: mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream)
-      .map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, rootPath, expandedExpressionColumnIds))
+      .map((ref) => buildUpstreamColumnTreeNode(nodesById, lineage, ref, rootPath, expandedExpressionColumnIds))
       .filter(isInspectorTreeNode),
-    item: { column: ownerColumn, node: ownerNode },
+    item: createInspectorColumnItem(lineage, ownerNode, ownerColumn),
     kind: 'rule' as const,
     ownerNode,
     rule,
@@ -1878,16 +2215,17 @@ function collectCaseRuleUpstreamTree(
 
 function collectExpressionBreakdownTree(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   ownerNode: LineageNode,
   column: LineageColumn,
   expandedExpressionColumnIds: Set<string>,
 ): InspectorColumnTreeNode[] {
   if (column.caseRules?.length) {
-    return collectCaseRuleUpstreamTree(nodesById, ownerNode.id, column.name, column.caseRules, expandedExpressionColumnIds);
+    return collectCaseRuleUpstreamTree(nodesById, lineage, ownerNode.id, column.name, column.caseRules, expandedExpressionColumnIds);
   }
 
   if (column.expressionTree) {
-    return [buildExpressionTreeNode(nodesById, ownerNode, column.expressionTree, new Set([columnKey(ownerNode.id, column.name)]), expandedExpressionColumnIds)];
+    return [buildExpressionTreeNode(nodesById, lineage, ownerNode, column.expressionTree, new Set([columnKey(ownerNode.id, column.name)]), expandedExpressionColumnIds)];
   }
 
   return [];
@@ -1895,13 +2233,14 @@ function collectExpressionBreakdownTree(
 
 function buildExpressionTreeNode(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   ownerNode: LineageNode,
   expression: LineageExpressionTree,
   path: Set<string>,
   expandedExpressionColumnIds: Set<string>,
 ): InspectorColumnTreeNode {
   if (expression.kind === 'column') {
-    const resolvedColumn = buildUpstreamColumnTreeNode(nodesById, expression.ref, path, expandedExpressionColumnIds);
+    const resolvedColumn = buildUpstreamColumnTreeNode(nodesById, lineage, expression.ref, path, expandedExpressionColumnIds);
     return {
       children: resolvedColumn ? [resolvedColumn] : [],
       expression,
@@ -1914,30 +2253,36 @@ function buildExpressionTreeNode(
     children:
       expression.kind === 'operator'
         ? expression.children
-            .map((child) => buildExpressionChildTreeNode(nodesById, ownerNode, child, path, expandedExpressionColumnIds))
+            .map((child) => buildExpressionChildTreeNode(nodesById, lineage, ownerNode, child, path, expandedExpressionColumnIds))
             .filter(isInspectorTreeNode)
-        : expression.upstream.map((ref) => buildUpstreamColumnTreeNode(nodesById, ref, path, expandedExpressionColumnIds)).filter(isInspectorTreeNode),
+        : expression.upstream.map((ref) => buildUpstreamColumnTreeNode(nodesById, lineage, ref, path, expandedExpressionColumnIds)).filter(isInspectorTreeNode),
     expression,
     kind: 'expression',
     ownerNode,
   };
 }
 
+function createInspectorColumnItem(lineage: LineageModel, node: LineageNode, column: LineageColumn): InspectorColumnItem {
+  return { column, lineage, node };
+}
+
 function buildExpressionChildTreeNode(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   ownerNode: LineageNode,
   expression: LineageExpressionTree,
   path: Set<string>,
   expandedExpressionColumnIds: Set<string>,
 ): InspectorColumnTreeNode | null {
   if (expression.kind === 'column') {
-    return buildUpstreamColumnTreeNode(nodesById, expression.ref, path, expandedExpressionColumnIds) ?? buildExpressionTreeNode(nodesById, ownerNode, expression, path, expandedExpressionColumnIds);
+    return buildUpstreamColumnTreeNode(nodesById, lineage, expression.ref, path, expandedExpressionColumnIds) ?? buildExpressionTreeNode(nodesById, lineage, ownerNode, expression, path, expandedExpressionColumnIds);
   }
-  return buildExpressionTreeNode(nodesById, ownerNode, expression, path, expandedExpressionColumnIds);
+  return buildExpressionTreeNode(nodesById, lineage, ownerNode, expression, path, expandedExpressionColumnIds);
 }
 
 function buildUpstreamColumnTreeNode(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   ref: LineageColumnRef,
   path: Set<string>,
   expandedExpressionColumnIds: Set<string>,
@@ -1950,28 +2295,29 @@ function buildUpstreamColumnTreeNode(
 
   const key = columnKey(ref.nodeId, ref.columnName);
   if (path.has(key)) {
-    return { children: [], item: { column: upstreamColumn, node: upstreamNode }, kind: 'column' };
+    return { children: [], item: createInspectorColumnItem(lineage, upstreamNode, upstreamColumn), kind: 'column' };
   }
 
   const nextPath = new Set(path);
   nextPath.add(key);
   const expressionChildren =
     expandedExpressionColumnIds.has(upstreamColumn.id) && (upstreamColumn.caseRules?.length || upstreamColumn.expressionTree)
-      ? collectExpressionBreakdownTree(nodesById, upstreamNode, upstreamColumn, expandedExpressionColumnIds)
+      ? collectExpressionBreakdownTree(nodesById, lineage, upstreamNode, upstreamColumn, expandedExpressionColumnIds)
       : null;
   return {
     children:
       expressionChildren ??
       (upstreamColumn.upstream ?? [])
-        .map((childRef) => buildUpstreamColumnTreeNode(nodesById, childRef, nextPath, expandedExpressionColumnIds))
+        .map((childRef) => buildUpstreamColumnTreeNode(nodesById, lineage, childRef, nextPath, expandedExpressionColumnIds))
         .filter(isInspectorTreeNode),
-    item: { column: upstreamColumn, node: upstreamNode },
+    item: createInspectorColumnItem(lineage, upstreamNode, upstreamColumn),
     kind: 'column',
   };
 }
 
 function collectDownstreamColumns(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   downstreamByColumnKey: Map<string, Array<{ columnName: string; nodeId: string }>>,
   nodeId: string,
   columnName: string,
@@ -1992,7 +2338,7 @@ function collectDownstreamColumns(
       if (!downstreamNode || !downstreamColumn) {
         continue;
       }
-      result.push({ column: downstreamColumn, node: downstreamNode });
+      result.push(createInspectorColumnItem(lineage, downstreamNode, downstreamColumn));
       visit(ref.nodeId, ref.columnName);
     }
   };
@@ -2003,6 +2349,7 @@ function collectDownstreamColumns(
 
 function collectDownstreamColumnTree(
   nodesById: Map<string, LineageNode>,
+  lineage: LineageModel,
   downstreamByColumnKey: Map<string, Array<{ columnName: string; nodeId: string }>>,
   nodeId: string,
   columnName: string,
@@ -2016,14 +2363,14 @@ function collectDownstreamColumnTree(
 
     const key = columnKey(ref.nodeId, ref.columnName);
     if (path.has(key)) {
-      return { children: [], item: { column: downstreamColumn, node: downstreamNode }, kind: 'column' };
+      return { children: [], item: createInspectorColumnItem(lineage, downstreamNode, downstreamColumn), kind: 'column' };
     }
 
     const nextPath = new Set(path);
     nextPath.add(key);
     return {
       children: (downstreamByColumnKey.get(key) ?? []).map((childRef) => buildNode(childRef, nextPath)).filter(isInspectorTreeNode),
-      item: { column: downstreamColumn, node: downstreamNode },
+      item: createInspectorColumnItem(lineage, downstreamNode, downstreamColumn),
       kind: 'column',
     };
   };
@@ -2063,9 +2410,9 @@ function formatInspectorUsage(column: LineageColumn) {
 
 function resolveColumnHighlights(
   nodes: LineageNode[],
-  selectedColumn: SelectedColumn,
+  selectedColumn: GraphHighlightColumnTarget,
   upstreamRefs?: LineageColumnRef[],
-): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
+): GraphHighlightResult {
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
   const downstreamByColumnKey = new Map<string, Array<{ columnName: string; nodeId: string }>>();
   const highlightedColumnIds = new Set<string>();
@@ -2147,16 +2494,72 @@ function resolveColumnHighlights(
   visitDownstream(selectedColumn.nodeId, selectedColumn.columnName);
   highlightedColumnIds.delete(selectedColumn.columnId);
   sourceColumnIds.delete(selectedColumn.columnId);
-  return { highlightedColumnIds, highlightedEdgeIds, sourceColumnIds };
+  return {
+    edgeTone: 'value',
+    highlightedColumnIds,
+    highlightedEdgeIds,
+    highlightedNodeImpactLabels: toNodeImpactLabelMap(selectedColumn.populationImpactLabelsByNodeId),
+    highlightedNodeIds: new Set(selectedColumn.populationNodeIds ?? []),
+    highlightedSourceDataLabels: toNodeImpactLabelMap(selectedColumn.sourceDataLabelsByNodeId),
+    highlightedSourceDataNodeIds: new Set(selectedColumn.sourceDataNodeIds ?? []),
+    nodeTone: 'population',
+    sourceColumnIds,
+  };
+}
+
+interface GraphHighlightResult {
+  edgeTone: 'population' | 'value';
+  highlightedColumnIds: Set<string>;
+  highlightedEdgeIds: Set<string>;
+  highlightedNodeImpactLabels: Map<string, string[]>;
+  highlightedNodeIds: Set<string>;
+  highlightedSourceDataLabels: Map<string, string[]>;
+  highlightedSourceDataNodeIds: Set<string>;
+  nodeTone: 'population' | 'value';
+  sourceColumnIds: Set<string>;
 }
 
 function resolveHighlightTarget(
   nodes: LineageNode[],
+  edges: LineageEdge[],
   target: GraphHighlightTarget,
-): { highlightedColumnIds: Set<string>; highlightedEdgeIds: Set<string>; sourceColumnIds: Set<string> } {
-  const empty = { highlightedColumnIds: new Set<string>(), highlightedEdgeIds: new Set<string>(), sourceColumnIds: new Set<string>() };
+): GraphHighlightResult {
+  const empty: GraphHighlightResult = {
+    edgeTone: 'value' as const,
+    highlightedColumnIds: new Set<string>(),
+    highlightedEdgeIds: new Set<string>(),
+    highlightedNodeImpactLabels: new Map<string, string[]>(),
+    highlightedNodeIds: new Set<string>(),
+    highlightedSourceDataLabels: new Map<string, string[]>(),
+    highlightedSourceDataNodeIds: new Set<string>(),
+    nodeTone: 'value' as const,
+    sourceColumnIds: new Set<string>(),
+  };
   if (!target) {
     return empty;
+  }
+
+  if (target.kind === 'nodes') {
+    const highlightedNodeIds = new Set(target.nodeIds);
+    const highlightedEdgeIds = new Set<string>();
+    for (const edge of edges) {
+      if (edge.type !== 'dataFlow') {
+        continue;
+      }
+      if (highlightedNodeIds.has(edge.source) && highlightedNodeIds.has(edge.target)) {
+        highlightedEdgeIds.add(edge.id);
+      }
+    }
+    return {
+      ...empty,
+      edgeTone: 'population',
+      highlightedEdgeIds,
+      highlightedNodeIds,
+      highlightedNodeImpactLabels: toNodeImpactLabelMap(target.populationImpactLabelsByNodeId),
+      highlightedSourceDataLabels: toNodeImpactLabelMap(target.sourceDataLabelsByNodeId),
+      highlightedSourceDataNodeIds: new Set(Object.keys(target.sourceDataLabelsByNodeId ?? {})),
+      nodeTone: 'population',
+    };
   }
 
   const columns = target.kind === 'column' ? [target.column] : target.columns;
@@ -2169,8 +2572,31 @@ function resolveHighlightTarget(
     for (const edgeId of highlights.highlightedEdgeIds) {
       merged.highlightedEdgeIds.add(edgeId);
     }
+    for (const nodeId of highlights.highlightedNodeIds) {
+      merged.highlightedNodeIds.add(nodeId);
+    }
+    for (const [nodeId, labels] of highlights.highlightedNodeImpactLabels) {
+      const mergedLabels = new Set(merged.highlightedNodeImpactLabels.get(nodeId) ?? []);
+      for (const label of labels) {
+        mergedLabels.add(label);
+      }
+      merged.highlightedNodeImpactLabels.set(nodeId, [...mergedLabels]);
+    }
+    for (const nodeId of highlights.highlightedSourceDataNodeIds) {
+      merged.highlightedSourceDataNodeIds.add(nodeId);
+    }
+    for (const [nodeId, labels] of highlights.highlightedSourceDataLabels) {
+      const mergedLabels = new Set(merged.highlightedSourceDataLabels.get(nodeId) ?? []);
+      for (const label of labels) {
+        mergedLabels.add(label);
+      }
+      merged.highlightedSourceDataLabels.set(nodeId, [...mergedLabels]);
+    }
     for (const columnId of highlights.sourceColumnIds) {
       merged.sourceColumnIds.add(columnId);
+    }
+    if (highlights.highlightedNodeIds.size > 0) {
+      merged.nodeTone = 'population';
     }
   }
   return merged;
@@ -2232,6 +2658,10 @@ function columnKey(nodeId: string, columnName: string) {
   return `${nodeId}:${columnName}`;
 }
 
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
 function edgeKey(sourceId: string, targetId: string) {
   return `${sourceId}-${targetId}`;
 }
@@ -2271,6 +2701,25 @@ function formatUsageReason(reason: string): string {
 
 function getNodeSql(node: LineageNode): string | undefined {
   return node.querySql ?? node.cteExecutableSql;
+}
+
+function getColumnScopeSql(lineage: LineageModel, scopeId: string | undefined, nodeId: string): string | undefined {
+  if (scopeId) {
+    const scopeSql = lineage.scopes.find((scope) => scope.id === scopeId)?.querySql;
+    if (scopeSql) {
+      return scopeSql;
+    }
+  }
+  return lineage.scopes.find((scope) => scope.nodeId === nodeId)?.querySql;
+}
+
+function getColumnExecutableSql(lineage: LineageModel, scopeId: string | undefined, nodeId: string): string | undefined {
+  const scopeNodeId = scopeId ? lineage.scopes.find((scope) => scope.id === scopeId)?.nodeId : undefined;
+  const node = lineage.nodes.find((item) => item.id === (scopeNodeId ?? nodeId)) ?? lineage.nodes.find((item) => item.id === nodeId);
+  if (node) {
+    return getNodeSql(node);
+  }
+  return getColumnScopeSql(lineage, scopeId, nodeId);
 }
 
 function buildViewerSqlUrl(sql: string) {

@@ -1,0 +1,26 @@
+{
+  "id": "value-too-high-join-multiplication",
+  "symptom": "value_too_high",
+  "wrongSymptom": "missing_rows",
+  "targetColumn": "total_amount",
+  "rootCauseKind": "sql_logic",
+  "expectedCorrectRows": [
+    {
+      "customer_id": "10",
+      "total_amount": "100"
+    }
+  ],
+  "expectedRows": [
+    {
+      "customer_id": "10",
+      "total_amount": "200"
+    }
+  ],
+  "expectedEffects": ["row_multiplication", "aggregate_expression", "grain_change"],
+  "primaryEffects": ["row_multiplication"],
+  "expectedMechanisms": ["join", "aggregate", "group_by"],
+  "expectedEvidenceContains": ["join", "sum"],
+  "expectedCheckDomains": ["program_logic", "schema_assumption"],
+  "notExpectedEffects": [],
+  "notes": "JOIN after order grain multiplies orders.total_amount before SUM."
+}

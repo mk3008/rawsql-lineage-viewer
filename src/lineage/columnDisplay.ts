@@ -18,6 +18,16 @@ export function isPassthroughColumn(column: LineageColumn) {
   return Boolean(!column.usage && column.expressionSql && !column.comments?.length && isSimpleColumnReference(column.expressionSql));
 }
 
+export function isVisibleGraphColumn(column: LineageColumn) {
+  if (column.usage?.role === 'filter' || column.usage?.role === 'unused') {
+    return false;
+  }
+  if (column.usage?.role === 'condition') {
+    return column.outputIndex !== undefined || Boolean(column.selectItemId);
+  }
+  return true;
+}
+
 export function isSimpleColumnReference(sql: string) {
   const trimmedSql = sql.trim().replace(/;$/, '').trim();
   if (literalKeywords.has(trimmedSql.toLowerCase())) {

@@ -1,0 +1,26 @@
+{
+  "id": "value-missing-null-zero",
+  "symptom": "value_missing",
+  "wrongSymptom": "duplicate_rows",
+  "targetColumn": "paid_amount",
+  "rootCauseKind": "data_condition",
+  "expectedCorrectRows": [
+    {
+      "customer_id": "10",
+      "paid_amount": "100"
+    }
+  ],
+  "expectedRows": [
+    {
+      "customer_id": "10",
+      "paid_amount": "0"
+    }
+  ],
+  "expectedEffects": ["null_extension", "null_replacement", "missing_match"],
+  "primaryEffects": ["null_extension", "null_replacement", "missing_match"],
+  "expectedMechanisms": ["join", "coalesce", "function_call"],
+  "expectedEvidenceContains": ["coalesce", "customer_id"],
+  "expectedCheckDomains": ["program_logic", "data_condition"],
+  "notExpectedEffects": [],
+  "notes": "LEFT JOIN miss creates NULL and COALESCE masks it as zero."
+}
