@@ -116,6 +116,119 @@ describe('rawsqlAdapter', () => {
     );
   });
 
+  it('represents SELECT statements without FROM as parameter table sources', () => {
+    const { lineage } = analyzeSql(`
+      select
+        :from_date as from_date,
+        current_date as run_date
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('parameter_parameters')).toMatchObject({
+      type: 'parameter_table',
+      label: 'Parameters',
+    });
+    expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['from_date', 'run_date']);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'parameter_parameters',
+          target: 'main_output',
+          type: 'dataFlow',
+          kind: 'value_flow',
+        }),
+      ]),
+    );
+    expect(lineage.nodes.some((node) => node.id === 'table_parameters')).toBe(false);
+  });
+
+  it('represents CTEs without table references as parameter table nodes', () => {
+    const { lineage } = analyzeSql(`
+      with params as (
+        select
+          DATE '2026-05-01' as report_from,
+          cast(90 as integer) as dormant_days
+      )
+      select
+        p.report_from,
+        p.dormant_days
+      from params p
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('parameter_params')).toMatchObject({
+      type: 'parameter_table',
+      label: 'params',
+    });
+    expect(nodeById.get('parameter_params')?.columns.map((column) => column.name)).toEqual(['report_from', 'dormant_days']);
+    expect(nodeById.has('cte_params')).toBe(false);
+    expect(nodeById.has('parameter_parameters')).toBe(false);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'parameter_params',
+          target: 'main_output',
+          type: 'dataFlow',
+          sourceAlias: 'p',
+        }),
+      ]),
+    );
+  });
+
+  it('represents subqueries without table references as parameter table nodes', () => {
+    const { lineage } = analyzeSql(`
+      select
+        p.report_from
+      from (
+        select DATE '2026-05-01' as report_from
+      ) p
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('parameter_p')).toMatchObject({
+      type: 'parameter_table',
+      label: 'p',
+    });
+    expect(nodeById.get('parameter_p')?.columns.map((column) => column.name)).toEqual(['report_from']);
+    expect([...nodeById.values()].some((node) => node.type === 'derived' && node.label === 'p')).toBe(false);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'parameter_p',
+          target: 'main_output',
+          type: 'dataFlow',
+          sourceAlias: 'p',
+        }),
+      ]),
+    );
+  });
+
+  it('represents DUAL as a parameter table source instead of a physical table', () => {
+    const { lineage } = analyzeSql(`
+      select
+        :batch_id as batch_id,
+        current_timestamp as generated_at
+      from dual
+    `);
+    const nodeById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodeById.get('parameter_dual')).toMatchObject({
+      type: 'parameter_table',
+      label: 'dual',
+    });
+    expect(nodeById.has('table_dual')).toBe(false);
+    expect(lineage.edges).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'parameter_dual',
+          target: 'main_output',
+          type: 'dataFlow',
+          sourceAlias: 'dual',
+        }),
+      ]),
+    );
+  });
+
   it('analyzes CREATE TABLE AS SELECT using only the AS SELECT query', () => {
     const { lineage } = analyzeSql(`
       create table mart.customer_sales as
@@ -450,6 +563,41 @@ describe('rawsqlAdapter', () => {
     expect(output?.columns.find((column) => column.name === 'name')?.upstream).toEqual([
       { nodeId: derived?.id, columnName: 'name' },
     ]);
+  });
+
+  it('expands qualified wildcard columns from CTE aliases with known output columns', () => {
+    const { lineage } = analyzeSql(`
+      WITH scored AS (
+        SELECT id, name, amount
+        FROM orders
+      ),
+      final_report AS (
+        SELECT
+          s.*,
+          s.amount * 2 AS score
+        FROM scored s
+      )
+      SELECT
+        fr.id,
+        fr.name,
+        fr.amount,
+        fr.score
+      FROM final_report fr
+    `);
+    const finalReport = lineage.nodes.find((node) => node.id === 'cte_final_report');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(finalReport?.columns.map((column) => column.name)).toEqual(['id', 'name', 'amount', 'score']);
+    expect(finalReport?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: 'cte_scored', columnName: 'id' },
+    ]);
+    expect(finalReport?.columns.find((column) => column.name === 'amount')?.upstream).toEqual([
+      { nodeId: 'cte_scored', columnName: 'amount' },
+    ]);
+    expect(finalReport?.columns.find((column) => column.name === 'score')?.upstream).toEqual([
+      { nodeId: 'cte_scored', columnName: 'amount' },
+    ]);
+    expect(output?.columns.map((column) => column.name)).toEqual(['id', 'name', 'amount', 'score']);
   });
 
   it('expands unqualified wildcard columns from known derived sources', () => {

@@ -1,4 +1,4 @@
-export type LineageNodeType = 'table' | 'cte' | 'derived' | 'scalar_subquery' | 'output';
+export type LineageNodeType = 'table' | 'cte' | 'derived' | 'scalar_subquery' | 'parameter_table' | 'output';
 
 export type LineageEdgeType = 'dataFlow' | 'expression' | 'unknown';
 export type LineageEdgeKind = 'correlation' | 'join_condition' | 'row_source' | 'subquery_value' | 'value_flow' | 'where_filter';

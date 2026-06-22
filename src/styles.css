@@ -416,6 +416,11 @@ textarea {
   border-color: #6366f1;
 }
 
+.legend-dot.parameter-table {
+  background: #ccfbf1;
+  border-color: #14b8a6;
+}
+
 .legend-dot.output {
   background: #f3e8ff;
   border-color: #8b5cf6;
@@ -1122,6 +1127,11 @@ textarea {
   color: #3730a3;
 }
 
+.lineage-inspector-type-parameter_table {
+  background: #ccfbf1;
+  color: #0f766e;
+}
+
 .lineage-inspector-type-output {
   background: #f3e8ff;
   color: #6d28d9;
@@ -1177,6 +1187,11 @@ textarea {
 .lineage-inspector-type-expression-derived {
   border-color: #fcd34d;
   color: #b45309;
+}
+
+.lineage-inspector-type-expression-parameter_table {
+  border-color: #5eead4;
+  color: #0f766e;
 }
 
 .lineage-inspector-type-expression-output {
@@ -1573,10 +1588,10 @@ textarea {
 
 .sql-history-heading {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-  padding: 14px;
+  padding: 12px 14px;
   border-bottom: 1px solid #e4ebf5;
 }
 
@@ -1588,13 +1603,45 @@ textarea {
   line-height: 1.25;
 }
 
+.sql-history-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.sql-history-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 1px solid #d8e3f2;
+  border-radius: 7px;
+  background: #f8fafc;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.sql-history-sort select {
+  min-width: 72px;
+  border: 0;
+  background: transparent;
+  color: #0f172a;
+  font: inherit;
+  outline: none;
+  cursor: pointer;
+}
+
 .sql-history-list {
   display: grid;
   align-content: start;
-  gap: 9px;
+  gap: 7px;
   min-height: 0;
   overflow: auto;
-  padding: 12px 14px 14px;
+  padding: 10px 14px 14px;
 }
 
 .sql-history-item {
@@ -1608,10 +1655,10 @@ textarea {
 
 .sql-history-main {
   display: grid;
-  gap: 5px;
+  gap: 3px;
   min-width: 0;
   border: 0;
-  padding: 9px 10px;
+  padding: 7px 9px;
   background: transparent;
   color: #0f172a;
   cursor: pointer;
@@ -1640,16 +1687,26 @@ textarea {
   overflow: hidden;
   color: #475569;
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 11px;
-  line-height: 1.35;
+  font-size: 10px;
+  line-height: 1.25;
+  max-height: 16px;
+}
+
+.sql-history-code .cm-editor {
+  max-height: 16px;
+  min-height: 0;
+  background: transparent;
 }
 
 .sql-history-code .cm-scroller {
   overflow: hidden;
+  min-height: 16px;
+  max-height: 16px;
 }
 
 .sql-history-code .cm-content {
   overflow: hidden;
+  padding: 0;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1663,8 +1720,8 @@ textarea {
 
 .sql-history-action {
   display: inline-grid;
-  width: 32px;
-  min-height: 32px;
+  width: 30px;
+  min-height: 30px;
   place-items: center;
   border: 0;
   border-bottom: 1px solid #e4ebf5;
@@ -1759,6 +1816,11 @@ textarea {
 .lineage-node-scalar_subquery {
   border-color: #6366f1;
   background: #eef2ff;
+}
+
+.lineage-node-parameter_table {
+  border-color: #14b8a6;
+  background: #f0fdfa;
 }
 
 .lineage-node-output {
@@ -2396,6 +2458,10 @@ textarea {
   }
 
   .share-status {
+    display: none;
+  }
+
+  .graph-info {
     display: none;
   }
 
