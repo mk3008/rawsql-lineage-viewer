@@ -112,6 +112,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
 }
 
 function formatNodeKind(type: GraphNode['data']['lineageNode']['type']) {
+  if (type === 'parameter_table') return 'Param';
   return type === 'scalar_subquery' ? 'Scalar' : type;
 }
 

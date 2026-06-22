@@ -108,6 +108,7 @@ export function App() {
         ctes: adapterResult.lineage.nodes.filter((node) => node.type === 'cte').length,
         derived: adapterResult.lineage.nodes.filter((node) => node.type === 'derived').length,
         scalarSubqueries: adapterResult.lineage.nodes.filter((node) => node.type === 'scalar_subquery').length,
+        parameters: adapterResult.lineage.nodes.filter((node) => node.type === 'parameter_table').length,
         outputs: adapterResult.lineage.nodes.filter((node) => node.type === 'output').length,
         dataFlows: adapterResult.lineage.edges.filter((edge) => edge.type === 'dataFlow').length,
       }
@@ -475,7 +476,8 @@ export function App() {
                 <span>Tables <strong>{graphStats?.tables}</strong></span>
                 <span>CTEs <strong>{graphStats?.ctes}</strong></span>
                 <span>Derived <strong>{graphStats?.derived}</strong></span>
-                <span>Scalar Subqueries <strong>{graphStats?.scalarSubqueries}</strong></span>
+                <span>Scalars <strong>{graphStats?.scalarSubqueries}</strong></span>
+                <span>Params <strong>{graphStats?.parameters}</strong></span>
                 <span>Output <strong>{graphStats?.outputs}</strong></span>
                 <span>DataFlow <strong>{graphStats?.dataFlows}</strong></span>
               </div>
@@ -510,6 +512,7 @@ function LegendPanel() {
           <span><i className="legend-dot cte" />CTE</span>
           <span><i className="legend-dot derived" />Derived</span>
           <span><i className="legend-dot scalar-subquery" />Scalar Subquery</span>
+          <span><i className="legend-dot parameter-table" />Parameter Table</span>
           <span><i className="legend-dot output" />Output</span>
         </div>
       </section>
@@ -548,6 +551,21 @@ function SqlHistoryPanel({
   onOpen: (item: SqlHistoryItem) => void;
   onRemove: (id: string) => void;
 }) {
+  const [sortMode, setSortMode] = useState<'recent' | 'name'>('recent');
+  const visibleHistory = useMemo(() => {
+    if (sortMode === 'recent') {
+      return history;
+    }
+
+    return [...history].sort((a, b) => {
+      const titleCompare = getSqlHistoryDisplayTitle(a).localeCompare(getSqlHistoryDisplayTitle(b), undefined, {
+        numeric: true,
+        sensitivity: 'base',
+      });
+      return titleCompare || b.openedAt.localeCompare(a.openedAt);
+    });
+  }, [history, sortMode]);
+
   return (
     <div className="sql-history" data-testid="sql-history">
       <div className="sql-history-heading">
@@ -555,17 +573,26 @@ function SqlHistoryPanel({
           <div className="lineage-inspector-kicker">History</div>
           <h2>Opened SQL</h2>
         </div>
-        <button className="text-button" type="button" disabled={history.length === 0} onClick={onClear}>
-          <Trash2 size={13} />
-          Clear
-        </button>
+        <div className="sql-history-heading-actions">
+          <label className="sql-history-sort">
+            <span>Sort</span>
+            <select value={sortMode} onChange={(event) => setSortMode(event.target.value === 'name' ? 'name' : 'recent')}>
+              <option value="recent">Recent</option>
+              <option value="name">Name</option>
+            </select>
+          </label>
+          <button className="text-button" type="button" disabled={history.length === 0} onClick={onClear}>
+            <Trash2 size={13} />
+            Clear
+          </button>
+        </div>
       </div>
       {history.length > 0 ? (
         <div className="sql-history-list">
-          {history.map((item) => (
+          {visibleHistory.map((item) => (
               <article className="sql-history-item" key={item.id}>
                   <button className="sql-history-main" type="button" onClick={() => onOpen(item)}>
-                  <span className="sql-history-title">{item.outputTitle ?? item.title}</span>
+                  <span className="sql-history-title">{getSqlHistoryDisplayTitle(item)}</span>
                   <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
                   <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
                 </button>
@@ -582,6 +609,10 @@ function SqlHistoryPanel({
       )}
     </div>
   );
+}
+
+function getSqlHistoryDisplayTitle(item: SqlHistoryItem) {
+  return item.outputTitle ?? item.title;
 }
 
 function readInitialSqlFromUrl() {
@@ -646,28 +677,30 @@ async function copyText(text: string) {
 }
 
 function readSqlHistory(initialSql: string): SqlHistoryItem[] {
+  const initialHistory = isSqlHistoryAnalyzable(initialSql) ? [createSqlHistoryItem(initialSql)] : [];
   if (typeof window === 'undefined') {
-    return [createSqlHistoryItem(initialSql)];
+    return initialHistory;
   }
 
   try {
     const stored = window.localStorage.getItem(sqlHistoryStorageKey);
     const parsed = stored ? (JSON.parse(stored) as SqlHistoryItem[]) : [];
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed.filter(isSqlHistoryItem).slice(0, maxSqlHistoryItems);
+      const history = parsed.filter(isSqlHistoryItem).filter((item) => isSqlHistoryAnalyzable(item.sql)).slice(0, maxSqlHistoryItems);
+      writeSqlHistory(history);
+      return history;
     }
   } catch {
     // Ignore invalid localStorage values.
   }
 
-  const initialHistory = [createSqlHistoryItem(initialSql)];
   writeSqlHistory(initialHistory);
   return initialHistory;
 }
 
 function saveSqlHistory(sql: string, current: SqlHistoryItem[]) {
   const normalizedSql = sql.trim();
-  if (!normalizedSql) {
+  if (!normalizedSql || !isSqlHistoryAnalyzable(normalizedSql)) {
     return current;
   }
 
@@ -696,6 +729,20 @@ function upsertSqlHistoryTitle(sql: string, title: string, current: SqlHistoryIt
   }
 
   return [{ ...createSqlHistoryItem(normalizedSql), outputTitle: title }, ...current].slice(0, maxSqlHistoryItems);
+}
+
+function isSqlHistoryAnalyzable(sql: string) {
+  const normalizedSql = sql.trim();
+  if (!normalizedSql) {
+    return false;
+  }
+
+  try {
+    analyzeSql(normalizedSql);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function writeSqlHistory(history: SqlHistoryItem[]) {

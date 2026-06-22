@@ -170,6 +170,7 @@ export function LineageGraph({
   const lastCommittedSelectionRef = useRef<GraphSelectionSnapshot>({ kind: 'none' });
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
+  const previousGraphStructureKeyRef = useRef<string | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
   const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => collectDefaultCollapsedGroupRootIds(lineage));
@@ -180,7 +181,16 @@ export function LineageGraph({
   const layoutLineage = useMemo(() => applyOutputTitle(lineage, outputTitle), [lineage, outputTitle]);
   const displayLineageRef = useRef(displayLineage);
   const layoutLineageRef = useRef(layoutLineage);
-  const graph = useMemo(() => buildGraphModel(displayLineage, flowDirection, layoutLineage), [displayLineage, flowDirection, layoutLineage]);
+  const [showParameterNodes, setShowParameterNodes] = useState(false);
+  const graphDisplayLineage = useMemo(
+    () => (showParameterNodes ? displayLineage : hideParameterNodesForGraph(displayLineage)),
+    [displayLineage, showParameterNodes],
+  );
+  const graphLayoutLineage = useMemo(
+    () => (showParameterNodes ? layoutLineage : hideParameterNodesForGraph(layoutLineage)),
+    [layoutLineage, showParameterNodes],
+  );
+  const graph = useMemo(() => buildGraphModel(graphDisplayLineage, flowDirection, graphLayoutLineage), [flowDirection, graphDisplayLineage, graphLayoutLineage]);
   const hideableColumnNodeIds = useMemo(() => new Set(displayLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [displayLineage.nodes, flowDirection]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(displayLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
@@ -631,6 +641,14 @@ export function LineageGraph({
       }),
     [columnHighlights.edgeTone, columnHighlights.highlightedEdgeIds, graph.edges, showEdgeAliases],
   );
+  const graphStructureKey = useMemo(
+    () =>
+      [
+        graph.nodes.map((node) => node.id).join('|'),
+        graph.edges.map((edge) => `${edge.id}:${edge.source}->${edge.target}`).join('|'),
+      ].join('::'),
+    [graph.edges, graph.nodes],
+  );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
 
@@ -672,8 +690,21 @@ export function LineageGraph({
   }, [nodes]);
 
   useEffect(() => {
-    setEdges(graphEdges);
-  }, [graphEdges, setEdges]);
+    const graphStructureChanged =
+      previousGraphStructureKeyRef.current !== null && previousGraphStructureKeyRef.current !== graphStructureKey;
+    previousGraphStructureKeyRef.current = graphStructureKey;
+
+    if (!graphStructureChanged) {
+      setEdges(graphEdges);
+      return;
+    }
+
+    setEdges([]);
+    const animationFrameId = window.requestAnimationFrame(() => {
+      setEdges(graphEdges);
+    });
+    return () => window.cancelAnimationFrame(animationFrameId);
+  }, [graphEdges, graphStructureKey, setEdges]);
 
   useEffect(() => {
     if (!focusTarget) {
@@ -743,6 +774,10 @@ export function LineageGraph({
           <input aria-label="Show aliases" type="checkbox" checked={showEdgeAliases} onChange={(event) => setShowEdgeAliases(event.target.checked)} />
           Aliases
         </label>
+        <label className="graph-alias-toggle">
+          <input aria-label="Show parameters" type="checkbox" checked={showParameterNodes} onChange={(event) => setShowParameterNodes(event.target.checked)} />
+          Parameters
+        </label>
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
           {Math.round(viewportZoom * 100)}%
@@ -777,6 +812,7 @@ export function LineageGraph({
               const type = (node.data as { lineageNode?: { type?: string } } | undefined)?.lineageNode?.type;
               if (type === 'table') return '#dbeafe';
               if (type === 'cte') return '#dcfce7';
+              if (type === 'parameter_table') return '#ccfbf1';
               if (type === 'output') return '#f3e8ff';
               return '#fef3c7';
             }}
@@ -1983,6 +2019,18 @@ function applyOutputTitle(lineage: LineageModel, outputTitle: string | undefined
   return changed ? { ...lineage, nodes } : lineage;
 }
 
+function hideParameterNodesForGraph(lineage: LineageModel): LineageModel {
+  const parameterNodeIds = new Set(lineage.nodes.filter((node) => node.type === 'parameter_table').map((node) => node.id));
+  if (parameterNodeIds.size === 0) {
+    return lineage;
+  }
+  return {
+    ...lineage,
+    nodes: lineage.nodes.filter((node) => !parameterNodeIds.has(node.id)),
+    edges: lineage.edges.filter((edge) => !parameterNodeIds.has(edge.source) && !parameterNodeIds.has(edge.target)),
+  };
+}
+
 function isSameGraphSelectionSnapshot(left: GraphSelectionSnapshot, right: GraphSelectionSnapshot) {
   if (left.kind !== right.kind) {
     return false;
@@ -2036,7 +2084,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function InspectorTypeBadge({ node }: { node: LineageNode }) {
   const type = node.recursive ? 'recursive' : node.type;
-  return <span className={`lineage-inspector-type lineage-inspector-type-${type}`}>{type}</span>;
+  return <span className={`lineage-inspector-type lineage-inspector-type-${type}`}>{formatInspectorTypeLabel(type)}</span>;
+}
+
+function formatInspectorTypeLabel(type: LineageNode['type'] | 'recursive'): string {
+  if (type === 'parameter_table') return 'PARAM';
+  if (type === 'scalar_subquery') return 'SCALAR';
+  return type.toUpperCase();
 }
 
 function groupInspectorItemsByNode(items: InspectorColumnItem[]) {

@@ -18,15 +18,21 @@ export function buildGraphModel(
   flowDirection: GraphFlowDirection = 'downstream',
   layoutLineage: LineageModel = lineage,
 ): GraphModel {
-  const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge));
-  const layoutVisibleEdges = layoutLineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge));
+  const visibleNodeIds = collectOutputReachableNodeIds(lineage);
+  const layoutVisibleNodeIds = collectOutputReachableNodeIds(layoutLineage);
+  const visibleNodes = lineage.nodes.filter((node) => visibleNodeIds.has(node.id));
+  const layoutVisibleNodes = layoutLineage.nodes.filter((node) => layoutVisibleNodeIds.has(node.id));
+  const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge) && visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
+  const layoutVisibleEdges = layoutLineage.edges.filter(
+    (edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge) && layoutVisibleNodeIds.has(edge.source) && layoutVisibleNodeIds.has(edge.target),
+  );
   const layoutEdges = flowDirection === 'upstream' ? visibleEdges.map(reverseLineageEdge) : visibleEdges;
   const uncollapsedLayoutEdges = flowDirection === 'upstream' ? layoutVisibleEdges.map(reverseLineageEdge) : layoutVisibleEdges;
-  const layoutPositions = new Map(layoutNodes(layoutLineage.nodes, uncollapsedLayoutEdges).map((node) => [node.id, node.position]));
-  const fallbackPositions = new Map(layoutNodes(lineage.nodes, layoutEdges).map((node) => [node.id, node.position]));
+  const layoutPositions = new Map(layoutNodes(layoutVisibleNodes, uncollapsedLayoutEdges).map((node) => [node.id, node.position]));
+  const fallbackPositions = new Map(layoutNodes(visibleNodes, layoutEdges).map((node) => [node.id, node.position]));
 
   return {
-    nodes: lineage.nodes.map((node) => ({
+    nodes: visibleNodes.map((node) => ({
       id: node.id,
       type: 'lineageNode',
       position: layoutPositions.get(node.id) ?? fallbackPositions.get(node.id) ?? { x: 0, y: 0 },
@@ -37,6 +43,32 @@ export function buildGraphModel(
     })),
     edges: visibleEdges.map((edge) => toGraphEdge(edge, flowDirection)),
   };
+}
+
+function collectOutputReachableNodeIds(lineage: LineageModel): Set<string> {
+  const outputNodeIds = lineage.nodes.filter((node) => node.type === 'output').map((node) => node.id);
+  const reachable = new Set(outputNodeIds);
+  const incomingByTarget = new Map<string, LineageEdge[]>();
+
+  for (const edge of lineage.edges) {
+    if (edge.type !== 'dataFlow' || isRecursiveDataFlow(edge)) {
+      continue;
+    }
+    incomingByTarget.set(edge.target, [...(incomingByTarget.get(edge.target) ?? []), edge]);
+  }
+
+  const queue = [...outputNodeIds];
+  while (queue.length > 0) {
+    const targetId = queue.shift()!;
+    for (const edge of incomingByTarget.get(targetId) ?? []) {
+      if (!reachable.has(edge.source)) {
+        reachable.add(edge.source);
+        queue.push(edge.source);
+      }
+    }
+  }
+
+  return reachable;
 }
 
 function isRecursiveDataFlow(edge: LineageEdge): boolean {
@@ -187,6 +219,7 @@ function layoutAlignmentWeight(node: LineageNode): number {
   if (node.type === 'cte') return 4;
   if (node.type === 'scalar_subquery') return 3.5;
   if (node.type === 'derived') return 3;
+  if (node.type === 'parameter_table') return 1.5;
   return 1;
 }
 
@@ -208,6 +241,7 @@ function upstreamOrder(nodeId: string, edges: LineageEdge[], orderByNode: Map<st
 
 function nodeTypeRank(node: LineageNode): number {
   if (node.type === 'table') return 0;
+  if (node.type === 'parameter_table') return 0;
   if (node.type === 'cte') return 1;
   if (node.type === 'derived') return 2;
   if (node.type === 'scalar_subquery') return 3;

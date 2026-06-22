@@ -174,24 +174,26 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
-    nodes.set(toCteId(cteName), {
-      id: toCteId(cteName),
-      type: 'cte',
+    const nodeId = isParameterSelectQuery(cte.query) ? toParameterTableId(cteName) : toCteId(cteName);
+    nodes.set(nodeId, {
+      id: nodeId,
+      type: isParameterSelectQuery(cte.query) ? 'parameter_table' : 'cte',
       label: cteName,
       columns: [],
       comments: cteCommentsByName.get(cteName),
       cteExecutableSql: cteExecutableSqlByName.get(cteName),
-      materializationHint: normalizeMaterializationHint(cte.materialized),
+      materializationHint: isParameterSelectQuery(cte.query) ? undefined : normalizeMaterializationHint(cte.materialized),
       querySql: cteExecutableSqlByName.get(cteName),
     });
   }
 
   for (const cte of ctes) {
+    const targetId = isParameterSelectQuery(cte.query) ? toParameterTableId(cte.getSourceAliasName()) : toCteId(cte.getSourceAliasName());
     collectQueryEdges({
       query: cte.query,
-      targetId: toCteId(cte.getSourceAliasName()),
+      targetId,
       targetLabel: cte.getSourceAliasName(),
-      recursiveRootId: toCteId(cte.getSourceAliasName()),
+      recursiveRootId: targetId,
       cteNames,
       nodes,
       edges,
@@ -274,10 +276,17 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       const outputColumns = collectOutputColumns(query, [], options, scopeId);
       scopes.push(createLineageScope(query, [], [], outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
       setNodeColumns(nodes, targetId, outputColumns);
-      warnings.push({
-        code: 'select-without-source',
-        message: `${targetLabel} has no FROM source, so no upstream lineage edge was created.`,
-      });
+      if (nodes.get(targetId)?.type !== 'parameter_table') {
+        const parameterSource = createParameterTableNode('parameters', nodes);
+        addLineageEdge(edges, {
+          source: parameterSource.id,
+          target: targetId,
+          type: 'dataFlow',
+          kind: 'value_flow',
+          sourceAlias: 'parameters',
+          confidence: 'high',
+        });
+      }
       return;
     }
 
@@ -628,8 +637,8 @@ function resolveSourceExpression(
     const alias = source.aliasExpression ? source.getAliasName() : null;
     const aliases = alias ? [alias, sourceName] : [sourceName];
     if (cteNames.has(sourceName)) {
+      const node = findCteSourceNode(sourceName, nodes);
       const cteId = toCteId(sourceName);
-      const node = nodes.get(cteId) ?? createCteNode(sourceName, nodes);
       const recursive = cteId === recursiveRootId;
       if (recursive) {
         node.recursive = true;
@@ -639,6 +648,14 @@ function resolveSourceExpression(
         aliases,
         sourceAlias: alias ?? undefined,
         recursive,
+      };
+    }
+    if (isDualTableName(sourceName)) {
+      const node = createParameterTableNode(sourceName, nodes);
+      return {
+        node,
+        aliases,
+        sourceAlias: alias ?? 'dual',
       };
     }
     return {
@@ -651,6 +668,32 @@ function resolveSourceExpression(
   if (datasource instanceof SubQuerySource) {
     derivedCounter.value += 1;
     const alias = source.getAliasName() ?? `subquery_${derivedCounter.value}`;
+    if (isParameterSelectQuery(datasource.query)) {
+      const node = createParameterTableNode(alias, nodes);
+      node.comments = extractQueryNodeComments(datasource.query);
+      node.querySql = formatStandaloneQuerySql(datasource.query);
+      collectQueryEdges({
+        query: datasource.query,
+        targetId: node.id,
+        targetLabel: alias,
+        cteNames,
+        nodes,
+        edges,
+        scopes,
+        warnings,
+        derivedCounter,
+        scalarSubqueryCounter,
+        scopeCounter,
+        recursiveRootId,
+        parentScopeId: undefined,
+        schemaFacts,
+      });
+      return {
+        node,
+        aliases: [alias],
+        sourceAlias: alias,
+      };
+    }
     const id = `derived_${sanitizeId(alias)}_${derivedCounter.value}`;
     const node: LineageNode = {
       id,
@@ -993,35 +1036,131 @@ function toSourceReferences(
 
 function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
   if (hasWildcardSelectItem(query)) {
-    const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
-    return [...rawsqlColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+    if (options.schemaFacts) {
+      const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
+      if (rawsqlColumns.length > 0) {
+        return [...rawsqlColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+      }
+    }
+
+    const sourceExpandedColumns = collectSourceExpandedSelectColumns(query, sources, options, scopeId);
+    if (sourceExpandedColumns.unresolvedWildcardCount === 0) {
+      return [...sourceExpandedColumns.columns, ...collectFilterColumns(query, sources, options, scopeId)];
+    }
+
+    const rawsqlColumns = options.schemaFacts
+      ? []
+      : collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
+    return [
+      ...(rawsqlColumns.length > 0 ? rawsqlColumns : sourceExpandedColumns.columns),
+      ...collectFilterColumns(query, sources, options, scopeId),
+    ];
   }
 
-  const selectedColumns: LineageColumn[] = query.selectClause.items.flatMap((item, index): LineageColumn | LineageColumn[] => {
-    const comments = extractSelectItemComments(query.selectClause.items, index);
-    const caseRules = collectExpressionBreakdownRules(item.value, sources);
-    const expressionTree = collectExpressionTree(item.value, sources);
-    const name = getSelectItemOutputName(item, index);
-    const outputIndex = index;
-    const scalarSubqueryRefs = collectScalarSubqueryLineage(item.value, name, sources, options, scopeId);
-    const upstream = scalarSubqueryRefs.length > 0
-      ? scalarSubqueryRefs
-      : mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
-    return {
-      id: '',
-      name,
-      comments,
-      caseRules,
-      expressionTree,
-      expressionSql: formatExpressionSql(item.value),
-      outputIndex,
-      selectItemId: createSelectItemId(scopeId, outputIndex),
-      scopeId,
-      upstream,
-      usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
-    };
-  });
+  const selectedColumns: LineageColumn[] = query.selectClause.items.map((item, index) =>
+    collectSelectItemOutputColumn(query, item, index, index, sources, options, scopeId),
+  );
   return [...selectedColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+}
+
+function collectSelectItemOutputColumn(
+  query: SimpleSelectQuery,
+  item: SimpleSelectQuery['selectClause']['items'][number],
+  itemIndex: number,
+  outputIndex: number,
+  sources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+  scopeId: string,
+): LineageColumn {
+  const comments = extractSelectItemComments(query.selectClause.items, itemIndex);
+  const caseRules = collectExpressionBreakdownRules(item.value, sources);
+  const expressionTree = collectExpressionTree(item.value, sources);
+  const name = getSelectItemOutputName(item, outputIndex);
+  const scalarSubqueryRefs = collectScalarSubqueryLineage(item.value, name, sources, options, scopeId);
+  const upstream = scalarSubqueryRefs.length > 0
+    ? scalarSubqueryRefs
+    : mergeColumnRefs(resolveColumnReferences(item.value, sources), collectNestedExpressionLineage(item.value, options));
+  return {
+    id: '',
+    name,
+    comments,
+    caseRules,
+    expressionTree,
+    expressionSql: formatExpressionSql(item.value),
+    outputIndex,
+    selectItemId: createSelectItemId(scopeId, outputIndex),
+    scopeId,
+    upstream,
+    usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
+  };
+}
+
+function collectSourceExpandedSelectColumns(
+  query: SimpleSelectQuery,
+  sources: ResolvedSource[],
+  options: CollectQueryEdgesOptions,
+  scopeId: string,
+): { columns: LineageColumn[]; unresolvedWildcardCount: number } {
+  const columns: LineageColumn[] = [];
+  let outputIndex = 0;
+  let unresolvedWildcardCount = 0;
+
+  query.selectClause.items.forEach((item, itemIndex) => {
+    if (item.value instanceof ColumnReference && item.value.column.name === '*') {
+      const wildcardColumns = expandWildcardFromResolvedSources(item.value, sources, scopeId, outputIndex);
+      if (wildcardColumns.length === 0) {
+        unresolvedWildcardCount += 1;
+        return;
+      }
+      columns.push(...wildcardColumns);
+      outputIndex += wildcardColumns.length;
+      return;
+    }
+
+    columns.push(collectSelectItemOutputColumn(query, item, itemIndex, outputIndex, sources, options, scopeId));
+    outputIndex += 1;
+  });
+
+  return { columns, unresolvedWildcardCount };
+}
+
+function expandWildcardFromResolvedSources(
+  reference: ColumnReference,
+  sources: ResolvedSource[],
+  scopeId: string,
+  startOutputIndex: number,
+): LineageColumn[] {
+  const qualifier = getWildcardQualifier(reference);
+  const matchingSources = qualifier
+    ? sources.filter((source) => source.aliases.some((alias) => sameIdentifier(alias, qualifier)))
+    : sources;
+  let offset = 0;
+
+  return matchingSources.flatMap((source) =>
+    source.node.columns
+      .filter((column) => !column.usage || column.outputIndex !== undefined)
+      .map((column) => {
+        const outputIndex = startOutputIndex + offset;
+        offset += 1;
+        return {
+          id: '',
+          name: column.name,
+          outputIndex,
+          selectItemId: createSelectItemId(scopeId, outputIndex),
+          scopeId,
+          expressionSql: formatWildcardColumnExpressionSql(source, column.name),
+          upstream: [{
+            nodeId: source.node.id,
+            columnName: column.name,
+          }],
+        };
+      }),
+  );
+}
+
+function formatWildcardColumnExpressionSql(source: ResolvedSource, columnName: string): string {
+  const qualifier = source.sourceAlias ?? source.aliases[0];
+  return qualifier ? `${qualifier}.${columnName}` : columnName;
 }
 
 function collectScalarSubqueryLineage(
@@ -2108,6 +2247,23 @@ function createTableNode(tableName: string, nodes: Map<string, LineageNode>, sch
   return node;
 }
 
+function createParameterTableNode(label: string, nodes: Map<string, LineageNode>): LineageNode {
+  const normalizedLabel = isDualTableName(label) ? 'dual' : label;
+  const id = toParameterTableId(normalizedLabel);
+  const existing = nodes.get(id);
+  if (existing) {
+    return existing;
+  }
+  const node: LineageNode = {
+    id,
+    type: 'parameter_table',
+    label: normalizedLabel === 'parameters' ? 'Parameters' : normalizedLabel,
+    columns: [],
+  };
+  nodes.set(id, node);
+  return node;
+}
+
 function resolveSchemaColumnNames(schemaFacts: SchemaFacts | undefined, tableName: string): string[] {
   return schemaFacts ? createTableColumnResolver(schemaFacts)(tableName) : [];
 }
@@ -2122,6 +2278,14 @@ function createCteNode(cteName: string, nodes: Map<string, LineageNode>): Lineag
   };
   nodes.set(node.id, node);
   return node;
+}
+
+function findCteSourceNode(cteName: string, nodes: Map<string, LineageNode>): LineageNode {
+  const parameterNode = nodes.get(toParameterTableId(cteName));
+  if (parameterNode) {
+    return parameterNode;
+  }
+  return nodes.get(toCteId(cteName)) ?? createCteNode(cteName, nodes);
 }
 
 function createDerivedNode(id: string, label: string, nodes: Map<string, LineageNode>): LineageNode {
@@ -2205,8 +2369,20 @@ function toTableId(tableName: string): string {
   return `table_${sanitizeId(tableName)}`;
 }
 
+function toParameterTableId(tableName: string): string {
+  return `parameter_${sanitizeId(tableName)}`;
+}
+
 function toCteId(cteName: string): string {
   return `cte_${sanitizeId(cteName)}`;
+}
+
+function isDualTableName(tableName: string): boolean {
+  return tableName.split('.').at(-1)?.toLowerCase() === 'dual';
+}
+
+function isParameterSelectQuery(query: unknown): query is SimpleSelectQuery {
+  return query instanceof SimpleSelectQuery && !query.fromClause;
 }
 
 function sanitizeId(value: string): string {

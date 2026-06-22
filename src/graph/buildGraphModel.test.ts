@@ -36,6 +36,31 @@ describe('buildGraphModel', () => {
     expect(graph.edges.every((edge) => edge.data?.lineageEdge.type === 'dataFlow')).toBe(true);
   });
 
+  it('does not render CTEs that are not reachable from the final output', () => {
+    const { lineage } = analyzeSql(`
+      WITH used_orders AS (
+        SELECT customer_id, amount
+        FROM orders
+      ),
+      unused_payments AS (
+        SELECT customer_id, amount
+        FROM payments
+      )
+      SELECT customer_id, amount
+      FROM used_orders
+    `);
+
+    const graph = buildGraphModel(lineage, 'upstream');
+    const graphNodeIds = new Set(graph.nodes.map((node) => node.id));
+
+    expect(lineage.nodes.some((node) => node.id === 'cte_unused_payments')).toBe(true);
+    expect(graphNodeIds.has('cte_used_orders')).toBe(true);
+    expect(graphNodeIds.has('table_orders')).toBe(true);
+    expect(graphNodeIds.has('cte_unused_payments')).toBe(false);
+    expect(graphNodeIds.has('table_payments')).toBe(false);
+    expect(graph.edges.some((edge) => edge.source === 'cte_unused_payments' || edge.target === 'cte_unused_payments')).toBe(false);
+  });
+
   it('renders data source aliases on data flows and preserves outer join context as a dashed line', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const graph = buildGraphModel(lineage);
@@ -139,6 +164,23 @@ describe('buildGraphModel', () => {
     });
   });
 
+  it('renders parameter table sources for SELECT statements without FROM', () => {
+    const { lineage } = analyzeSql('select :batch_id as batch_id');
+    const graph = buildGraphModel(lineage, 'upstream');
+    const parameterNode = graph.nodes.find((node) => node.id === 'parameter_parameters');
+    const parameterEdge = graph.edges.find((edge) => edge.id === 'parameter_parameters-main_output');
+
+    expect(parameterNode?.data.lineageNode.type).toBe('parameter_table');
+    expect(parameterNode?.data.lineageNode.label).toBe('Parameters');
+    expect(parameterEdge).toMatchObject({
+      source: 'main_output',
+      target: 'parameter_parameters',
+      data: {
+        lineageEdge: expect.objectContaining({ kind: 'value_flow' }),
+      },
+    });
+  });
+
   it('keeps transformation chains closer to a straight line than leaf table branches', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const upstream = buildGraphModel(lineage, 'upstream');
@@ -182,11 +224,13 @@ describe('buildGraphModel', () => {
         { id: 'helper', type: 'cte' as const, label: 'helper', columns: [] },
         { id: 'root', type: 'cte' as const, label: 'root', columns: [] },
         { id: 'source_b', type: 'table' as const, label: 'source_b', columns: [] },
+        { id: 'main_output', type: 'output' as const, label: 'Final Result', columns: [] },
       ],
       edges: [
         { id: 'source_a-helper', source: 'source_a', target: 'helper', type: 'dataFlow' as const },
         { id: 'helper-root', source: 'helper', target: 'root', type: 'dataFlow' as const },
         { id: 'source_b-root', source: 'source_b', target: 'root', type: 'dataFlow' as const },
+        { id: 'root-main_output', source: 'root', target: 'main_output', type: 'dataFlow' as const },
       ],
       scopes: [],
       analysisWarnings: [],
@@ -198,6 +242,7 @@ describe('buildGraphModel', () => {
       edges: [
         { id: 'source_a-root', source: 'source_a', target: 'root', type: 'dataFlow' as const },
         { id: 'source_b-root', source: 'source_b', target: 'root', type: 'dataFlow' as const },
+        { id: 'root-main_output', source: 'root', target: 'main_output', type: 'dataFlow' as const },
       ],
     };
     const uncollapsed = buildGraphModel(uncollapsedLineage);
