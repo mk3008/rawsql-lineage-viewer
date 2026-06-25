@@ -1221,6 +1221,10 @@ function collectScalarSubqueryLineage(
   });
 }
 
+// value-origin boundary:
+// Scalar subquery value lineage still owns adapter state changes: nodes, edges,
+// counters, correlation metadata, and upstream node column backfill.
+// Do not move this with output-columns until that state has a narrower API.
 function collectInlineQueries(value: unknown): InlineQuery[] {
   const queries: InlineQuery[] = [];
   const visited = new Set<unknown>();
@@ -1492,6 +1496,10 @@ function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'
   return `expr_${index + 1}`;
 }
 
+// value-origin boundary:
+// CASE rules and expression trees describe how output values are produced.
+// They are consumed by output column creation today, but they are not display
+// column selection rules.
 function collectExpressionBreakdownRules(value: unknown, sources: ResolvedSource[]): LineageCaseRule[] | undefined {
   return collectCaseRules(value, sources);
 }

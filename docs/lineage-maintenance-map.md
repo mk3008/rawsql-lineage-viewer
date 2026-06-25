@@ -164,6 +164,25 @@ Look here when:
 - A selected column highlights the wrong upstream value columns.
 - Aggregate, CASE, scalar subquery, or expression lineage is missing or over-included.
 
+Phase 8 seam:
+
+Do not extract `value-origin` yet. The current value-origin candidates are mixed
+into output column creation, but not all of them have the same dependency shape.
+
+| Candidate | Classification | Notes |
+| --- | --- | --- |
+| `collectExpressionTree`, `collectCaseRules`, `collectCaseExpressionRules`, CASE display helpers | future `value-origin` | Pure-ish value explanation helpers. They still use `ResolvedSource`, `formatExpressionSql`, and source reference resolution. |
+| aggregate/expression upstream refs via `resolveColumnReferences` and `mergeColumnRefs` | source-reference-backed value-origin | Keep using `source-references`; do not duplicate reference resolution. |
+| `collectNestedExpressionLineage` | adapter-bound value-origin for now | It calls nested query lineage and mutates node columns through nested analysis. |
+| `collectScalarSubqueryLineage` | adapter-bound value-origin for now | It creates scalar subquery nodes/edges, increments counters, records correlation metadata, and backfills upstream node columns. |
+| wildcard passthrough backfill and direct `setNodeColumns` calls | adapter boundary | This is mutation of the graph model, not value-origin semantics alone. |
+| warnings recording and schema facts access | adapter/output seam | Keep behind `OutputColumnDeps`; do not move into value-origin. |
+
+Stopping rule: avoid a `ValueOriginDeps` interface while it would need nodes,
+edges, counters, scopes, warnings, or `CollectQueryEdgesOptions`. The next small
+candidate is CASE/expression-tree helpers only, after introducing a narrow source
+input shape that does not export `ResolvedSource`.
+
 ### `source-references`
 
 Owns source and column reference resolution.
