@@ -543,7 +543,13 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   await expect(inspector).toContainText('Extended line amount.');
   const cteColumnCard = inspector.locator('.lineage-inspector-root-card');
-  await expect(cteColumnCard).toContainText('Recent order line items used as the base sales fact.');
+  const cteCommentBlock = cteColumnCard.locator('.lineage-inspector-comment-block-node');
+  const cteColumnCommentBlock = cteColumnCard.locator('.lineage-inspector-comment-block-column');
+  await expect(cteColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(cteCommentBlock).toContainText('CTE comment');
+  await expect(cteCommentBlock).toContainText('Recent order line items used as the base sales fact.');
+  await expect(cteColumnCommentBlock).toContainText('Column comment');
+  await expect(cteColumnCommentBlock).toContainText('Extended line amount.');
   await expect(cteColumnCard).toContainText('oi.quantity * oi.unit_price');
   const cteOpenLink = cteColumnCard.getByRole('link', { name: 'Open' });
   await expect(cteOpenLink).toBeVisible();
@@ -555,9 +561,11 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
 test('shows title comments for output and derived nodes', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
+  const longOutputComment =
+    'Final output comment. Builds one wide customer-health row by joining customer, billing, usage, support, NPS, and contract signals for review.';
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
-    -- Final output comment.
+    -- ${longOutputComment}
     SELECT src.id AS user_id -- Output id comment.
     FROM (
       -- Derived source comment.
@@ -571,16 +579,21 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await outputNode.getByRole('button', { name: 'Final Result', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(inspector).toContainText('Final output comment.');
+  await expect(inspector).toContainText(longOutputComment);
   await expect(inspector).toContainText('Output id comment.');
   await expect(inspector).toContainText('Open in viewer');
   await expect(inspector).toContainText('Copy SQL');
-  await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Final output comment.');
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText(`-- ${longOutputComment}`);
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id as user_id -- Output id comment.');
   await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
   const outputColumnCard = inspector.locator('.lineage-inspector-root-card');
-  await expect(outputColumnCard).toContainText('Final output comment.');
-  await expect(outputColumnCard).toContainText('Output id comment.');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output comment');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText(longOutputComment);
+  await outputColumnCard.locator('.lineage-inspector-comment-block-node').getByRole('button', { name: 'Show full' }).click();
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toHaveClass(/lineage-inspector-comment-expanded/);
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Column comment');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Output id comment.');
 
   const derivedNode = page.getByTestId('lineage-node-derived');
   await derivedNode.getByRole('button', { name: 'src', exact: true }).click();
@@ -593,8 +606,11 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id -- Derived id comment.');
   await derivedNode.getByRole('button', { name: 'id', exact: true }).click();
   const derivedColumnCard = inspector.locator('.lineage-inspector-root-card');
-  await expect(derivedColumnCard).toContainText('Derived source comment.');
-  await expect(derivedColumnCard).toContainText('Derived id comment.');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Subquery comment');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Derived source comment.');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Column comment');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Derived id comment.');
   const derivedOpenLink = derivedColumnCard.getByRole('link', { name: 'Open' });
   await expect(derivedOpenLink).toBeVisible();
   await expect(derivedOpenLink).toHaveAttribute('href', /select/);
@@ -955,6 +971,40 @@ test('focuses the graph node when inspector column or table names are clicked', 
   await expect(page.getByTestId('graph-zoom')).toContainText('120%');
   await page.waitForTimeout(450);
   await expect(page.getByTestId('graph-zoom')).toContainText('120%');
+});
+
+test('recenters the output node only when a new graph opens offscreen', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 720 });
+  await page.goto('/');
+
+  const graph = page.getByTestId('lineage-graph');
+  const graphBox = await graph.boundingBox();
+  expect(graphBox).not.toBeNull();
+
+  await page.mouse.move(graphBox!.x + graphBox!.width / 2, graphBox!.y + graphBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(graphBox!.x + graphBox!.width + 1200, graphBox!.y + graphBox!.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT c.id AS customer_id
+    FROM customers c
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await expect(outputNode).toBeVisible();
+  await page.waitForTimeout(500);
+
+  const correctedGraphBox = await graph.boundingBox();
+  const outputBox = await outputNode.boundingBox();
+  expect(correctedGraphBox).not.toBeNull();
+  expect(outputBox).not.toBeNull();
+  expect(outputBox!.x).toBeGreaterThanOrEqual(correctedGraphBox!.x);
+  expect(outputBox!.x + outputBox!.width).toBeLessThanOrEqual(correctedGraphBox!.x + correctedGraphBox!.width);
+  expect(outputBox!.y).toBeGreaterThanOrEqual(correctedGraphBox!.y);
+  expect(outputBox!.y + outputBox!.height).toBeLessThanOrEqual(correctedGraphBox!.y + correctedGraphBox!.height);
+  expect(Math.abs(outputBox!.x - (correctedGraphBox!.x + 48))).toBeLessThanOrEqual(12);
 });
 
 test('keeps deeply nested inspector trees readable without panel-level horizontal scrolling', async ({ page }) => {

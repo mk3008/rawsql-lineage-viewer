@@ -174,6 +174,7 @@ export function LineageGraph({
   const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
   const lastCommittedSelectionRef = useRef<GraphOriginSelection>({ kind: 'none' });
+  const outputViewportCorrectionPendingRef = useRef(true);
   const draggedNodeIdsRef = useRef(new Set<string>());
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
@@ -829,11 +830,14 @@ export function LineageGraph({
   }, [onNodesChange]);
 
   useEffect(() => {
-    if (previousLineageRef.current !== lineage || previousFlowDirectionRef.current !== flowDirection) {
+    const lineageChanged = previousLineageRef.current !== lineage;
+    const flowDirectionChanged = previousFlowDirectionRef.current !== flowDirection;
+    if (lineageChanged || flowDirectionChanged) {
       previousLineageRef.current = lineage;
       previousFlowDirectionRef.current = flowDirection;
       previousNodeStructureKeyRef.current = graphStructureKey;
       previousAutoLayoutEnabledRef.current = autoLayoutEnabled;
+      outputViewportCorrectionPendingRef.current = lineageChanged;
       nodePositionsRef.current = new Map(graphNodes.map((node) => [node.id, node.position]));
       setNodes(graphNodes);
       return;
@@ -962,6 +966,44 @@ export function LineageGraph({
 
     return () => window.clearTimeout(timeoutId);
   }, [focusTarget?.nodeId, focusTarget?.nonce, nodes, viewportZoom, visibleNodeIdBySourceNodeId]);
+
+  useEffect(() => {
+    if (!outputViewportCorrectionPendingRef.current) {
+      return;
+    }
+
+    const outputNodeId = initialOutputNodeId ? mapToVisibleNodeId(initialOutputNodeId, visibleNodeIdBySourceNodeId) : null;
+    const outputNode = outputNodeId ? nodes.find((node) => node.id === outputNodeId) : undefined;
+    if (!outputNode) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const shell = graphShellRef.current;
+      const flow = flowInstanceRef.current;
+      if (!shell || !flow) {
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const viewport = flow.toObject().viewport;
+      const width = outputNode.measured?.width ?? outputNode.width ?? 220;
+      const height = outputNode.measured?.height ?? outputNode.height ?? 140;
+      if (isGraphNodeFullyInView(outputNode.position, width, height, viewport, shellRect)) {
+        outputViewportCorrectionPendingRef.current = false;
+        return;
+      }
+
+      const zoom = viewport.zoom;
+      const leftPadding = 48;
+      const x = leftPadding - outputNode.position.x * zoom;
+      const y = shellRect.height / 2 - (outputNode.position.y + height / 2) * zoom;
+      outputViewportCorrectionPendingRef.current = false;
+      void flow.setViewport({ x, y, zoom }, { duration: 180 });
+    }, 240);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [initialOutputNodeId, nodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     setDismissedCommentTargetIds(new Set());
@@ -1144,6 +1186,21 @@ function expandCollapsedVisibleNodeIdsForLayout(
   }
 
   return expandedNodeIds;
+}
+
+function isGraphNodeFullyInView(
+  position: { x: number; y: number },
+  width: number,
+  height: number,
+  viewport: { x: number; y: number; zoom: number },
+  shellRect: DOMRect,
+) {
+  const tolerance = 4;
+  const left = position.x * viewport.zoom + viewport.x;
+  const top = position.y * viewport.zoom + viewport.y;
+  const right = left + width * viewport.zoom;
+  const bottom = top + height * viewport.zoom;
+  return left >= -tolerance && top >= -tolerance && right <= shellRect.width + tolerance && bottom <= shellRect.height + tolerance;
 }
 
 function mapToVisibleNodeId(nodeId: string | null | undefined, visibleNodeIdBySourceNodeId: Map<string, string>) {
@@ -1816,7 +1873,7 @@ function InspectorSourceGroup({
               key={`${item.column.id}:${index}`}
             >
               <span className="lineage-inspector-column-name">{item.column.name}</span>
-              {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+              <InspectorColumnComments column={item.column} />
               {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
             </div>
           );
@@ -2105,7 +2162,7 @@ function InspectorColumnGroupCard({
         {items.map((item) => (
           <div className="lineage-inspector-group-column" key={item.column.id}>
             <span className="lineage-inspector-column-name">{item.column.name}</span>
-            {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+            <InspectorColumnComments column={item.column} />
           </div>
         ))}
       </div>
@@ -2261,7 +2318,7 @@ function InspectorColumnCard({
       </div>
       <InspectorNodeComments node={item.node} />
       <span className="lineage-inspector-column-name">{item.column.name}</span>
-      {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+      <InspectorColumnComments column={item.column} />
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
       {item.column.unresolvedUpstream?.length ? <UnresolvedUpstreamNotice column={item.column} lineage={item.lineage} /> : null}
@@ -2492,7 +2549,89 @@ function InspectorNodeMeta({ node }: { node: LineageNode }) {
 }
 
 function InspectorNodeComments({ node }: { node: LineageNode }) {
-  return node.comments?.length ? <div className="lineage-inspector-card-note lineage-inspector-node-note">{node.comments.join(' ')}</div> : null;
+  return <InspectorCommentBlock label={formatInspectorNodeCommentLabel(node)} values={node.comments} variant="node" />;
+}
+
+function InspectorColumnComments({ column }: { column: LineageColumn }) {
+  return <InspectorCommentBlock label="Column comment" values={column.comments} variant="column" />;
+}
+
+function InspectorCommentBlock({
+  label,
+  values,
+  variant,
+}: {
+  label: string;
+  values?: string[];
+  variant: 'column' | 'node';
+}) {
+  const comments = values?.filter((value) => value.trim().length > 0) ?? [];
+  const commentKey = comments.join('\u0000');
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const commentTextRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (comments.length === 0 || expanded) {
+      return;
+    }
+
+    const element = commentTextRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateClamped = () => {
+      setClamped(element.scrollHeight > element.clientHeight + 1);
+    };
+
+    updateClamped();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateClamped);
+      return () => window.removeEventListener('resize', updateClamped);
+    }
+
+    const observer = new ResizeObserver(updateClamped);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [commentKey, comments.length, expanded]);
+  if (comments.length === 0) {
+    return null;
+  }
+
+  const expandable = comments.length > 1 || clamped;
+  return (
+    <div className={`lineage-inspector-comment-block lineage-inspector-comment-block-${variant} ${expanded ? 'lineage-inspector-comment-expanded' : ''}`}>
+      <div className="lineage-inspector-comment-heading">
+        <span className="lineage-inspector-comment-label">{label}</span>
+        {expandable ? (
+          <button
+            className="lineage-inspector-comment-toggle"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((current) => !current);
+            }}
+          >
+            {expanded ? 'Collapse' : 'Show full'}
+          </button>
+        ) : null}
+      </div>
+      <div className="lineage-inspector-comment-text" ref={commentTextRef}>
+        {comments.map((comment, index) => (
+          <p key={`${comment}:${index}`}>{comment}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatInspectorNodeCommentLabel(node: LineageNode): string {
+  if (node.type === 'output') return 'Output comment';
+  if (node.type === 'cte') return node.recursive ? 'Recursive CTE comment' : 'CTE comment';
+  if (node.type === 'table') return 'Table comment';
+  if (node.type === 'derived' || node.type === 'scalar_subquery') return 'Subquery comment';
+  if (node.type === 'parameter_table') return 'Parameter table comment';
+  return 'Node comment';
 }
 
 function isOpenableInspectorNode(node: LineageNode): boolean {
