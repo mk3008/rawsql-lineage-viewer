@@ -604,11 +604,11 @@ export function LineageGraph({
   }, [autoLayoutEnabled, graphDisplaySnapshot.visibleNodeIdsForAutoLayout]);
   const graph = useMemo(
     () =>
-      buildGraphModel(graphDisplayLineage, flowDirection, autoLayoutVisibleNodeIds ? graphDisplayLineage : graphLayoutLineage, {
+      buildGraphModel(graphDisplayLineage, flowDirection, autoLayoutEnabled || autoLayoutVisibleNodeIds ? graphDisplayLineage : graphLayoutLineage, {
         showUnreachableCtes,
         visibleNodeIds: autoLayoutVisibleNodeIds,
       }),
-    [autoLayoutVisibleNodeIds, flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
+    [autoLayoutEnabled, autoLayoutVisibleNodeIds, flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
   );
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
@@ -1429,7 +1429,7 @@ export function LineageInspector({
           )}
         </div>
         <div className="lineage-inspector-header-actions">
-          <InspectorCommentModeControl mode={commentMode} onChange={setCommentMode} />
+          {selection?.kind === 'column' ? <InspectorCommentModeControl mode={commentMode} onChange={setCommentMode} /> : null}
           {canRenameOutput && !editingOutputTitle ? (
             <div className="lineage-output-title-actions">
               <button className="lineage-copy-button lineage-output-title-edit-button" type="button" onClick={startEditingOutputTitle}>

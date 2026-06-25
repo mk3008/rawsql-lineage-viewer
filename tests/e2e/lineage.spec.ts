@@ -638,10 +638,13 @@ test('controls inspector comment visibility by shared mode', async ({ page }) =>
 
   const inspector = page.getByTestId('lineage-inspector');
   const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'Final Result', exact: true }).click();
+  await expect(inspector.locator('.lineage-inspector-comment-mode')).toHaveCount(0);
+
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
   const commentMode = inspector.locator('.lineage-inspector-comment-mode');
   await expect(commentMode.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
 
-  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
   const rootCard = inspector.locator('.lineage-inspector-root-card');
   await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
   await expect(rootCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output level comment.');
@@ -667,6 +670,8 @@ test('controls inspector comment visibility by shared mode', async ({ page }) =>
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
   await page.getByTestId('rf__node-main_output').locator('.lineage-node-title-button').click();
   await page.getByRole('tab', { name: 'Inspector' }).click();
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-comment-mode')).toHaveCount(0);
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true }).click();
   await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-comment-mode').getByRole('button', { name: 'Smart' })).toHaveAttribute(
     'aria-pressed',
     'true',
@@ -1403,6 +1408,42 @@ test('keeps downstream nodes visible when auto layout focuses an intermediate CT
   await expect(orderTotalsNode).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).toBeAttached();
+});
+
+test('uses the same compact collapsed-group layout on initial auto layout load', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+  await showAllColumns(page);
+
+  const autoLayout = page.getByRole('checkbox', { name: 'Auto layout' });
+  await expect(autoLayout).toBeChecked();
+
+  const readLayout = async () => {
+    const outputBox = await page.getByTestId('rf__node-main_output').boundingBox();
+    const orderTotalsBox = await page.getByTestId('rf__node-cte_order_totals').boundingBox();
+    const orderItemsBox = await page.getByTestId('rf__node-table_order_items').boundingBox();
+    expect(outputBox).not.toBeNull();
+    expect(orderTotalsBox).not.toBeNull();
+    expect(orderItemsBox).not.toBeNull();
+    return {
+      orderItemsGap: orderItemsBox!.x - orderTotalsBox!.x,
+      orderTotalsGap: orderTotalsBox!.x - outputBox!.x,
+    };
+  };
+
+  const initialLayout = await readLayout();
+  expect(initialLayout.orderTotalsGap).toBeLessThan(620);
+  expect(initialLayout.orderItemsGap).toBeLessThan(720);
+
+  await autoLayout.uncheck();
+  await autoLayout.check();
+
+  await expect
+    .poll(async () => {
+      const nextLayout = await readLayout();
+      return Math.abs(nextLayout.orderTotalsGap - initialLayout.orderTotalsGap) + Math.abs(nextLayout.orderItemsGap - initialLayout.orderItemsGap);
+    })
+    .toBeLessThan(8);
 });
 
 test('keeps auto layout compact for collapsed groups in the long SQL reading case', async ({ page }) => {
