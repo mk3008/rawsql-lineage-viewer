@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { salesSummarySql } from '../examples/salesSummarySql';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
 import { buildGraphModel } from './buildGraphModel';
+import { collapseLineageGroups } from './collapseGroups';
 
 const recursiveEmployeeSql = `WITH RECURSIVE employee_tree AS (
     SELECT
@@ -59,6 +60,13 @@ describe('buildGraphModel', () => {
     expect(graphNodeIds.has('cte_unused_payments')).toBe(false);
     expect(graphNodeIds.has('table_payments')).toBe(false);
     expect(graph.edges.some((edge) => edge.source === 'cte_unused_payments' || edge.target === 'cte_unused_payments')).toBe(false);
+
+    const graphWithUnusedCtes = buildGraphModel(lineage, 'upstream', lineage, { showUnreachableCtes: true });
+    const graphWithUnusedCteNodeIds = new Set(graphWithUnusedCtes.nodes.map((node) => node.id));
+
+    expect(graphWithUnusedCteNodeIds.has('cte_unused_payments')).toBe(true);
+    expect(graphWithUnusedCteNodeIds.has('table_payments')).toBe(true);
+    expect(graphWithUnusedCtes.edges.some((edge) => edge.source === 'cte_unused_payments' || edge.target === 'cte_unused_payments')).toBe(true);
   });
 
   it('renders data source aliases on data flows and preserves outer join context as a dashed line', () => {
@@ -119,6 +127,17 @@ describe('buildGraphModel', () => {
       source: 'main_output',
       target: 'table_customers',
     });
+  });
+
+  it('can render an explicit focused subgraph without output reachability', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const visibleNodeIds = new Set(['cte_order_totals', 'cte_recent_orders', 'table_order_items']);
+
+    const graph = buildGraphModel(lineage, 'upstream', lineage, { visibleNodeIds });
+
+    expect(new Set(graph.nodes.map((node) => node.id))).toEqual(visibleNodeIds);
+    expect(graph.edges.map((edge) => edge.id).sort()).toEqual(['cte_recent_orders-cte_order_totals', 'table_order_items-cte_recent_orders']);
+    expect(graph.nodes.every((node) => Number.isFinite(node.position.x) && Number.isFinite(node.position.y))).toBe(true);
   });
 
   it('renders scalar subqueries as graph nodes between output columns and their row sources', () => {
@@ -255,5 +274,18 @@ describe('buildGraphModel', () => {
     expect(collapsedWithUncollapsedLayout.nodes.find((node) => node.id === 'root')?.position).not.toEqual(
       collapsedWithoutLayout.nodes.find((node) => node.id === 'root')?.position,
     );
+  });
+
+  it('keeps focused collapsed upstream branches flowing from output to group to source tables', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const collapsed = collapseLineageGroups(lineage, new Set(['cte_order_totals']));
+    const visibleNodeIds = new Set(['main_output', 'cte_order_totals', 'table_orders', 'table_order_items']);
+
+    const graph = buildGraphModel(collapsed.lineage, 'upstream', lineage, { visibleNodeIds });
+    const x = (nodeId: string) => graph.nodes.find((node) => node.id === nodeId)?.position.x ?? Number.NEGATIVE_INFINITY;
+
+    expect(x('main_output')).toBeLessThan(x('cte_order_totals'));
+    expect(x('cte_order_totals')).toBeLessThan(x('table_orders'));
+    expect(x('cte_order_totals')).toBeLessThan(x('table_order_items'));
   });
 });

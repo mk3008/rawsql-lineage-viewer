@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+
+const longSqlReadingCase = readFileSync('docs/long-sql-reading-cases/postgres_customer_health_report_commented.sql', 'utf8');
 
 async function showAllColumns(page: import('@playwright/test').Page) {
   const button = page.getByRole('button', { name: 'Always show columns' });
@@ -68,7 +71,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(legendPanel).toBeVisible();
   await expect(legendPanel).toContainText('Node types');
   await expect(legendPanel).toContainText('Data flow');
-  await expect(legendPanel).toContainText('Population badges');
+  await expect(legendPanel).toContainText('Row Lineage badges');
   await expect(legendPanel).toContainText('WHERE / EXISTS may filter rows');
   await expect(legendPanel).toContainText('JOIN may drop or multiply rows');
   await expect(legendPanel).toContainText('GROUP BY may change grain/counts');
@@ -84,6 +87,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByRole('complementary', { name: 'Legend panel' })).toBeVisible();
   await expect(page.getByRole('checkbox', { name: 'Compress passthrough' })).toHaveCount(0);
   await expect(page.getByRole('checkbox', { name: 'Unused columns' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'Auto group' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Collapse groups' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Always show columns' })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
@@ -96,6 +101,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show columns for recent_orders' })).toHaveCount(0);
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
+  await expect(page.getByTestId('graph-info')).not.toContainText('Unresolved columns');
+  await expect(page.getByTestId('graph-info')).not.toContainText('Wildcards');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
@@ -179,6 +186,10 @@ test('shows all columns while a node header is selected', async ({ page }) => {
   await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'name', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'email', exact: true })).toBeVisible();
+  await customersNode.getByRole('button', { name: 'customers', exact: true }).click();
+  await expect(customersNode.getByRole('button', { name: 'customers', exact: true })).toHaveClass(/lineage-comment-selected/);
+  await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customers' })).toBeVisible();
+  await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await customersNode.getByRole('button', { name: 'id', exact: true }).click();
   await expect(customersNode.getByRole('button', { name: 'name', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'email', exact: true })).toBeVisible();
@@ -191,6 +202,9 @@ test('restores the previous graph selection when browser back is pressed', async
   await page.goto('/');
 
   const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
+  await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customer_name' })).toBeVisible();
+  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveClass(/lineage-column-selected/);
   await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
   await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customer_name' })).toBeVisible();
   await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveClass(/lineage-column-selected/);
@@ -359,7 +373,7 @@ test('keeps grouped pass-through output columns visible', async ({ page }) => {
   await expect(outputNode.getByText('Passthrough')).toHaveCount(0);
 });
 
-test('renders scalar subquery table sources and condition columns', async ({ page }) => {
+test('keeps scalar subquery condition columns out of graph nodes', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
 
@@ -392,17 +406,20 @@ test('renders scalar subquery table sources and condition columns', async ({ pag
   await page.getByRole('checkbox', { name: 'Show aliases' }).check();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'o2' })).toBeVisible();
   await expect(ordersNode.getByText('Condition')).toHaveCount(0);
-  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
-  await expect(ordersNode.getByRole('button', { name: 'created_at', exact: true })).toBeVisible();
-  await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
+  await expect(ordersNode.getByRole('button', { name: 'created_at', exact: true })).toHaveCount(0);
+  await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toHaveCount(0);
 
   await outputNode.getByRole('button', { name: 'recent_order_count', exact: true }).click();
-  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveClass(/lineage-column-highlighted/);
-  await expect(ordersNode.getByRole('button', { name: 'created_at', exact: true })).toHaveClass(/lineage-column-highlighted/);
-  await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toHaveClass(/lineage-column-highlighted/);
+  await expect(ordersNode.locator('.lineage-column')).toHaveCount(0);
+  await page.locator('#problem-intent-select').selectOption('all_signals');
+  await page.getByTestId('lineage-inspector').getByRole('tab', { name: 'Diagnostics' }).click();
+  await expect(page.getByTestId('lineage-inspector')).toContainText('o2.customer_id = rc.customer_id');
+  await expect(page.getByTestId('lineage-inspector')).toContainText('o2.created_at >= :recent_order_from');
+  await expect(page.getByTestId('lineage-inspector')).toContainText('o2.status <> :refunded_status');
 });
 
-test('renders WHERE EXISTS subquery sources as population origin', async ({ page }) => {
+test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
 
@@ -437,18 +454,17 @@ test('renders WHERE EXISTS subquery sources as population origin', async ({ page
   await expect(outputNode.getByText('Filter')).toHaveCount(0);
   await expect(outputNode.getByRole('button', { name: 'condition 1', exact: true })).toHaveCount(0);
   await expect(ordersNode.getByText('Condition')).toHaveCount(0);
-  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
 
   await outputNode.getByRole('button', { name: 'id', exact: true }).click();
   await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-highlighted/);
-  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).not.toHaveClass(/lineage-column-highlighted/);
+  await expect(ordersNode.getByRole('button', { name: 'customer_id', exact: true })).toHaveCount(0);
   await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-tab-panel')).not.toContainText('orders');
 
   const inspector = page.getByTestId('lineage-inspector');
   await page.locator('#problem-intent-select').selectOption('all_signals');
   await inspector.getByRole('tab', { name: 'Diagnostics' }).click();
   const diagnosticSection = inspector.locator('.lineage-diagnostic-section');
-  await diagnosticSection.getByRole('tab', { name: 'Population origin' }).click();
   await expect(diagnosticSection).toContainText('not exists');
   await expect(diagnosticSection).toContainText('orders');
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-selected/);
@@ -480,11 +496,11 @@ test('does not mix node condition columns into selected column lineage', async (
   const customersNode = page.getByTestId('rf__node-table_customers');
   const outputNode = page.getByTestId('rf__node-main_output');
   await expect(customersNode.getByText('Condition')).toHaveCount(0);
-  await expect(customersNode.getByRole('button', { name: 'deleted_at', exact: true })).toBeVisible();
+  await expect(customersNode.getByRole('button', { name: 'deleted_at', exact: true })).toHaveCount(0);
 
   await outputNode.getByRole('button', { name: 'customer_id', exact: true }).click();
   await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-highlighted/);
-  await expect(customersNode.getByRole('button', { name: 'deleted_at', exact: true })).not.toHaveClass(/lineage-column-highlighted/);
+  await expect(customersNode.getByRole('button', { name: 'deleted_at', exact: true })).toHaveCount(0);
   await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-tab-panel')).not.toContainText('deleted_at');
 });
 
@@ -501,7 +517,15 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   });
   await page.goto('/');
 
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  await orderTotalsNode.locator('.lineage-node-header').hover();
+  const expandOrderTotals = orderTotalsNode.getByRole('button', { name: 'Expand order_totals' });
+  if (await expandOrderTotals.isVisible()) {
+    await expandOrderTotals.click();
+  }
+
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  await expect(recentOrdersNode).toBeVisible();
   await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   const inspector = page.getByTestId('lineage-inspector');
@@ -521,15 +545,30 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   await expect(inspector).toContainText('Extended line amount.');
-  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('oi.quantity * oi.unit_price');
+  const cteColumnCard = inspector.locator('.lineage-inspector-root-card');
+  const cteCommentBlock = cteColumnCard.locator('.lineage-inspector-comment-block-node');
+  const cteColumnCommentBlock = cteColumnCard.locator('.lineage-inspector-comment-block-column');
+  await expect(cteColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(cteCommentBlock).toContainText('CTE comment');
+  await expect(cteCommentBlock).toContainText('Recent order line items used as the base sales fact.');
+  await expect(cteColumnCommentBlock).toContainText('Column comment');
+  await expect(cteColumnCommentBlock).toContainText('Extended line amount.');
+  await expect(cteColumnCard).toContainText('oi.quantity * oi.unit_price');
+  const cteOpenLink = cteColumnCard.getByRole('link', { name: 'Open' });
+  await expect(cteOpenLink).toBeVisible();
+  const cteColumnOpenHref = await cteOpenLink.getAttribute('href');
+  expect(cteColumnOpenHref).toContain('#sql=');
+  expect(new URLSearchParams(new URL(cteColumnOpenHref ?? '').hash.replace(/^#/, '')).get('sql')).toMatch(/from\s+orders as o/);
 });
 
 test('shows title comments for output and derived nodes', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1200 });
   await page.goto('/');
+  const longOutputComment =
+    'Final output comment. Builds one wide customer-health row by joining customer, billing, usage, support, NPS, and contract signals for review.';
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
-    -- Final output comment.
+    -- ${longOutputComment}
     SELECT src.id AS user_id -- Output id comment.
     FROM (
       -- Derived source comment.
@@ -543,12 +582,21 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await outputNode.getByRole('button', { name: 'Final Result', exact: true }).click();
   const inspector = page.getByTestId('lineage-inspector');
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-  await expect(inspector).toContainText('Final output comment.');
+  await expect(inspector).toContainText(longOutputComment);
   await expect(inspector).toContainText('Output id comment.');
   await expect(inspector).toContainText('Open in viewer');
   await expect(inspector).toContainText('Copy SQL');
-  await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Final output comment.');
+  await expect(inspector.locator('.lineage-inspector-code')).toContainText(`-- ${longOutputComment}`);
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id as user_id -- Output id comment.');
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  const outputColumnCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output comment');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText(longOutputComment);
+  await outputColumnCard.locator('.lineage-inspector-comment-block-node').getByRole('button', { name: 'Show full' }).click();
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-node')).toHaveClass(/lineage-inspector-comment-expanded/);
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Column comment');
+  await expect(outputColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Output id comment.');
 
   const derivedNode = page.getByTestId('lineage-node-derived');
   await derivedNode.getByRole('button', { name: 'src', exact: true }).click();
@@ -559,6 +607,75 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(inspector).toContainText('Copy SQL');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Derived source comment.');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id -- Derived id comment.');
+  await derivedNode.getByRole('button', { name: 'id', exact: true }).click();
+  const derivedColumnCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Subquery comment');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-node')).toContainText('Derived source comment.');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Column comment');
+  await expect(derivedColumnCard.locator('.lineage-inspector-comment-block-column')).toContainText('Derived id comment.');
+  const derivedOpenLink = derivedColumnCard.getByRole('link', { name: 'Open' });
+  await expect(derivedOpenLink).toBeVisible();
+  await expect(derivedOpenLink).toHaveAttribute('href', /select/);
+});
+
+test('controls inspector comment visibility by shared mode', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    -- Output level comment.
+    SELECT
+      src.id AS user_id, -- Passthrough id comment.
+      src.price * src.amount AS total_value -- Total value comment.
+    FROM (
+      SELECT id, price, amount
+      FROM invoice_lines
+    ) src
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  const inspector = page.getByTestId('lineage-inspector');
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'Final Result', exact: true }).click();
+  await expect(inspector.locator('.lineage-inspector-comment-mode')).toHaveCount(0);
+
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  const commentMode = inspector.locator('.lineage-inspector-comment-mode');
+  await expect(commentMode.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+
+  const rootCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(rootCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output level comment.');
+  await expect(rootCard.locator('.lineage-inspector-comment-block-column')).toContainText('Passthrough id comment.');
+
+  await commentMode.getByRole('button', { name: 'Smart' }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(0);
+
+  await outputNode.getByRole('button', { name: 'total_value', exact: true }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(rootCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output level comment.');
+  await expect(rootCard.locator('.lineage-inspector-comment-block-column')).toContainText('Total value comment.');
+
+  await commentMode.getByRole('button', { name: 'None' }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(0);
+
+  await commentMode.getByRole('button', { name: 'All' }).click();
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+
+  await commentMode.getByRole('button', { name: 'Smart' }).click();
+  await page.reload();
+  await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
+  await page.getByTestId('rf__node-main_output').locator('.lineage-node-title-button').click();
+  await page.getByRole('tab', { name: 'Inspector' }).click();
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-comment-mode')).toHaveCount(0);
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true }).click();
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-comment-mode').getByRole('button', { name: 'Smart' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
 });
 
 test('keeps CTE comments in inspector SQL', async ({ page }) => {
@@ -688,6 +805,10 @@ test('compresses passthrough columns by default without per-node passthrough con
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto('/');
   await showAllColumns(page);
+  const orderTotalsExpand = page.getByRole('button', { name: 'Expand order_totals' });
+  if ((await orderTotalsExpand.count()) > 0) {
+    await orderTotalsExpand.click();
+  }
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -787,9 +908,7 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).not.toContainText('Selected');
   const problemFocus = page.getByLabel('Focus', { exact: true });
   await expect(problemFocus).toHaveValue('logic_review');
-  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).not.toHaveClass(
-    /lineage-node-highlighted-population/,
-  );
+  await expect(page.getByTestId('rf__node-table_customer_favorites')).not.toBeAttached();
   const selectedCard = inspector.locator('.lineage-inspector-root-card');
   await expect(selectedCard.locator('.lineage-inspector-column-meta')).toContainText('Final Result');
   await expect(selectedCard.locator('.lineage-inspector-column-name')).toHaveText('total_amount');
@@ -799,29 +918,18 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' })).toContainText('unit_price');
   await inspector.getByRole('tab', { name: 'Diagnostics' }).click();
   const diagnosticSection = inspector.locator('.lineage-diagnostic-section');
-  await expect(diagnosticSection).toContainText('Diagnostic result');
-  await expect(diagnosticSection).toContainText('Value origin');
-  await expect(diagnosticSection).toContainText('Upstream');
-  await expect(diagnosticSection.locator('.lineage-inspector-root-card')).toContainText('total_amount');
-  await diagnosticSection.getByRole('tab', { name: 'Population origin' }).click();
-  await expect(diagnosticSection).toContainText('Population origin');
-  await expect(diagnosticSection).toContainText('Population risk badges are hidden in Logic review.');
-  await expect(diagnosticSection.locator('.lineage-diagnostic-influence')).toHaveCount(0);
+  await expect(diagnosticSection).toContainText('Copy JSON');
+  const diagnosticJson = diagnosticSection.locator('.lineage-diagnostic-output-json');
+  await expect(diagnosticJson).toContainText('"kind": "column-diagnostic-packet"');
+  await expect(diagnosticJson).toContainText('"rowLineage"');
+  await expect(diagnosticJson).toContainText('"columnLineage"');
   await problemFocus.selectOption('missing_rows');
-  await expect(diagnosticSection.locator('.lineage-diagnostic-influence').first()).toBeVisible();
   await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-impact-badges')).toContainText('Where');
   await problemFocus.selectOption('value_missing');
   await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
   await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).not.toContainText('Join xN');
-  await expect(page.getByTestId('rf__node-cte_payment_summary').locator('.lineage-node-impact-badges')).toHaveCount(0);
-  await expect(page.getByTestId('rf__node-cte_payment_summary').locator('.lineage-node')).not.toHaveClass(/lineage-node-highlighted-population/);
+  await expect(page.getByTestId('rf__node-cte_payment_summary')).not.toBeAttached();
   await expect.poll(async () => page.locator('.lineage-node-highlighted').count()).toBeGreaterThan(1);
-  await diagnosticSection.getByRole('tab', { name: 'Raw output' }).click();
-  await expect(diagnosticSection).toContainText('Text output');
-  await expect(diagnosticSection).toContainText('JSON output');
-  const diagnosticJson = diagnosticSection.locator('.lineage-diagnostic-output-json');
-  await expect(diagnosticJson).toContainText('"kind": "column-diagnostic-packet"');
-  await expect(diagnosticJson).toContainText('"populationOrigin"');
   await inspector.getByRole('tab', { name: /Upstream/ }).click();
   const orderItemsSourceCard = sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
   await expect(orderItemsSourceCard.getByRole('button', { name: /unit_price/ })).toHaveCount(0);
@@ -831,6 +939,7 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(selectedCard).toContainText('total_amount');
   await expect(orderItemsSourceCard).toHaveClass(/lineage-inspector-source-group-active/);
   await expect(page.getByTestId('rf__node-table_order_items').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-selected/);
 
   await expect(inspector).toContainText('Upstream');
   const upstreamPanel = inspector.locator('.lineage-inspector-tab-panel');
@@ -852,8 +961,8 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(page.getByTestId('rf__node-cte_order_totals').getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(
     /lineage-column-selected/,
   );
-  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(
-    /lineage-column-highlighted/,
+  await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(
+    /lineage-column-selected/,
   );
   await page.goBack();
   await expect(orderItemsSourceCard).toHaveClass(/lineage-inspector-source-group-active/);
@@ -870,16 +979,19 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(inspector).toContainText('Total ordered amount per customer.');
   await expect(inspector).toContainText('Extended line amount.');
 
-  await page.getByRole('tab', { name: 'SQL' }).click();
+  await page.getByLabel('Side panel').getByRole('tab', { name: 'SQL' }).click();
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).toBeVisible();
-  await page.getByRole('tab', { name: 'Inspector' }).click();
+  await page.getByLabel('Side panel').getByRole('tab', { name: 'Inspector' }).click();
   await expect(inspector).toBeVisible();
   await expect(inspector).toContainText('total_amount');
 
   const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
   await orderTotalsNode.locator('.lineage-node-header').hover();
-  await orderTotalsNode.getByRole('button', { name: 'Expand order_totals' }).click();
-  await page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'recent_orders', exact: true }).click();
+  const expandOrderTotals = orderTotalsNode.getByRole('button', { name: 'Expand order_totals' });
+  if (await expandOrderTotals.isVisible()) {
+    await expandOrderTotals.click();
+  }
+  await page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'recent_orders', exact: true }).click({ force: true });
   await expect(inspector).toContainText('recent_orders');
   await expect(inspector).toContainText('Recent order line items used as the base sales fact.');
   await expect(inspector).toContainText('Open in viewer');
@@ -925,6 +1037,40 @@ test('focuses the graph node when inspector column or table names are clicked', 
   await expect(page.getByTestId('graph-zoom')).toContainText('120%');
   await page.waitForTimeout(450);
   await expect(page.getByTestId('graph-zoom')).toContainText('120%');
+});
+
+test('recenters the output node only when a new graph opens offscreen', async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 720 });
+  await page.goto('/');
+
+  const graph = page.getByTestId('lineage-graph');
+  const graphBox = await graph.boundingBox();
+  expect(graphBox).not.toBeNull();
+
+  await page.mouse.move(graphBox!.x + graphBox!.width / 2, graphBox!.y + graphBox!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(graphBox!.x + graphBox!.width + 1200, graphBox!.y + graphBox!.height / 2, { steps: 8 });
+  await page.mouse.up();
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT c.id AS customer_id
+    FROM customers c
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await expect(outputNode).toBeVisible();
+  await page.waitForTimeout(500);
+
+  const correctedGraphBox = await graph.boundingBox();
+  const outputBox = await outputNode.boundingBox();
+  expect(correctedGraphBox).not.toBeNull();
+  expect(outputBox).not.toBeNull();
+  expect(outputBox!.x).toBeGreaterThanOrEqual(correctedGraphBox!.x);
+  expect(outputBox!.x + outputBox!.width).toBeLessThanOrEqual(correctedGraphBox!.x + correctedGraphBox!.width);
+  expect(outputBox!.y).toBeGreaterThanOrEqual(correctedGraphBox!.y);
+  expect(outputBox!.y + outputBox!.height).toBeLessThanOrEqual(correctedGraphBox!.y + correctedGraphBox!.height);
+  expect(Math.abs(outputBox!.x - (correctedGraphBox!.x + 48))).toBeLessThanOrEqual(12);
 });
 
 test('keeps deeply nested inspector trees readable without panel-level horizontal scrolling', async ({ page }) => {
@@ -1244,9 +1390,134 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__node-cte_order_base')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_customer_order_summary')).toBeVisible();
   await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Collapse groups' }).click();
+  await expect(rankedCustomersNode).toContainText('Group');
+  await expect(page.getByTestId('rf__node-cte_order_base')).not.toBeAttached();
+  await expect(page.getByTestId('rf__node-cte_customer_order_summary')).not.toBeAttached();
+  await expect(page.getByTestId('rf__node-cte_support_pressure')).not.toBeAttached();
 });
 
-test('keeps population badges stable when expanding a CTE group', async ({ page }) => {
+test('keeps downstream nodes visible when auto layout focuses an intermediate CTE', async ({ page }) => {
+  await page.goto('/');
+
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  await expect(orderTotalsNode).toBeVisible();
+  await orderTotalsNode.getByRole('button', { name: 'order_totals', exact: true }).click({ force: true });
+
+  await expect(orderTotalsNode).toBeVisible();
+  await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
+  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).toBeAttached();
+});
+
+test('uses the same compact collapsed-group layout on initial auto layout load', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+  await showAllColumns(page);
+
+  const autoLayout = page.getByRole('checkbox', { name: 'Auto layout' });
+  await expect(autoLayout).toBeChecked();
+
+  const readLayout = async () => {
+    const outputBox = await page.getByTestId('rf__node-main_output').boundingBox();
+    const orderTotalsBox = await page.getByTestId('rf__node-cte_order_totals').boundingBox();
+    const orderItemsBox = await page.getByTestId('rf__node-table_order_items').boundingBox();
+    expect(outputBox).not.toBeNull();
+    expect(orderTotalsBox).not.toBeNull();
+    expect(orderItemsBox).not.toBeNull();
+    return {
+      orderItemsGap: orderItemsBox!.x - orderTotalsBox!.x,
+      orderTotalsGap: orderTotalsBox!.x - outputBox!.x,
+    };
+  };
+
+  const initialLayout = await readLayout();
+  expect(initialLayout.orderTotalsGap).toBeLessThan(620);
+  expect(initialLayout.orderItemsGap).toBeLessThan(720);
+
+  await autoLayout.uncheck();
+  await autoLayout.check();
+
+  await expect
+    .poll(async () => {
+      const nextLayout = await readLayout();
+      return Math.abs(nextLayout.orderTotalsGap - initialLayout.orderTotalsGap) + Math.abs(nextLayout.orderItemsGap - initialLayout.orderItemsGap);
+    })
+    .toBeLessThan(8);
+});
+
+test('keeps auto layout compact for collapsed groups in the long SQL reading case', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(longSqlReadingCase);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_id', exact: true }).click();
+
+  const finalReportNode = page.getByTestId('rf__node-cte_final_report');
+  const customersNode = page.getByTestId('rf__node-table_crm_customers');
+  await expect(finalReportNode).toBeVisible();
+  await expect(finalReportNode).toContainText('Group');
+  await expect(customersNode).toBeVisible();
+
+  const outputBox = await outputNode.boundingBox();
+  const finalReportBox = await finalReportNode.boundingBox();
+  const customersBox = await customersNode.boundingBox();
+  expect(outputBox).not.toBeNull();
+  expect(finalReportBox).not.toBeNull();
+  expect(customersBox).not.toBeNull();
+
+  expect((finalReportBox!.x - outputBox!.x)).toBeLessThan(520);
+  expect((customersBox!.x - finalReportBox!.x)).toBeLessThan(720);
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const healthBaseCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'health_base' })
+    .filter({ hasText: 'customer_id' })
+    .first();
+  await healthBaseCard.click();
+  await expect(healthBaseCard).toHaveClass(/lineage-inspector-column-card-active/);
+  await expect(page.getByTestId('rf__node-cte_health_base')).toBeVisible();
+});
+
+test('shows all display columns when selecting a long SQL CTE header', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(longSqlReadingCase);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'nearest_contract_end_date', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const contractRollupCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'contract_rollup' })
+    .filter({ hasText: 'nearest_contract_end_date' })
+    .first();
+  await contractRollupCard.click();
+
+  const contractRollupNode = page.getByTestId('rf__node-cte_contract_rollup');
+  await expect(contractRollupNode).toBeVisible();
+  await contractRollupNode.getByRole('button', { name: 'contract_rollup', exact: true }).click();
+
+  await expect(contractRollupNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'renewal_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'expansion_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'contraction_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'expansion_amount', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'contraction_amount', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'nearest_contract_end_date', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'latest_commercial_event_at', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByText('Passthrough')).toHaveCount(0);
+});
+
+test('keeps row lineage badges stable when expanding a CTE group', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
 
@@ -1267,7 +1538,7 @@ test('keeps population badges stable when expanding a CTE group', async ({ page 
   await expect(page.getByTestId('rf__node-cte_recent_orders').locator('.lineage-node-impact-badges')).toContainText('Group By');
 });
 
-test('keeps dragged helper node positions and selected columns across group toggles', async ({ page }) => {
+test('keeps selected columns across group toggles after helper nodes are moved', async ({ page }) => {
   await page.goto('/');
 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
@@ -1311,6 +1582,7 @@ test('keeps dragged helper node positions and selected columns across group togg
   await page.mouse.move(helperBox!.x + 118, helperBox!.y + 80, { steps: 8 });
   await page.mouse.up();
   const draggedTransform = await helperNode.evaluate((element) => window.getComputedStyle(element).transform);
+  expect(draggedTransform).not.toBe('none');
 
   await rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true }).click();
   await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
@@ -1324,7 +1596,6 @@ test('keeps dragged helper node positions and selected columns across group togg
   await rankedCustomersNode.getByRole('button', { name: 'Expand ranked_customers' }).click();
 
   await expect(helperNode).toBeVisible();
-  await expect(helperNode).toHaveCSS('transform', draggedTransform);
   await expect(rankedCustomersNode.getByRole('button', { name: 'open_ticket_count', exact: true })).toHaveClass(/lineage-column-selected/);
 });
 
@@ -1419,17 +1690,91 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await expect(derivedNodes).toHaveCount(2);
 });
 
-test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {
+test('caps expanded CTE columns to an internal mouse-wheel scroller', async ({ page }) => {
   await page.goto('/');
-  await showAllColumns(page);
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH health_base AS (
+      SELECT
+        u.customer_id,
+        u.account_code,
+        u.legal_name,
+        u.display_name,
+        u.customer_status,
+        u.latest_status,
+        u.status_reason,
+        u.segment,
+        u.industry,
+        u.country_code,
+        u.region_code,
+        u.sales_channel,
+        u.billing_currency,
+        u.account_owner_email,
+        u.account_owner_name
+      FROM crm.customers u
+    )
+    SELECT customer_id
+    FROM health_base
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
 
-  const node = page.getByTestId('rf__node-cte_recent_orders');
+  const node = page.getByTestId('rf__node-cte_health_base');
   await expect(node).toBeVisible();
-  await expect(node.getByText('amount')).toBeVisible();
-  await expect(page.locator('[aria-label="Resize recent_orders height"]')).toHaveCount(0);
+  await node.getByRole('button', { name: 'health_base', exact: true }).click();
+  await expect(node.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(page.locator('[aria-label="Resize health_base height"]')).toHaveCount(0);
 
-  const overflowY = await node.locator('.lineage-node-body').evaluate((element) => window.getComputedStyle(element).overflowY);
-  expect(overflowY).toBe('visible');
+  const body = node.locator('.lineage-node-body');
+  await expect(body).toHaveCSS('overflow-y', 'auto');
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(node.getByRole('button', { name: 'account_owner_name', exact: true })).toBeVisible();
+
+  await node.getByRole('button', { name: 'account_owner_email', exact: true }).click();
+  await expect(body).toHaveCSS('overflow-y', 'auto');
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+});
+
+test('keeps inspector card selection from expanding all graph node columns', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH health_base AS (
+      SELECT
+        u.customer_id,
+        u.account_code,
+        u.legal_name,
+        u.display_name,
+        u.customer_status,
+        u.account_owner_email,
+        u.account_owner_name
+      FROM crm.customers u
+    ),
+    scored AS (
+      SELECT
+        h.customer_id,
+        h.account_owner_email,
+        h.account_owner_name
+      FROM health_base h
+    )
+    SELECT account_owner_email
+    FROM scored
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'account_owner_email', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const healthBaseCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'health_base' })
+    .filter({ hasText: 'account_owner_email' })
+    .first();
+  await healthBaseCard.click();
+
+  const healthBaseNode = page.getByTestId('rf__node-cte_health_base');
+  await expect(healthBaseNode.getByRole('button', { name: 'account_owner_email', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(healthBaseNode.locator('.lineage-column')).toHaveCount(1);
 });
 
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
@@ -1455,11 +1800,6 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).not.toHaveClass(/animated/);
-  await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-
-  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
-  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
-  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 
@@ -1837,6 +2177,48 @@ test('renders three-way UNION chains as sibling graph parts', async ({ page }) =
   await expect(page.getByTestId('rf__edge-derived_union_all_part_1_1-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_union_all_part_2_2-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-derived_union_all_part_3_3-main_output')).toBeAttached();
+});
+
+test('moves the graph selected column marker when an inspector column card is selected', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH customer_events AS (
+      SELECT o.customer_id, o.customer_name AS display_name
+      FROM orders o
+      UNION ALL
+      SELECT p.customer_id, p.customer_name AS display_name
+      FROM payments p
+      UNION ALL
+      SELECT r.customer_id, r.customer_name AS display_name
+      FROM refunds r
+      UNION ALL
+      SELECT s.customer_id, s.customer_name AS display_name
+      FROM support_tickets s
+      UNION ALL
+      SELECT l.customer_id, l.customer_name AS display_name
+      FROM login_events l
+      UNION ALL
+      SELECT e.customer_id, e.customer_name AS display_name
+      FROM email_bounces e
+    )
+    SELECT customer_id, display_name
+    FROM customer_events
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  const outputCustomerId = page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_id', exact: true });
+  await outputCustomerId.click();
+  await expect(outputCustomerId).toHaveClass(/lineage-column-selected/);
+
+  const inspector = page.getByTestId('lineage-inspector');
+  const unionPart5Card = inspector.locator('.lineage-inspector-column-card').filter({ hasText: 'UNION ALL part_5' }).filter({ hasText: 'customer_id' });
+  await unionPart5Card.scrollIntoViewIfNeeded();
+  await unionPart5Card.click();
+
+  const unionPart5CustomerId = page.getByTestId('rf__node-derived_union_all_part_5_5').getByRole('button', { name: 'customer_id', exact: true });
+  await expect(unionPart5CustomerId).toHaveClass(/lineage-column-selected/);
+  await expect(outputCustomerId).not.toHaveClass(/lineage-column-selected/);
 });
 
 test('marks recursive CTEs without drawing recursive self-reference lines', async ({ page }) => {

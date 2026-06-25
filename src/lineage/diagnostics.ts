@@ -38,7 +38,7 @@ export interface DiagnosticTarget {
 }
 
 export interface DiagnosticSourceUsage {
-  role: 'population_origin' | 'value_origin';
+  role: 'row_lineage' | 'column_lineage';
   scopeId: string;
   usageKind: string;
 }
@@ -68,9 +68,9 @@ export interface DiagnosticValueColumn {
   scopeId: string;
 }
 
-export type ValueOriginTreeNode =
+export type ColumnLineageTreeNode =
   | {
-      children: ValueOriginTreeNode[];
+      children: ColumnLineageTreeNode[];
       column: DiagnosticValueColumn;
       cycle?: boolean;
       kind: 'column';
@@ -78,7 +78,7 @@ export type ValueOriginTreeNode =
     }
   | {
       caseLabel?: string;
-      children: ValueOriginTreeNode[];
+      children: ColumnLineageTreeNode[];
       column: DiagnosticValueColumn;
       conditionReferences: DiagnosticSourceReference[];
       conditionSql?: string;
@@ -91,13 +91,13 @@ export type ValueOriginTreeNode =
       scopeId: string;
     }
   | {
-      children: ValueOriginTreeNode[];
+      children: ColumnLineageTreeNode[];
       expression: LineageExpressionTree;
       kind: 'expression';
       owner: DiagnosticValueColumn;
     };
 
-export interface ValueOriginSummary {
+export interface ColumnLineageSummary {
   caseRuleCount: number;
   expressionStepCount: number;
   intermediateReferenceCount: number;
@@ -147,7 +147,7 @@ export interface ValueExpression {
   sql: string;
 }
 
-export interface ValueOriginStep {
+export interface ColumnLineageStep {
   columnName: string;
   comments?: string[];
   expressionId?: string;
@@ -161,7 +161,7 @@ export interface ValueOriginStep {
   scopeId: string;
 }
 
-export interface ValueOriginCaseRule {
+export interface ColumnLineageCaseRule {
   caseLabel?: string;
   columnName: string;
   conditionRefIds: string[];
@@ -176,9 +176,9 @@ export interface ValueOriginCaseRule {
   scopeId: string;
 }
 
-export interface ValueOriginAnalysis {
-  caseRules: ValueOriginCaseRule[];
-  expressionChain: ValueOriginStep[];
+export interface ColumnLineageAnalysis {
+  caseRules: ColumnLineageCaseRule[];
+  expressionChain: ColumnLineageStep[];
   expressions: ValueExpression[];
   references: DiagnosticSourceReference[];
   root: string;
@@ -188,13 +188,13 @@ export interface ValueOriginAnalysis {
     scopeId: string;
   }>;
   sourceLeaves: DiagnosticValueColumn[];
-  summary: ValueOriginSummary;
+  summary: ColumnLineageSummary;
 }
 
 export interface ColumnDiagnosticPacketViews {
-  valueOriginTree: {
-    derivedFrom: 'valueOrigin';
-    tree: ValueOriginTreeNode[];
+  columnLineageTree: {
+    derivedFrom: 'columnLineage';
+    tree: ColumnLineageTreeNode[];
   };
 }
 
@@ -220,7 +220,7 @@ export interface PopulationNodeImpact {
   signals: PopulationSignal[];
 }
 
-export interface PopulationOriginAnalysis {
+export interface RowLineageAnalysis {
   influences: PopulationInfluence[];
   nodeImpacts: PopulationNodeImpact[];
   summary: string;
@@ -255,9 +255,9 @@ export interface ColumnDiagnosticPacket {
     omittedInfluenceCount: number;
     omittedNodeCount: number;
   };
-  populationOrigin: PopulationOriginAnalysis;
+  rowLineage: RowLineageAnalysis;
   target: DiagnosticTarget;
-  valueOrigin: ValueOriginAnalysis;
+  columnLineage: ColumnLineageAnalysis;
   version: 1;
   views: ColumnDiagnosticPacketViews;
 }
@@ -267,13 +267,13 @@ export interface ColumnDiagnosticOptions {
   symptom?: ProblemIntent;
 }
 
-export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): ValueOriginAnalysis {
+export function analyzeColumnLineage(model: LineageModel, target: ColumnTarget): ColumnLineageAnalysis {
   const context = resolveTarget(model, target);
   const visited = new Set<string>();
   const references: DiagnosticSourceReference[] = [];
-  const expressionChain: ValueOriginAnalysis['expressionChain'] = [];
-  const expressions: ValueOriginAnalysis['expressions'] = [];
-  const caseRules: ValueOriginAnalysis['caseRules'] = [];
+  const expressionChain: ColumnLineageAnalysis['expressionChain'] = [];
+  const expressions: ColumnLineageAnalysis['expressions'] = [];
+  const caseRules: ColumnLineageAnalysis['caseRules'] = [];
   const scopeIds = new Set<string>();
 
   const visit = (nodeId: string, columnName: string): void => {
@@ -313,7 +313,7 @@ export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): V
         createDiagnosticReference(
           model,
           columnRefToSourceReference(reference, scopeId),
-          'value_origin',
+          'column_lineage',
           'case_when_condition',
         ),
       );
@@ -321,7 +321,7 @@ export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): V
         createDiagnosticReference(
           model,
           columnRefToSourceReference(reference, scopeId),
-          'value_origin',
+          'column_lineage',
           'case_when_result',
         ),
       );
@@ -362,9 +362,9 @@ export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): V
       references.push(createDiagnosticReference(model, {
         columnName: upstream.columnName,
         nodeId: upstream.nodeId,
-        role: 'value_origin',
+        role: 'column_lineage',
         scopeId: upstreamScopeId,
-      }, 'value_origin', 'column_value'));
+      }, 'column_lineage', 'column_value'));
       visit(upstream.nodeId, upstream.columnName);
     }
   };
@@ -380,8 +380,8 @@ export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): V
       scopeId,
     };
   });
-  const tree = buildValueOriginTree(model, context.target);
-  const sourceLeaves = collectValueOriginSourceLeaves(tree);
+  const tree = buildColumnLineageTree(model, context.target);
+  const sourceLeaves = collectColumnLineageSourceLeaves(tree);
 
   return {
     caseRules,
@@ -402,12 +402,12 @@ export function analyzeValueOrigin(model: LineageModel, target: ColumnTarget): V
   };
 }
 
-export function analyzePopulationOrigin(
+export function analyzeRowLineage(
   model: LineageModel,
   target: ColumnTarget,
-  valueOrigin: ValueOriginAnalysis = analyzeValueOrigin(model, target),
-): PopulationOriginAnalysis {
-  const scopeIds = new Set(valueOrigin.scopeChain.map((scope) => scope.scopeId));
+  columnLineage: ColumnLineageAnalysis = analyzeColumnLineage(model, target),
+): RowLineageAnalysis {
+  const scopeIds = new Set(columnLineage.scopeChain.map((scope) => scope.scopeId));
   const context = resolveTarget(model, target);
   scopeIds.add(context.target.scopeId);
   const groupedUniqueKeys = inferGroupedUniqueKeys(model);
@@ -423,33 +423,33 @@ export function analyzePopulationOrigin(
       ...(scope.offset ? [expressionToInfluence(model, scope.offset)] : []),
       ...(scope.joins ?? []).map((join) => joinToInfluence(model, join)),
     ])
-    .map((influence) => refinePopulationInfluenceImpact(influence, groupedUniqueKeys, valueOrigin))
+    .map((influence) => refinePopulationInfluenceImpact(influence, groupedUniqueKeys, columnLineage))
     .filter((influence) => influence.effects.length > 0 && (influence.references.length > 0 || influence.expressionSql));
 
   return {
     influences,
-    nodeImpacts: buildPopulationNodeImpacts(model, influences, valueOrigin, context.target),
+    nodeImpacts: buildPopulationNodeImpacts(model, influences, columnLineage, context.target),
     summary: influences.length === 0
-      ? 'No population-origin influences were found on the value-origin route.'
-      : `${influences.length} population-origin influence(s) were found on the value-origin route.`,
+      ? 'No row lineage influences were found on the column lineage route.'
+      : `${influences.length} row lineage influence(s) were found on the column lineage route.`,
   };
 }
 
 export function buildColumnDiagnosticPacket(model: LineageModel, target: ColumnTarget, options: ColumnDiagnosticOptions = {}): ColumnDiagnosticPacket {
   const context = resolveTarget(model, target);
-  const valueOrigin = analyzeValueOrigin(model, target);
-  const populationOrigin = analyzePopulationOrigin(model, target, valueOrigin);
+  const columnLineage = analyzeColumnLineage(model, target);
+  const rowLineage = analyzeRowLineage(model, target, columnLineage);
   const mergedReferences = classifyBothReferences([
-    ...valueOrigin.references,
-    ...populationOrigin.influences.flatMap((influence) => influence.references),
+    ...columnLineage.references,
+    ...rowLineage.influences.flatMap((influence) => influence.references),
   ]);
   const referencesByKey = new Map(mergedReferences.map((reference) => [referenceKey(reference), reference]));
-  const normalizedValueOrigin = {
-    ...valueOrigin,
-    references: valueOrigin.references.map((reference) => referencesByKey.get(referenceKey(reference)) ?? reference),
+  const normalizedColumnLineage = {
+    ...columnLineage,
+    references: columnLineage.references.map((reference) => referencesByKey.get(referenceKey(reference)) ?? reference),
   };
-  const normalizedPopulationOrigin = {
-    ...populationOrigin,
+  const normalizedRowLineage = {
+    ...rowLineage,
   };
   const diagnostics: LineageDiagnostic[] = context.node.type === 'table'
     ? [{
@@ -475,18 +475,18 @@ export function buildColumnDiagnosticPacket(model: LineageModel, target: ColumnT
   }
 
   return {
-    candidateConcerns: buildCandidateConcerns(normalizedPopulationOrigin.influences, normalizedValueOrigin, options.schemaFacts, options.symptom),
+    candidateConcerns: buildCandidateConcerns(normalizedRowLineage.influences, normalizedColumnLineage, options.schemaFacts, options.symptom),
     diagnostics,
     kind: 'column-diagnostic-packet',
-    omittedContext: buildOmittedContext(model, normalizedValueOrigin, normalizedPopulationOrigin),
-    populationOrigin: normalizedPopulationOrigin,
+    omittedContext: buildOmittedContext(model, normalizedColumnLineage, normalizedRowLineage),
+    rowLineage: normalizedRowLineage,
     target: context.target,
-    valueOrigin: normalizedValueOrigin,
+    columnLineage: normalizedColumnLineage,
     version: 1,
     views: {
-      valueOriginTree: {
-        derivedFrom: 'valueOrigin',
-        tree: buildValueOriginTree(model, context.target),
+      columnLineageTree: {
+        derivedFrom: 'columnLineage',
+        tree: buildColumnLineageTree(model, context.target),
       },
     },
   };
@@ -532,21 +532,21 @@ function resolveTargetColumn(node: LineageNode, target: ColumnTarget): LineageNo
   return candidates[0];
 }
 
-function buildValueOriginTree(model: LineageModel, target: DiagnosticTarget): ValueOriginTreeNode[] {
-  const root = buildValueOriginColumnNode(model, target.nodeId, target.columnName, new Set(), {
+function buildColumnLineageTree(model: LineageModel, target: DiagnosticTarget): ColumnLineageTreeNode[] {
+  const root = buildColumnLineageColumnNode(model, target.nodeId, target.columnName, new Set(), {
     outputIndex: target.outputIndex,
     selectItemId: target.selectItemId,
   });
   return root ? [root] : [];
 }
 
-function buildValueOriginColumnNode(
+function buildColumnLineageColumnNode(
   model: LineageModel,
   nodeId: string,
   columnName: string,
   path: Set<string>,
   identity?: Pick<LineageColumn, 'outputIndex' | 'selectItemId'>,
-): Extract<ValueOriginTreeNode, { kind: 'column' }> | null {
+): Extract<ColumnLineageTreeNode, { kind: 'column' }> | null {
   const resolved = resolveLineageColumn(model, nodeId, columnName, identity);
   if (!resolved) {
     return null;
@@ -565,7 +565,7 @@ function buildValueOriginColumnNode(
 
   const nextPath = new Set(path);
   nextPath.add(key);
-  const children = buildValueOriginChildren(model, resolved.node, resolved.column, nextPath);
+  const children = buildColumnLineageChildren(model, resolved.node, resolved.column, nextPath);
   return {
     children,
     column,
@@ -574,23 +574,23 @@ function buildValueOriginColumnNode(
   };
 }
 
-function buildValueOriginChildren(
+function buildColumnLineageChildren(
   model: LineageModel,
   ownerNode: LineageNode,
   column: LineageColumn,
   path: Set<string>,
-): ValueOriginTreeNode[] {
+): ColumnLineageTreeNode[] {
   if (column.caseRules?.length) {
     const owner = toDiagnosticValueColumn(model, ownerNode, column);
     return column.caseRules.map((rule) => ({
       caseLabel: rule.caseLabel,
-      children: buildValueOriginColumnNodes(model, mergeColumnRefs(rule.conditionUpstream, rule.resultUpstream), path),
+      children: buildColumnLineageColumnNodes(model, mergeColumnRefs(rule.conditionUpstream, rule.resultUpstream), path),
       column: owner,
       conditionReferences: rule.conditionUpstream.map((reference) =>
         createDiagnosticReference(
           model,
           columnRefToSourceReference(reference, column.scopeId ?? owner.scopeId),
-          'value_origin',
+          'column_lineage',
           'case_when_condition',
         ),
       ),
@@ -603,7 +603,7 @@ function buildValueOriginChildren(
         createDiagnosticReference(
           model,
           columnRefToSourceReference(reference, column.scopeId ?? owner.scopeId),
-          'value_origin',
+          'column_lineage',
           'case_when_result',
         ),
       ),
@@ -613,22 +613,22 @@ function buildValueOriginChildren(
   }
 
   if (column.expressionTree) {
-    return [buildValueOriginExpressionNode(model, ownerNode, column, column.expressionTree, path)];
+    return [buildColumnLineageExpressionNode(model, ownerNode, column, column.expressionTree, path)];
   }
 
-  return buildValueOriginColumnNodes(model, column.upstream ?? [], path);
+  return buildColumnLineageColumnNodes(model, column.upstream ?? [], path);
 }
 
-function buildValueOriginExpressionNode(
+function buildColumnLineageExpressionNode(
   model: LineageModel,
   ownerNode: LineageNode,
   ownerColumn: LineageColumn,
   expression: LineageExpressionTree,
   path: Set<string>,
-): Extract<ValueOriginTreeNode, { kind: 'expression' }> {
+): Extract<ColumnLineageTreeNode, { kind: 'expression' }> {
   const owner = toDiagnosticValueColumn(model, ownerNode, ownerColumn);
   if (expression.kind === 'column') {
-    const child = buildValueOriginColumnNode(model, expression.ref.nodeId, expression.ref.columnName, path);
+    const child = buildColumnLineageColumnNode(model, expression.ref.nodeId, expression.ref.columnName, path);
     return {
       children: child ? [child] : [],
       expression,
@@ -638,21 +638,21 @@ function buildValueOriginExpressionNode(
   }
 
   return {
-    children: buildValueOriginExpressionChildren(model, ownerNode, ownerColumn, expression, path),
+    children: buildColumnLineageExpressionChildren(model, ownerNode, ownerColumn, expression, path),
     expression,
     kind: 'expression',
     owner,
   };
 }
 
-function buildValueOriginColumnNodes(
+function buildColumnLineageColumnNodes(
   model: LineageModel,
   refs: LineageColumnRef[],
   path: Set<string>,
-): ValueOriginTreeNode[] {
-  const nodes: ValueOriginTreeNode[] = [];
+): ColumnLineageTreeNode[] {
+  const nodes: ColumnLineageTreeNode[] = [];
   for (const ref of refs) {
-    const node = buildValueOriginColumnNode(model, ref.nodeId, ref.columnName, path);
+    const node = buildColumnLineageColumnNode(model, ref.nodeId, ref.columnName, path);
     if (node) {
       nodes.push(node);
     }
@@ -660,22 +660,22 @@ function buildValueOriginColumnNodes(
   return nodes;
 }
 
-function buildValueOriginExpressionChildren(
+function buildColumnLineageExpressionChildren(
   model: LineageModel,
   ownerNode: LineageNode,
   ownerColumn: LineageColumn,
   expression: Exclude<LineageExpressionTree, { kind: 'column' }>,
   path: Set<string>,
-): ValueOriginTreeNode[] {
-  const nodes: ValueOriginTreeNode[] = [];
+): ColumnLineageTreeNode[] {
+  const nodes: ColumnLineageTreeNode[] = [];
   if (expression.kind === 'operator') {
     for (const child of expression.children) {
-      nodes.push(buildValueOriginExpressionNode(model, ownerNode, ownerColumn, child, path));
+      nodes.push(buildColumnLineageExpressionNode(model, ownerNode, ownerColumn, child, path));
     }
     return nodes;
   }
   for (const ref of expression.upstream) {
-    const node = buildValueOriginColumnNode(model, ref.nodeId, ref.columnName, path);
+    const node = buildColumnLineageColumnNode(model, ref.nodeId, ref.columnName, path);
     if (node) {
       nodes.push(node);
     }
@@ -719,9 +719,9 @@ function toDiagnosticValueColumn(model: LineageModel, node: LineageNode, column:
   };
 }
 
-function collectValueOriginSourceLeaves(tree: ValueOriginTreeNode[]): DiagnosticValueColumn[] {
+function collectColumnLineageSourceLeaves(tree: ColumnLineageTreeNode[]): DiagnosticValueColumn[] {
   const leaves = new Map<string, DiagnosticValueColumn>();
-  const visit = (node: ValueOriginTreeNode): void => {
+  const visit = (node: ColumnLineageTreeNode): void => {
     if (node.kind === 'column' && node.leaf && !node.cycle && node.column.nodeType === 'table') {
       leaves.set(`${node.column.nodeId}.${node.column.columnName}.${node.column.outputIndex ?? ''}.${node.column.selectItemId ?? ''}`, node.column);
     }
@@ -884,7 +884,7 @@ function conditionToInfluence(model: LineageModel, condition: LineageCondition):
     id: condition.id,
     kind: condition.kind,
     mechanism,
-    references: condition.references.map((reference) => createDiagnosticReference(model, reference, 'population_origin', condition.kind)),
+    references: condition.references.map((reference) => createDiagnosticReference(model, reference, 'row_lineage', condition.kind)),
     signals: signalsFromInfluence(condition.kind, mechanism, effects),
     scopeId: condition.scopeId,
   };
@@ -899,7 +899,7 @@ function expressionToInfluence(model: LineageModel, expression: LineageExpressio
     id: expression.id,
     kind: expression.kind,
     mechanism,
-    references: expression.references.map((reference) => createDiagnosticReference(model, reference, 'population_origin', expression.kind)),
+    references: expression.references.map((reference) => createDiagnosticReference(model, reference, 'row_lineage', expression.kind)),
     signals: signalsFromInfluence(expression.kind, mechanism, effects),
     scopeId: expression.scopeId,
   };
@@ -913,7 +913,7 @@ function joinToInfluence(model: LineageModel, join: LineageJoinInfluence): Popul
     id: join.id,
     kind: 'join_on',
     mechanism: 'join',
-    references: join.references.map((reference) => createDiagnosticReference(model, reference, 'population_origin', 'join_on')),
+    references: join.references.map((reference) => createDiagnosticReference(model, reference, 'row_lineage', 'join_on')),
     signals: signalsFromInfluence('join_on', 'join', effects),
     scopeId: join.scopeId,
     sourceNodeId: join.sourceNodeId,
@@ -923,13 +923,13 @@ function joinToInfluence(model: LineageModel, join: LineageJoinInfluence): Popul
 function refinePopulationInfluenceImpact(
   influence: PopulationInfluence,
   uniqueKeysByNodeId: Map<string, string[][]>,
-  valueOrigin: ValueOriginAnalysis,
+  columnLineage: ColumnLineageAnalysis,
 ): PopulationInfluence {
   if (influence.kind !== 'join_on' || !influence.sourceNodeId) {
     return influence;
   }
   let effects = [...influence.effects];
-  if (effects.includes('null_extension') && !isValueRelevantNode(valueOrigin, influence.sourceNodeId)) {
+  if (effects.includes('null_extension') && !isValueRelevantNode(columnLineage, influence.sourceNodeId)) {
     effects = effects.filter((item) => item !== 'null_extension');
   }
   if (!effects.includes('row_multiplication')) {
@@ -949,25 +949,25 @@ function refinePopulationInfluenceImpact(
   };
 }
 
-function isValueRelevantNode(valueOrigin: ValueOriginAnalysis, nodeId: string): boolean {
-  return valueOrigin.expressionChain.some((expression) => expression.nodeId === nodeId)
-    || valueOrigin.references.some((reference) => reference.nodeId === nodeId)
-    || valueOrigin.scopeChain.some((scope) => scope.nodeId === nodeId)
-    || valueOrigin.sourceLeaves.some((source) => source.nodeId === nodeId);
+function isValueRelevantNode(columnLineage: ColumnLineageAnalysis, nodeId: string): boolean {
+  return columnLineage.expressionChain.some((expression) => expression.nodeId === nodeId)
+    || columnLineage.references.some((reference) => reference.nodeId === nodeId)
+    || columnLineage.scopeChain.some((scope) => scope.nodeId === nodeId)
+    || columnLineage.sourceLeaves.some((source) => source.nodeId === nodeId);
 }
 
 function buildPopulationNodeImpacts(
   model: LineageModel,
   influences: PopulationInfluence[],
-  valueOrigin: ValueOriginAnalysis,
+  columnLineage: ColumnLineageAnalysis,
   target: DiagnosticTarget,
 ): PopulationNodeImpact[] {
   const valueRelevantNodeIds = new Set([
     target.nodeId,
-    ...valueOrigin.expressionChain.map((expression) => expression.nodeId),
-    ...valueOrigin.references.map((reference) => reference.nodeId),
-    ...valueOrigin.scopeChain.map((scope) => scope.nodeId),
-    ...valueOrigin.sourceLeaves.map((source) => source.nodeId),
+    ...columnLineage.expressionChain.map((expression) => expression.nodeId),
+    ...columnLineage.references.map((reference) => reference.nodeId),
+    ...columnLineage.scopeChain.map((scope) => scope.nodeId),
+    ...columnLineage.sourceLeaves.map((source) => source.nodeId),
   ]);
   const nodeImpacts = new Map<string, PopulationNodeImpact>();
 
@@ -1225,7 +1225,7 @@ function columnRefToSourceReference(reference: LineageColumnRef, usageScopeId: s
   return {
     columnName: reference.columnName,
     nodeId: reference.nodeId,
-    role: 'value_origin',
+    role: 'column_lineage',
     scopeId: usageScopeId,
   };
 }
@@ -1266,8 +1266,8 @@ function dedupeDiagnosticReferences(references: DiagnosticSourceReference[]): Di
 function rolesFromUsages(usages: DiagnosticSourceUsage[]): Array<DiagnosticSourceUsage['role']> {
   const roles = new Set(usages.map((usage) => usage.role));
   return [
-    ...(roles.has('value_origin') ? ['value_origin' as const] : []),
-    ...(roles.has('population_origin') ? ['population_origin' as const] : []),
+    ...(roles.has('column_lineage') ? ['column_lineage' as const] : []),
+    ...(roles.has('row_lineage') ? ['row_lineage' as const] : []),
   ];
 }
 
@@ -1285,12 +1285,12 @@ function dedupeUsages(usages: DiagnosticSourceUsage[]): DiagnosticSourceUsage[] 
 
 function buildCandidateConcerns(
   influences: PopulationInfluence[],
-  valueOrigin?: ValueOriginAnalysis,
+  columnLineage?: ColumnLineageAnalysis,
   schemaFacts?: SchemaFacts,
   symptom?: ProblemIntent,
 ): CandidateConcern[] {
   const populationConcerns = influences
-    .filter((influence) => shouldPromotePopulationConcern(influence, valueOrigin))
+    .filter((influence) => shouldPromotePopulationConcern(influence, columnLineage))
     .map((influence) => ({
       checkDomains: checkDomainsForInfluence(influence),
       confidence: concernConfidence(influence, schemaFacts),
@@ -1305,28 +1305,28 @@ function buildCandidateConcerns(
       signals: [...influence.signals],
     }));
   const valueConcerns: CandidateConcern[] = [];
-  const sourceDataConcern = buildSourceDataValueConcern(valueOrigin);
+  const sourceDataConcern = buildSourceDataValueConcern(columnLineage);
   if (sourceDataConcern) {
     valueConcerns.push(sourceDataConcern);
   }
 
-  if (valueOrigin?.caseRules.length) {
+  if (columnLineage?.caseRules.length) {
     valueConcerns.push({
       checkDomains: ['program_logic', 'data_condition'],
       confidence: 'possible',
       effects: ['case_when', 'value_transform'],
-      evidence: valueOrigin.caseRules.map((rule) => [rule.conditionSql, rule.resultSql].filter(Boolean).join(' -> ')),
+      evidence: columnLineage.caseRules.map((rule) => [rule.conditionSql, rule.resultSql].filter(Boolean).join(' -> ')),
       impact: ['may_change_value'],
       influenceIds: [],
       kind: 'case_when',
       mechanisms: ['case_when'],
       reason: 'The CASE branch conditions or result expressions may change this column value.',
-      scopeId: valueOrigin.caseRules[0].scopeId,
+      scopeId: columnLineage.caseRules[0].scopeId,
       signals: [],
     });
   }
 
-  for (const expression of valueOrigin?.expressionChain ?? []) {
+  for (const expression of columnLineage?.expressionChain ?? []) {
     if (isAggregateExpression(expression.expressionSql)) {
       valueConcerns.push({
         checkDomains: ['program_logic'],
@@ -1342,15 +1342,15 @@ function buildCandidateConcerns(
         signals: [],
       });
     }
-    if (isNullReplacementExpression(expression.expressionSql) && shouldPromoteNullReplacementConcern(influences, valueOrigin, schemaFacts)) {
+    if (isNullReplacementExpression(expression.expressionSql) && shouldPromoteNullReplacementConcern(influences, columnLineage, schemaFacts)) {
       valueConcerns.push({
         checkDomains: ['program_logic', 'data_condition', 'schema_assumption'],
         confidence: 'possible',
         effects: ['null_replacement'],
         evidence: [
           expression.expressionSql,
-          ...nullableSourceEvidence(valueOrigin, schemaFacts),
-          ...outerJoinNullEvidence(influences, valueOrigin),
+          ...nullableSourceEvidence(columnLineage, schemaFacts),
+          ...outerJoinNullEvidence(influences, columnLineage),
         ].filter((item): item is string => Boolean(item)),
         impact: ['may_change_value'],
         influenceIds: influences
@@ -1358,7 +1358,7 @@ function buildCandidateConcerns(
           .map((influence) => influence.id),
         kind: 'null_replacement_expression',
         mechanisms: ['coalesce', 'function_call'],
-        reason: 'The expression may replace NULL values; review nullable source columns and outer joins on the value-origin route.',
+        reason: 'The expression may replace NULL values; review nullable source columns and outer joins on the column lineage route.',
         scopeId: expression.scopeId,
         signals: [],
       });
@@ -1368,12 +1368,12 @@ function buildCandidateConcerns(
   return rankCandidateConcerns([...populationConcerns, ...valueConcerns], symptom);
 }
 
-function buildSourceDataValueConcern(valueOrigin?: ValueOriginAnalysis): CandidateConcern | null {
-  if (!valueOrigin?.sourceLeaves.length || !hasValueTransformForSourceDataConcern(valueOrigin)) {
+function buildSourceDataValueConcern(columnLineage?: ColumnLineageAnalysis): CandidateConcern | null {
+  if (!columnLineage?.sourceLeaves.length || !hasValueTransformForSourceDataConcern(columnLineage)) {
     return null;
   }
 
-  const evidence = uniqueStrings(valueOrigin.sourceLeaves.map((source) => `${source.nodeLabel}.${source.columnName}`));
+  const evidence = uniqueStrings(columnLineage.sourceLeaves.map((source) => `${source.nodeLabel}.${source.columnName}`));
   if (evidence.length === 0) {
     return null;
   }
@@ -1388,16 +1388,16 @@ function buildSourceDataValueConcern(valueOrigin?: ValueOriginAnalysis): Candida
     kind: 'source_data_value',
     mechanisms: [],
     reason: 'Source leaf values may be incorrect and can affect the calculated value.',
-    scopeId: valueOrigin.sourceLeaves[0].scopeId,
+    scopeId: columnLineage.sourceLeaves[0].scopeId,
     signals: [],
   };
 }
 
-function hasValueTransformForSourceDataConcern(valueOrigin: ValueOriginAnalysis): boolean {
-  if (valueOrigin.caseRules.length > 0) {
+function hasValueTransformForSourceDataConcern(columnLineage: ColumnLineageAnalysis): boolean {
+  if (columnLineage.caseRules.length > 0) {
     return true;
   }
-  return valueOrigin.expressions.some((expression) =>
+  return columnLineage.expressions.some((expression) =>
     expression.semanticKind !== 'column_passthrough' && expression.semanticKind !== 'literal_value',
   );
 }
@@ -1514,26 +1514,26 @@ function isNullReplacementExpression(expressionSql?: string): boolean {
 
 function shouldPromoteNullReplacementConcern(
   influences: PopulationInfluence[],
-  valueOrigin?: ValueOriginAnalysis,
+  columnLineage?: ColumnLineageAnalysis,
   schemaFacts?: SchemaFacts,
 ): boolean {
-  return nullableSourceEvidence(valueOrigin, schemaFacts).length > 0
-    || outerJoinNullEvidence(influences, valueOrigin).length > 0;
+  return nullableSourceEvidence(columnLineage, schemaFacts).length > 0
+    || outerJoinNullEvidence(influences, columnLineage).length > 0;
 }
 
-function nullableSourceEvidence(valueOrigin?: ValueOriginAnalysis, schemaFacts?: SchemaFacts): string[] {
-  if (!valueOrigin || !schemaFacts) {
+function nullableSourceEvidence(columnLineage?: ColumnLineageAnalysis, schemaFacts?: SchemaFacts): string[] {
+  if (!columnLineage || !schemaFacts) {
     return [];
   }
-  return valueOrigin.sourceLeaves.flatMap((source) => {
+  return columnLineage.sourceLeaves.flatMap((source) => {
     const table = resolveTableFacts(schemaFacts, source.nodeLabel);
     const column = table?.columns[source.columnName];
     return column?.nullable ? [`${source.nodeLabel}.${source.columnName} is nullable by schema facts`] : [];
   });
 }
 
-function outerJoinNullEvidence(influences: PopulationInfluence[], valueOrigin?: ValueOriginAnalysis): string[] {
-  const sourceNodeIds = new Set(valueOrigin?.references.map((reference) => reference.nodeId) ?? []);
+function outerJoinNullEvidence(influences: PopulationInfluence[], columnLineage?: ColumnLineageAnalysis): string[] {
+  const sourceNodeIds = new Set(columnLineage?.references.map((reference) => reference.nodeId) ?? []);
   return influences
     .filter((influence) => influence.kind === 'join_on' && influence.effects.includes('null_extension'))
     .filter((influence) => influence.references.some((reference) => sourceNodeIds.has(reference.nodeId)))
@@ -1541,12 +1541,12 @@ function outerJoinNullEvidence(influences: PopulationInfluence[], valueOrigin?: 
     .filter((expressionSql): expressionSql is string => Boolean(expressionSql));
 }
 
-function shouldPromotePopulationConcern(influence: PopulationInfluence, valueOrigin?: ValueOriginAnalysis): boolean {
+function shouldPromotePopulationConcern(influence: PopulationInfluence, columnLineage?: ColumnLineageAnalysis): boolean {
   if (influence.kind !== 'join_on' || !influence.effects.includes('null_extension')) {
     return true;
   }
 
-  const sourceNodeIds = new Set(valueOrigin?.references.map((reference) => reference.nodeId) ?? []);
+  const sourceNodeIds = new Set(columnLineage?.references.map((reference) => reference.nodeId) ?? []);
   return influence.references.some((reference) => sourceNodeIds.has(reference.nodeId));
 }
 
@@ -1612,13 +1612,13 @@ function concernReason(influence: PopulationInfluence): string {
 
 function buildOmittedContext(
   model: LineageModel,
-  valueOrigin: ValueOriginAnalysis,
-  populationOrigin: PopulationOriginAnalysis,
+  columnLineage: ColumnLineageAnalysis,
+  rowLineage: RowLineageAnalysis,
 ): ColumnDiagnosticPacket['omittedContext'] {
   const includedNodeIds = new Set([
-    ...valueOrigin.sourceLeaves.map((source) => source.nodeId),
-    ...valueOrigin.scopeChain.map((scope) => scope.nodeId),
-    ...populationOrigin.influences.flatMap((influence) => influence.references.map((reference) => reference.nodeId)),
+    ...columnLineage.sourceLeaves.map((source) => source.nodeId),
+    ...columnLineage.scopeChain.map((scope) => scope.nodeId),
+    ...rowLineage.influences.flatMap((influence) => influence.references.map((reference) => reference.nodeId)),
   ]);
   const totalInfluenceCount = model.scopes.reduce(
     (count, scope) =>
@@ -1637,7 +1637,7 @@ function buildOmittedContext(
     omittedColumnCount: model.nodes
       .filter((node) => !includedNodeIds.has(node.id))
       .reduce((count, node) => count + node.columns.length, 0),
-    omittedInfluenceCount: Math.max(0, totalInfluenceCount - populationOrigin.influences.length),
+    omittedInfluenceCount: Math.max(0, totalInfluenceCount - rowLineage.influences.length),
     omittedNodeCount: model.nodes.filter((node) => !includedNodeIds.has(node.id)).length,
   };
 }

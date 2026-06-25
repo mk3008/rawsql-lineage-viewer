@@ -19,11 +19,8 @@ export function isPassthroughColumn(column: LineageColumn) {
 }
 
 export function isVisibleGraphColumn(column: LineageColumn) {
-  if (column.usage?.role === 'filter' || column.usage?.role === 'unused') {
+  if (column.usage?.role === 'condition' || column.usage?.role === 'filter' || column.usage?.role === 'unused') {
     return false;
-  }
-  if (column.usage?.role === 'condition') {
-    return column.outputIndex !== undefined || Boolean(column.selectItemId);
   }
   return true;
 }

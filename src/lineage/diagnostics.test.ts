@@ -45,13 +45,13 @@ describe('column diagnostics', () => {
       {
         columnName: 'status',
         nodeId: 'table_orders',
-        role: 'population_origin',
+        role: 'row_lineage',
         scopeId: 'scope_main_output',
       },
     ]);
   });
 
-  it('builds a packet with value origin, population origin, candidate concerns, and combined roles', () => {
+  it('builds a packet with column lineage, row lineage, candidate concerns, and combined roles', () => {
     const { lineage } = analyzeSql(`
       SELECT o.status
       FROM orders o
@@ -65,28 +65,28 @@ describe('column diagnostics', () => {
 
     expect(packet.kind).toBe('column-diagnostic-packet');
     expect(packet.version).toBe(1);
-    expect(Object.prototype.hasOwnProperty.call(packet.valueOrigin, 'sourceColumns')).toBe(false);
-    expect(Object.prototype.hasOwnProperty.call(packet.valueOrigin, 'tree')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(packet.columnLineage, 'sourceColumns')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(packet.columnLineage, 'tree')).toBe(false);
     expect(JSON.stringify(packet)).not.toContain('"comments":[]');
-    expect(packet.views.valueOriginTree.derivedFrom).toBe('valueOrigin');
+    expect(packet.views.columnLineageTree.derivedFrom).toBe('columnLineage');
     expect(packet.target).toMatchObject({
       columnName: 'status',
       nodeId: 'main_output',
       nodeType: 'output',
       scopeId: 'scope_main_output',
     });
-    expect(packet.valueOrigin.references).toEqual([
+    expect(packet.columnLineage.references).toEqual([
       expect.objectContaining({
         columnName: 'status',
         nodeId: 'table_orders',
-        roles: ['value_origin', 'population_origin'],
+        roles: ['column_lineage', 'row_lineage'],
         usages: expect.arrayContaining([
-          { role: 'value_origin', scopeId: 'scope_main_output', usageKind: 'column_value' },
-          { role: 'population_origin', scopeId: 'scope_main_output', usageKind: 'where' },
+          { role: 'column_lineage', scopeId: 'scope_main_output', usageKind: 'column_value' },
+          { role: 'row_lineage', scopeId: 'scope_main_output', usageKind: 'where' },
         ]),
       }),
     ]);
-    expect(packet.populationOrigin.influences).toEqual([
+    expect(packet.rowLineage.influences).toEqual([
       expect.objectContaining({
         effects: ['row_filter'],
         expressionSql: 'o.status = :status',
@@ -122,7 +122,7 @@ describe('column diagnostics', () => {
       columnName: 'customer_id',
       nodeId: 'main_output',
     });
-    const compactInfluences = packet.populationOrigin.influences.map((influence) => ({
+    const compactInfluences = packet.rowLineage.influences.map((influence) => ({
       effects: influence.effects,
       hasImpact: Object.prototype.hasOwnProperty.call(influence, 'impact'),
       kind: influence.kind,
@@ -151,7 +151,7 @@ describe('column diagnostics', () => {
     ]);
   });
 
-  it('includes WHERE scopes on the value-origin route through CTEs', () => {
+  it('includes WHERE scopes on the column-lineage route through CTEs', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (
         SELECT o.customer_id, o.amount
@@ -168,10 +168,10 @@ describe('column diagnostics', () => {
       nodeId: 'main_output',
     });
 
-    expect(packet.valueOrigin.scopeChain.map((scope) => scope.scopeId)).toEqual(
+    expect(packet.columnLineage.scopeChain.map((scope) => scope.scopeId)).toEqual(
       expect.arrayContaining(['scope_main_output', 'scope_cte_recent_orders']),
     );
-    expect(packet.populationOrigin.influences).toEqual(
+    expect(packet.rowLineage.influences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           expressionSql: 'ro.customer_id = :customer_id',
@@ -218,7 +218,7 @@ describe('column diagnostics', () => {
     ]));
   });
 
-  it('keeps duplicate output column targets distinct in the value-origin tree', () => {
+  it('keeps duplicate output column targets distinct in the column-lineage tree', () => {
     const lineage: LineageModel = {
       analysisWarnings: [],
       edges: [],
@@ -284,7 +284,7 @@ describe('column diagnostics', () => {
       outputIndex: 1,
       selectItemId: 'scope_main_output_output_2',
     });
-    expect(secondId.views.valueOriginTree.tree[0]).toMatchObject({
+    expect(secondId.views.columnLineageTree.tree[0]).toMatchObject({
       column: expect.objectContaining({
         columnName: 'id',
         nodeId: 'main_output',
@@ -293,7 +293,7 @@ describe('column diagnostics', () => {
       }),
       kind: 'column',
     });
-    expect(secondId.valueOrigin.sourceLeaves).toEqual([
+    expect(secondId.columnLineage.sourceLeaves).toEqual([
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_orders',
@@ -323,7 +323,7 @@ describe('column diagnostics', () => {
       });
       expect(packet.target.columnName).toBe(column.name);
       expect(packet.kind).toBe('column-diagnostic-packet');
-      expect(packet.populationOrigin.influences.map((influence) => influence.kind)).toEqual(expect.arrayContaining(['where', 'order_by', 'limit']));
+      expect(packet.rowLineage.influences.map((influence) => influence.kind)).toEqual(expect.arrayContaining(['where', 'order_by', 'limit']));
     }
   });
 
@@ -333,16 +333,16 @@ describe('column diagnostics', () => {
       columnName: 'customer_id',
       nodeId: 'main_output',
     });
-    const whereExists = packet.populationOrigin.influences.find((influence) => influence.kind === 'where' && influence.expressionSql?.toLowerCase().startsWith('exists'));
-    const orderBy = packet.populationOrigin.influences.find((influence) => influence.kind === 'order_by');
-    const limit = packet.populationOrigin.influences.find((influence) => influence.kind === 'limit');
-    const leftJoins = packet.populationOrigin.influences.filter((influence) => influence.kind === 'join_on' && influence.effects.includes('null_extension'));
+    const whereExists = packet.rowLineage.influences.find((influence) => influence.kind === 'where' && influence.expressionSql?.toLowerCase().startsWith('exists'));
+    const orderBy = packet.rowLineage.influences.find((influence) => influence.kind === 'order_by');
+    const limit = packet.rowLineage.influences.find((influence) => influence.kind === 'limit');
+    const leftJoins = packet.rowLineage.influences.filter((influence) => influence.kind === 'join_on' && influence.effects.includes('null_extension'));
 
     expect(whereExists?.references).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ columnName: 'id', nodeId: 'table_customers', roles: ['population_origin'] }),
-        expect.objectContaining({ columnName: 'customer_id', nodeId: 'table_customer_favorites', roles: ['population_origin'] }),
-        expect.objectContaining({ columnName: 'is_active', nodeId: 'table_customer_favorites', roles: ['population_origin'] }),
+        expect.objectContaining({ columnName: 'id', nodeId: 'table_customers', roles: ['row_lineage'] }),
+        expect.objectContaining({ columnName: 'customer_id', nodeId: 'table_customer_favorites', roles: ['row_lineage'] }),
+        expect.objectContaining({ columnName: 'is_active', nodeId: 'table_customer_favorites', roles: ['row_lineage'] }),
       ]),
     );
     expect(whereExists?.references.flatMap((reference) => reference.usages.map((usage) => usage.usageKind))).not.toContain('join_on');
@@ -360,7 +360,7 @@ describe('column diagnostics', () => {
       scopeId: 'scope_main_output',
     });
     expect(leftJoins).toHaveLength(0);
-    expect(packet.views.valueOriginTree.tree[0]).toMatchObject({
+    expect(packet.views.columnLineageTree.tree[0]).toMatchObject({
       column: expect.objectContaining({
         columnName: 'customer_id',
         nodeId: 'main_output',
@@ -368,14 +368,14 @@ describe('column diagnostics', () => {
       }),
       kind: 'column',
     });
-    expect(packet.valueOrigin.sourceLeaves).toEqual([
+    expect(packet.columnLineage.sourceLeaves).toEqual([
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_customers',
         nodeType: 'table',
       }),
     ]);
-    expect(packet.populationOrigin.nodeImpacts).toEqual(
+    expect(packet.rowLineage.nodeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           effects: expect.arrayContaining(['row_filter']),
@@ -396,11 +396,11 @@ describe('column diagnostics', () => {
         }),
       ]),
     );
-    expect(packet.valueOrigin.references).toEqual([
+    expect(packet.columnLineage.references).toEqual([
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_customers',
-        roles: ['value_origin', 'population_origin'],
+        roles: ['column_lineage', 'row_lineage'],
       }),
     ]);
   });
@@ -411,8 +411,8 @@ describe('column diagnostics', () => {
       columnName: 'total_amount',
       nodeId: 'main_output',
     });
-    const orderTotalsJoin = packet.populationOrigin.influences.find((influence) => influence.expressionSql === 'on ot.customer_id = c.id');
-    const paymentSummaryJoin = packet.populationOrigin.influences.find((influence) => influence.expressionSql === 'on ps.customer_id = c.id');
+    const orderTotalsJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ot.customer_id = c.id');
+    const paymentSummaryJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ps.customer_id = c.id');
 
     expect(orderTotalsJoin).toMatchObject({
       effects: ['null_extension'],
@@ -421,7 +421,7 @@ describe('column diagnostics', () => {
       sourceNodeId: 'cte_order_totals',
     });
     expect(paymentSummaryJoin).toBeUndefined();
-    expect(packet.populationOrigin.nodeImpacts).toEqual(
+    expect(packet.rowLineage.nodeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           effects: ['null_extension'],
@@ -431,7 +431,7 @@ describe('column diagnostics', () => {
         }),
       ]),
     );
-    expect(packet.populationOrigin.nodeImpacts).not.toEqual(
+    expect(packet.rowLineage.nodeImpacts).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({ nodeId: 'cte_payment_summary' }),
       ]),
@@ -445,12 +445,12 @@ describe('column diagnostics', () => {
       nodeId: 'main_output',
     });
 
-    const whereExists = packet.populationOrigin.influences.find((influence) => influence.kind === 'where' && influence.expressionSql?.toLowerCase().startsWith('exists'));
+    const whereExists = packet.rowLineage.influences.find((influence) => influence.kind === 'where' && influence.expressionSql?.toLowerCase().startsWith('exists'));
     const customerIdReference = whereExists?.references.find((reference) => reference.nodeId === 'table_customers' && reference.columnName === 'id');
 
-    expect(customerIdReference?.roles).toEqual(['population_origin']);
+    expect(customerIdReference?.roles).toEqual(['row_lineage']);
     expect(customerIdReference?.usages).toEqual([
-      { role: 'population_origin', scopeId: 'scope_main_output', usageKind: 'where' },
+      { role: 'row_lineage', scopeId: 'scope_main_output', usageKind: 'where' },
     ]);
   });
 
@@ -469,8 +469,8 @@ describe('column diagnostics', () => {
       nodeId: 'main_output',
     });
 
-    expect(paymentStatus.valueOrigin.caseRules).toHaveLength(3);
-    expect(paymentStatus.views.valueOriginTree.tree[0]).toMatchObject({
+    expect(paymentStatus.columnLineage.caseRules).toHaveLength(3);
+    expect(paymentStatus.views.columnLineageTree.tree[0]).toMatchObject({
       column: expect.objectContaining({
         columnName: 'payment_status',
         nodeId: 'main_output',
@@ -484,7 +484,7 @@ describe('column diagnostics', () => {
       ]),
       kind: 'column',
     });
-    expect(paymentStatus.valueOrigin.caseRules).toEqual(
+    expect(paymentStatus.columnLineage.caseRules).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           conditionRefIds: ['ref:cte_payment_summary:last_paid_at'],
@@ -500,7 +500,7 @@ describe('column diagnostics', () => {
         }),
       ]),
     );
-    expect(paymentStatus.valueOrigin.expressions).toEqual(
+    expect(paymentStatus.columnLineage.expressions).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           kind: 'case',
@@ -515,8 +515,8 @@ describe('column diagnostics', () => {
     );
     expect(paymentStatus.candidateConcerns.map((concern) => concern.kind)).toEqual(expect.arrayContaining(['case_when']));
     expect(paymentStatus.candidateConcerns.filter((concern) => concern.kind === 'case_when')).toHaveLength(1);
-    expect(orderCount.valueOrigin.expressionChain.map((expression) => expression.expressionSql)).toEqual(expect.arrayContaining(['count(*)']));
-    expect(orderCount.views.valueOriginTree.tree[0]).toMatchObject({
+    expect(orderCount.columnLineage.expressionChain.map((expression) => expression.expressionSql)).toEqual(expect.arrayContaining(['count(*)']));
+    expect(orderCount.views.columnLineageTree.tree[0]).toMatchObject({
       children: expect.arrayContaining([
         expect.objectContaining({
           column: expect.objectContaining({
@@ -561,7 +561,7 @@ describe('column diagnostics', () => {
       nodeId: 'main_output',
     });
 
-    expect(paymentStatus.populationOrigin.influences).toEqual(
+    expect(paymentStatus.rowLineage.influences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           expressionSql: 'on ps.customer_id = c.id',
@@ -569,7 +569,7 @@ describe('column diagnostics', () => {
         }),
       ]),
     );
-    expect(paymentStatus.populationOrigin.influences).not.toEqual(
+    expect(paymentStatus.rowLineage.influences).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           expressionSql: 'on ot.customer_id = c.id',
@@ -623,13 +623,13 @@ describe('column diagnostics', () => {
 
     expect(text).toContain('Target: payment_status (output: Final Result)');
     expect(text).not.toContain('Target: Final Result.payment_status');
-    expect(text).toContain('Value origin:');
+    expect(text).toContain('Column Lineage:');
     expect(text).toContain('CASE rules:');
     expect(text).toContain("ps.last_paid_at < current_date - INTERVAL '30 days'");
-    expect(treeViewModel.valueOrigin.caseRules).toHaveLength(3);
+    expect(treeViewModel.columnLineage.caseRules).toHaveLength(3);
     expect(treeViewModel.json).toContain('"kind": "column-diagnostic-packet"');
     expect(graphViewModel.nodes.some((node) => node.role === 'target')).toBe(true);
-    expect(graphViewModel.edges.some((edge) => edge.kind === 'population_origin')).toBe(true);
+    expect(graphViewModel.edges.some((edge) => edge.kind === 'row_lineage')).toBe(true);
     expect(text).toMatchSnapshot();
     expect(treeViewModel).toMatchSnapshot();
     expect(graphViewModel).toMatchSnapshot();

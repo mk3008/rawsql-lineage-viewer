@@ -126,10 +126,10 @@ describe('rawsql-lineage diagnose CLI', () => {
         '--ddl',
         extraDdlPath,
       ], { encoding: 'utf8' });
-      const report = JSON.parse(stdout) as { packets: Array<{ target: { columnName: string }; valueOrigin: { sourceLeaves: Array<{ nodeLabel: string }> } }> };
+      const report = JSON.parse(stdout) as { packets: Array<{ target: { columnName: string }; columnLineage: { sourceLeaves: Array<{ nodeLabel: string }> } }> };
 
       expect(report.packets.map((packet) => packet.target.columnName)).toEqual(['name', 'order_id']);
-      expect(report.packets.flatMap((packet) => packet.valueOrigin.sourceLeaves.map((source) => source.nodeLabel))).toEqual([
+      expect(report.packets.flatMap((packet) => packet.columnLineage.sourceLeaves.map((source) => source.nodeLabel))).toEqual([
         'customers',
         'orders',
       ]);

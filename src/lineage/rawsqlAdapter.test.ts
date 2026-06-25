@@ -116,6 +116,29 @@ describe('rawsqlAdapter', () => {
     );
   });
 
+  it('keeps unused CTE nodes in the model and reports them as warnings', () => {
+    const { lineage } = analyzeSql(`
+      WITH used_orders AS (
+        SELECT customer_id, amount
+        FROM orders
+      ),
+      unused_payments AS (
+        SELECT customer_id, amount
+        FROM payments
+      )
+      SELECT customer_id, amount
+      FROM used_orders
+    `);
+
+    expect(lineage.nodes.some((node) => node.id === 'cte_unused_payments')).toBe(true);
+    expect(lineage.analysisWarnings).toEqual(expect.arrayContaining([
+      {
+        code: 'unused_cte',
+        message: 'CTE "unused_payments" is not reachable from the final output.',
+      },
+    ]));
+  });
+
   it('represents SELECT statements without FROM as parameter table sources', () => {
     const { lineage } = analyzeSql(`
       select
@@ -246,7 +269,7 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.has('table_mart.customer_sales')).toBe(false);
     expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'customer_name', 'total_amount']);
     expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id', 'name']));
-    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(['amount']);
     expect(nodeById.get('main_output')?.columns.find((column) => column.name === 'total_amount')?.upstream).toEqual([
       { nodeId: 'table_orders', columnName: 'amount' },
     ]);
@@ -267,7 +290,7 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.has('table_customer_sales_tmp')).toBe(false);
     expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
     expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id']));
-    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(['amount']);
   });
 
   it('analyzes CREATE VIEW AS SELECT using only the AS SELECT query', () => {
@@ -313,7 +336,7 @@ describe('rawsqlAdapter', () => {
 
     expect(nodeById.has('table_customer_sales_mv')).toBe(false);
     expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
-    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(['amount']);
   });
 
   it('analyzes INSERT SELECT using only the SELECT query', () => {
@@ -332,7 +355,7 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.has('table_mart.customer_sales')).toBe(false);
     expect(nodeById.get('main_output')?.columns.map((column) => column.name)).toEqual(['customer_id', 'total_amount']);
     expect(nodeById.get('table_customers')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['id']));
-    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(expect.arrayContaining(['customer_id', 'amount']));
+    expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(['amount']);
   });
 
   it('rejects INSERT statements without SELECT', () => {
@@ -409,13 +432,11 @@ describe('rawsqlAdapter', () => {
       'quantity',
       'unit_price',
       'amount',
-      'condition 1',
-      'condition 2',
     ]);
     expect(columnsByNodeId.get('table_orders')).toEqual(['id', 'customer_id', 'order_date']);
-    expect(columnsByNodeId.get('table_order_items')).toEqual(['product_id', 'quantity', 'unit_price', 'order_id']);
-    expect(columnsByNodeId.get('table_payments')).toEqual(['customer_id', 'amount', 'paid_at', 'status']);
-    expect(columnsByNodeId.get('table_customer_favorites')).toEqual(['customer_id', 'is_active']);
+    expect(columnsByNodeId.get('table_order_items')).toEqual(['product_id', 'quantity', 'unit_price']);
+    expect(columnsByNodeId.get('table_payments')).toEqual(['customer_id', 'amount', 'paid_at']);
+    expect(columnsByNodeId.get('table_customer_favorites')).toEqual([]);
     expect(columnsByNodeId.get('main_output')).toEqual([
       'customer_id',
       'customer_name',
@@ -424,17 +445,105 @@ describe('rawsqlAdapter', () => {
       'total_amount',
       'paid_amount',
       'payment_status',
-      'condition 1',
     ]);
-    expect(lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === 'condition 1')).toMatchObject({
+    expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0]).toMatchObject({
       expressionSql: expect.stringContaining('exists'),
-      usage: { role: 'filter', reasons: ['where'] },
-      upstream: expect.arrayContaining([
-        { nodeId: 'table_customers', columnName: 'id' },
-        { nodeId: 'table_customer_favorites', columnName: 'customer_id' },
-        { nodeId: 'table_customer_favorites', columnName: 'is_active' },
+      references: expect.arrayContaining([
+        expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
+        expect.objectContaining({ nodeId: 'table_customer_favorites', columnName: 'customer_id' }),
+        expect.objectContaining({ nodeId: 'table_customer_favorites', columnName: 'is_active' }),
       ]),
     });
+  });
+
+  it('keeps condition-only WHERE columns out of graph columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id
+      FROM orders
+      WHERE status = 'open'
+    `);
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(scope?.where?.[0]).toMatchObject({
+      expressionSql: "status = 'open'",
+      references: [expect.objectContaining({ nodeId: 'table_orders', columnName: 'status' })],
+    });
+  });
+
+  it('keeps UNION ALL branch WHERE predicates out of graph columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id
+      FROM orders
+      WHERE status = 'open'
+      UNION ALL
+      SELECT customer_id
+      FROM payments
+      WHERE paid_at >= :from_date
+    `);
+    const part1 = lineage.nodes.find((node) => node.id === 'derived_union_all_left_1');
+    const part2 = lineage.nodes.find((node) => node.id === 'derived_union_all_right_2');
+
+    expect(part1?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(part2?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(part1?.columns.some((column) => column.name.startsWith('condition'))).toBe(false);
+    expect(part2?.columns.some((column) => column.name.startsWith('condition'))).toBe(false);
+    expect(lineage.scopes.find((scope) => scope.nodeId === part1?.id)?.where?.[0].references).toEqual([
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'status' }),
+    ]);
+    expect(lineage.scopes.find((scope) => scope.nodeId === part2?.id)?.where?.[0].references).toEqual([
+      expect.objectContaining({ nodeId: 'table_payments', columnName: 'paid_at' }),
+    ]);
+  });
+
+  it('keeps JOIN ON, HAVING, and ORDER BY-only references out of graph columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT c.id, count(*) AS order_count
+      FROM customers c
+      JOIN orders o ON o.customer_id = c.id AND o.status = 'paid'
+      GROUP BY c.id
+      HAVING count(*) > 1
+      ORDER BY max(o.created_at) DESC
+    `);
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const customers = lineage.nodes.find((node) => node.id === 'table_customers');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['id', 'order_count']);
+    expect(customers?.columns.map((column) => column.name)).toEqual(['id']);
+    expect(orders?.columns.map((column) => column.name)).toEqual([]);
+    expect(scope?.joins?.[0].condition?.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id' }),
+      expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'status' }),
+    ]));
+    expect(scope?.having?.[0].expressionSql).toContain('count');
+    expect(scope?.orderBy?.[0].references).toEqual([
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'created_at' }),
+    ]);
+  });
+
+  it('preserves a real SELECT alias named condition 1', () => {
+    const { lineage } = analyzeSql(`
+      SELECT status AS "condition 1"
+      FROM orders
+      WHERE created_at >= :from_date
+    `);
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['condition 1']);
+    expect(output?.columns.find((column) => column.name === 'condition 1')?.upstream).toEqual([
+      { nodeId: 'table_orders', columnName: 'status' },
+    ]);
+    expect(orders?.columns.map((column) => column.name)).toEqual(['status']);
+    expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0].references).toEqual([
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'created_at' }),
+    ]);
   });
 
   it('preserves column lineage through UNION queries', () => {
@@ -961,7 +1070,7 @@ describe('rawsqlAdapter', () => {
     expect(rule?.resultSql).not.toContain('--');
   });
 
-  it('classifies condition-only and unused CTE columns', () => {
+  it('classifies condition-only CTE output columns as unused graph columns', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (
         SELECT id, customer_id, status, created_at
@@ -974,10 +1083,7 @@ describe('rawsqlAdapter', () => {
     const recentOrders = lineage.nodes.find((node) => node.id === 'cte_recent_orders');
 
     expect(recentOrders?.columns.find((column) => column.name === 'customer_id')?.usage).toBeUndefined();
-    expect(recentOrders?.columns.find((column) => column.name === 'status')?.usage).toEqual({
-      role: 'condition',
-      reasons: ['where'],
-    });
+    expect(recentOrders?.columns.find((column) => column.name === 'status')?.usage).toEqual({ role: 'unused' });
     expect(recentOrders?.columns.find((column) => column.name === 'id')?.usage).toEqual({ role: 'unused' });
     expect(recentOrders?.columns.find((column) => column.name === 'created_at')?.usage).toEqual({ role: 'unused' });
   });
@@ -1013,6 +1119,7 @@ describe('rawsqlAdapter', () => {
     const output = lineage.nodes.find((node) => node.id === 'main_output');
     const scalar = lineage.nodes.find((node) => node.type === 'scalar_subquery');
     const recentOrderCount = output?.columns.find((column) => column.name === 'recent_order_count');
+    const scalarExpression = scalar?.columns.find((column) => column.name === 'expr_1');
     const scalarScope = lineage.scopes.find((scope) => scope.nodeId === scalar?.id);
 
     expect(scalar).toMatchObject({
@@ -1055,8 +1162,8 @@ describe('rawsqlAdapter', () => {
         sourceAlias: 'rc',
       }),
     ]));
-    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id', 'created_at', 'status']);
-    expect(orders?.columns.every((column) => column.usage === undefined)).toBe(true);
+    expect(orders?.columns.map((column) => column.name)).toEqual([]);
+    expect(recentOrderCount?.unresolvedUpstream).toBeUndefined();
     expect(recentOrderCount?.upstream).toEqual([
       expect.objectContaining({
         nodeId: 'scalar_subquery_recent_order_count_1',
@@ -1064,6 +1171,7 @@ describe('rawsqlAdapter', () => {
         scopeId: scalarScope?.id,
       }),
     ]);
+    expect(scalarExpression?.upstream).toEqual([]);
     expect(scalarScope).toMatchObject({
       kind: 'scalar_subquery',
       parentScopeId: 'scope_main_output',
@@ -1172,21 +1280,16 @@ describe('rawsqlAdapter', () => {
     );
     expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'id' }]);
     expect(output?.columns.find((column) => column.name === 'name')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'name' }]);
-    expect(output?.columns.find((column) => column.name === 'condition 1')).toMatchObject({
+    expect(output?.columns.find((column) => column.name === 'condition 1')).toBeUndefined();
+    expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0]).toMatchObject({
       expressionSql: expect.stringContaining('not exists'),
-      upstream: expect.arrayContaining([
-        { nodeId: 'table_customers', columnName: 'id' },
-        { nodeId: 'table_orders', columnName: 'customer_id' },
+      references: expect.arrayContaining([
+        expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
+        expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id' }),
       ]),
-      usage: { role: 'filter', reasons: ['where'] },
     });
     expect(customers?.columns.find((column) => column.name === 'id')?.usage).toBeUndefined();
-    expect(orders?.columns).toEqual([
-      expect.objectContaining({
-        name: 'customer_id',
-        usage: undefined,
-      }),
-    ]);
+    expect(orders?.columns).toEqual([]);
   });
 
   it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {
@@ -1211,6 +1314,56 @@ describe('rawsqlAdapter', () => {
         expect.objectContaining({ source: expect.stringMatching(/^derived_q_/), target: 'main_output' }),
       ]),
     );
+  });
+
+  it('infers derived wildcard columns from outer explicit column references', () => {
+    const { lineage } = analyzeSql(`
+      SELECT id, name
+      FROM (
+        SELECT *
+        FROM table_a
+      ) a
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const derived = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'a');
+    const table = lineage.nodes.find((node) => node.id === 'table_table_a');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(derived?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(table?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: derived?.id, columnName: 'id' },
+    ]);
+    expect(derived?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: 'table_table_a', columnName: 'id' },
+    ]);
+    expect(derived?.columns.find((column) => column.name === 'name')?.upstream).toEqual([
+      { nodeId: 'table_table_a', columnName: 'name' },
+    ]);
+  });
+
+  it('records deadlink diagnostics when upstream column references cannot be resolved', () => {
+    const { lineage } = analyzeSql(`
+      SELECT value
+      FROM table_a
+      JOIN table_b ON a.table_a_id = b.table_a_id
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const value = output?.columns.find((column) => column.name === 'value');
+
+    expect(value?.upstream).toEqual([]);
+    expect(value?.unresolvedUpstream).toEqual([
+      expect.objectContaining({
+        columnName: 'value',
+        reason: 'unknown_unqualified_column',
+      }),
+    ]);
+    expect(lineage.analysisWarnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'deadlink_unknown_unqualified_column' }),
+      expect.objectContaining({ code: 'deadlink_unknown_qualified_source' }),
+    ]));
   });
 
   it('records executable SQL for CTEs with required dependencies', () => {

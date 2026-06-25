@@ -75,7 +75,7 @@ export function populationImpactLabelsByNodeIdForIntent(packet: ColumnDiagnostic
   }
 
   return Object.fromEntries(
-    packet.populationOrigin.nodeImpacts
+    packet.rowLineage.nodeImpacts
       .map((nodeImpact) => [
         nodeImpact.nodeId,
         uniqueLabels(problemIntentBadgesForEffects(nodeImpact.effects, intent, nodeImpact.signals).map((badge) => badge.label)),
@@ -97,7 +97,7 @@ export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticP
   }
 
   const entries = new Map<string, string[]>();
-  for (const source of packet.valueOrigin.sourceLeaves) {
+  for (const source of packet.columnLineage.sourceLeaves) {
     entries.set(source.nodeId, uniqueLabels([...(entries.get(source.nodeId) ?? []), 'Data?']));
   }
   return Object.fromEntries(entries);

@@ -9,6 +9,20 @@ export interface LineageColumnRef {
   scopeId?: string;
 }
 
+export type LineageUnresolvedColumnReferenceReason =
+  | 'ambiguous_unqualified_column'
+  | 'unknown_qualified_source'
+  | 'unknown_unqualified_column';
+
+export interface LineageUnresolvedColumnReference {
+  candidateNodeIds?: string[];
+  columnName: string;
+  qualifier?: string;
+  reason: LineageUnresolvedColumnReferenceReason;
+  sql: string;
+  suggestion: string;
+}
+
 export type LineageColumnUsageReason = 'join' | 'where' | 'having' | 'groupBy' | 'orderBy' | 'subquery';
 
 export type LineageImpact =
@@ -55,7 +69,7 @@ export interface SourceSpan {
 export interface LineageSourceReference {
   columnName: string;
   nodeId: string;
-  role?: 'population_origin' | 'unknown' | 'value_origin';
+  role?: 'row_lineage' | 'unknown' | 'column_lineage';
   scopeId: string;
 }
 
@@ -160,6 +174,7 @@ export interface LineageColumn {
   selectItemId?: string;
   scopeId?: string;
   upstream?: LineageColumnRef[];
+  unresolvedUpstream?: LineageUnresolvedColumnReference[];
   usage?: LineageColumnUsage;
 }
 
@@ -213,6 +228,7 @@ export interface LineageEdge {
 export interface AnalysisWarning {
   code: string;
   message: string;
+  scopeId?: string;
 }
 
 export interface LineageModel {

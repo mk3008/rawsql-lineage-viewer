@@ -9,12 +9,14 @@ export type GraphNodeData = {
   forcedVisibleColumnIds?: Set<string>;
   collapsedGroup?: CollapsedLineageGroup;
   canCollapseUpstream?: boolean;
+  showGroupControls?: boolean;
   onToggleColumns?: (nodeId: string) => void;
   onCollapseUpstream?: (nodeId: string) => void;
   onExpandGroup?: (nodeId: string) => void;
   onNodeSelect?: (nodeId: string) => void;
   selectedNodeId?: string | null;
   selectedColumnId?: string | null;
+  originSelectedColumnId?: string | null;
   selectedCommentTargetIds?: Set<string>;
   selectedRuleExpressionByColumnId?: Map<string, string>;
   activeCommentTargetId?: string | null;
@@ -26,6 +28,7 @@ export type GraphNodeData = {
   highlightedNodeTone?: 'population' | 'value';
   highlightedSourceDataLabels?: Map<string, string[]>;
   highlightedSourceDataNodeIds?: Set<string>;
+  dimmed?: boolean;
   passthroughColumnsCompressed?: boolean;
   showUnusedColumns?: boolean;
   sourceColumnIds?: Set<string>;

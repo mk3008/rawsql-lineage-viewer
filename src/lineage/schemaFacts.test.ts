@@ -298,13 +298,13 @@ describe('schema facts', () => {
       outputIndex: 0,
       selectItemId: 'scope_main_output_output_1',
     });
-    expect(packet.valueOrigin.references).toEqual(expect.arrayContaining([
+    expect(packet.columnLineage.references).toEqual(expect.arrayContaining([
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_customers',
       }),
     ]));
-    expect(packet.valueOrigin.references).not.toEqual(expect.arrayContaining([
+    expect(packet.columnLineage.references).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_orders',

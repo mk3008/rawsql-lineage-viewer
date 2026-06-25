@@ -3,7 +3,7 @@
 exports[`column diagnostics > renders representative diagnostic text and view models from packets 1`] = `
 "Target: payment_status (output: Final Result)
 
-Value origin:
+Column Lineage:
 - 1 source leaf column(s), 1 intermediate reference(s), 2 expression step(s), 3 CASE rule(s)
 - Expressions:
   - main_output.payment_status: case when ps.last_paid_at is null then 'unknown' when ps.last_paid_at < current_date - INTERVAL '30 days' then 'needs_followup' else 'active' end
@@ -18,30 +18,30 @@ Value origin:
   - else
     result: 'active'
 - References:
-  - payment_summary.last_paid_at [value_origin]
-  - payments.paid_at [value_origin]
+  - payment_summary.last_paid_at [column_lineage]
+  - payments.paid_at [column_lineage]
 - Source leaves:
   - payments.paid_at (table)
 
-Population origin:
-- 6 population-origin influence(s) were found on the value-origin route.
+Row Lineage:
+- 6 row lineage influence(s) were found on the column lineage route.
 - Influences:
   - where: p.status = 'succeeded'
-    refs: payments.status [population_origin]
+    refs: payments.status [row_lineage]
     effects: row_filter
   - group_by: p.customer_id
-    refs: payments.customer_id [population_origin]
+    refs: payments.customer_id [row_lineage]
     effects: grain_change
   - exists: exists ( select 1 from customer_favorites as cf where cf.customer_id = c.id and cf.is_active = true )
-    refs: customers.id [population_origin], customer_favorites.customer_id [population_origin], customer_favorites.is_active [population_origin]
+    refs: customers.id [row_lineage], customer_favorites.customer_id [row_lineage], customer_favorites.is_active [row_lineage]
     effects: row_filter
   - order_by: total_amount desc
-    refs: Final Result.total_amount [population_origin]
+    refs: Final Result.total_amount [row_lineage]
     effects: output_selection
   - limit: limit 100
     effects: output_cap
   - join: on ps.customer_id = c.id
-    refs: payment_summary.customer_id [population_origin], customers.id [population_origin]
+    refs: payment_summary.customer_id [row_lineage], customers.id [row_lineage]
     effects: null_extension
 
 Candidate concerns:
@@ -222,6 +222,363 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "signals": [],
     },
   ],
+  "columnLineage": {
+    "caseRules": [
+      {
+        "conditionReferences": [
+          {
+            "columnName": "last_paid_at",
+            "nodeId": "cte_payment_summary",
+            "nodeLabel": "payment_summary",
+            "roles": [
+              "column_lineage",
+            ],
+            "usages": [
+              "column_lineage:case_when_condition:scope_main_output",
+              "column_lineage:column_value:scope_cte_payment_summary",
+            ],
+          },
+        ],
+        "conditionSql": "ps.last_paid_at is null",
+        "id": "case_1_when_1",
+        "label": "when ps.last_paid_at is null",
+        "resultReferences": [],
+        "resultSql": "'unknown'",
+      },
+      {
+        "conditionReferences": [
+          {
+            "columnName": "last_paid_at",
+            "nodeId": "cte_payment_summary",
+            "nodeLabel": "payment_summary",
+            "roles": [
+              "column_lineage",
+            ],
+            "usages": [
+              "column_lineage:case_when_condition:scope_main_output",
+              "column_lineage:column_value:scope_cte_payment_summary",
+            ],
+          },
+        ],
+        "conditionSql": "ps.last_paid_at < current_date - INTERVAL '30 days'",
+        "id": "case_1_when_2",
+        "label": "when ps.last_paid_at < current_date - INTERVAL '30 days'",
+        "resultReferences": [],
+        "resultSql": "'needs_followup'",
+      },
+      {
+        "conditionReferences": [],
+        "conditionSql": undefined,
+        "id": "case_1_else",
+        "label": "else",
+        "resultReferences": [],
+        "resultSql": "'active'",
+      },
+    ],
+    "expressions": [
+      {
+        "columnName": "payment_status",
+        "expressionId": "expr:step:main_output:payment_status:scope_main_output_output_7:out6",
+        "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+        "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
+        "nodeId": "main_output",
+        "nodeLabel": "Final Result",
+        "nodeType": "output",
+        "outputIndex": 6,
+        "scopeId": "scope_main_output",
+        "selectItemId": "scope_main_output_output_7",
+      },
+      {
+        "columnName": "last_paid_at",
+        "expressionId": "expr:step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
+        "expressionSql": "max(p.paid_at)",
+        "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
+        "nodeId": "cte_payment_summary",
+        "nodeLabel": "payment_summary",
+        "nodeType": "cte",
+        "outputIndex": 2,
+        "scopeId": "scope_cte_payment_summary",
+        "selectItemId": "scope_cte_payment_summary_output_3",
+      },
+    ],
+    "sourceColumns": [
+      {
+        "columnName": "last_paid_at",
+        "nodeId": "cte_payment_summary",
+        "nodeLabel": "payment_summary",
+        "roles": [
+          "column_lineage",
+        ],
+        "usages": [
+          "column_lineage:case_when_condition:scope_main_output",
+          "column_lineage:column_value:scope_cte_payment_summary",
+        ],
+      },
+      {
+        "columnName": "paid_at",
+        "nodeId": "table_payments",
+        "nodeLabel": "payments",
+        "roles": [
+          "column_lineage",
+        ],
+        "usages": [
+          "column_lineage:column_value:scope_cte_payment_summary",
+        ],
+      },
+    ],
+    "sourceLeaves": [
+      {
+        "columnName": "paid_at",
+        "expressionSql": undefined,
+        "id": "step:table_payments:paid_at",
+        "nodeId": "table_payments",
+        "nodeLabel": "payments",
+        "nodeType": "table",
+        "outputIndex": undefined,
+        "scopeId": "scope_table_payments_source_leaf",
+        "selectItemId": undefined,
+      },
+    ],
+    "summary": "1 source leaf column(s), 1 intermediate reference(s), 2 expression step(s), 3 CASE rule(s)",
+    "tree": [
+      {
+        "children": [
+          {
+            "caseLabel": undefined,
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [],
+                    "column": {
+                      "columnName": "paid_at",
+                      "expressionSql": undefined,
+                      "id": "step:table_payments:paid_at",
+                      "nodeId": "table_payments",
+                      "nodeLabel": "payments",
+                      "nodeType": "table",
+                      "outputIndex": undefined,
+                      "scopeId": "scope_table_payments_source_leaf",
+                      "selectItemId": undefined,
+                    },
+                    "kind": "column",
+                    "leaf": true,
+                  },
+                ],
+                "column": {
+                  "columnName": "last_paid_at",
+                  "expressionSql": "max(p.paid_at)",
+                  "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
+                  "nodeId": "cte_payment_summary",
+                  "nodeLabel": "payment_summary",
+                  "nodeType": "cte",
+                  "outputIndex": 2,
+                  "scopeId": "scope_cte_payment_summary",
+                  "selectItemId": "scope_cte_payment_summary_output_3",
+                },
+                "kind": "column",
+                "leaf": false,
+              },
+            ],
+            "column": {
+              "columnName": "payment_status",
+              "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
+              "nodeId": "main_output",
+              "nodeLabel": "Final Result",
+              "nodeType": "output",
+              "outputIndex": 6,
+              "scopeId": "scope_main_output",
+              "selectItemId": "scope_main_output_output_7",
+            },
+            "conditionReferences": [
+              {
+                "columnName": "last_paid_at",
+                "definedInScopeId": "scope_cte_payment_summary",
+                "id": "ref:cte_payment_summary:last_paid_at",
+                "nodeId": "cte_payment_summary",
+                "nodeLabel": "payment_summary",
+                "roles": [
+                  "column_lineage",
+                ],
+                "scopeId": "scope_main_output",
+                "usages": [
+                  {
+                    "role": "column_lineage",
+                    "scopeId": "scope_main_output",
+                    "usageKind": "case_when_condition",
+                  },
+                ],
+                "usedInScopeIds": [
+                  "scope_main_output",
+                ],
+              },
+            ],
+            "conditionSql": "ps.last_paid_at is null",
+            "expressionSql": "ps.last_paid_at is null then 'unknown'",
+            "id": "case_1_when_1",
+            "kind": "case_rule",
+            "label": "when ps.last_paid_at is null",
+            "resultReferences": [],
+            "resultSql": "'unknown'",
+            "scopeId": "scope_main_output",
+          },
+          {
+            "caseLabel": undefined,
+            "children": [
+              {
+                "children": [
+                  {
+                    "children": [],
+                    "column": {
+                      "columnName": "paid_at",
+                      "expressionSql": undefined,
+                      "id": "step:table_payments:paid_at",
+                      "nodeId": "table_payments",
+                      "nodeLabel": "payments",
+                      "nodeType": "table",
+                      "outputIndex": undefined,
+                      "scopeId": "scope_table_payments_source_leaf",
+                      "selectItemId": undefined,
+                    },
+                    "kind": "column",
+                    "leaf": true,
+                  },
+                ],
+                "column": {
+                  "columnName": "last_paid_at",
+                  "expressionSql": "max(p.paid_at)",
+                  "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
+                  "nodeId": "cte_payment_summary",
+                  "nodeLabel": "payment_summary",
+                  "nodeType": "cte",
+                  "outputIndex": 2,
+                  "scopeId": "scope_cte_payment_summary",
+                  "selectItemId": "scope_cte_payment_summary_output_3",
+                },
+                "kind": "column",
+                "leaf": false,
+              },
+            ],
+            "column": {
+              "columnName": "payment_status",
+              "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
+              "nodeId": "main_output",
+              "nodeLabel": "Final Result",
+              "nodeType": "output",
+              "outputIndex": 6,
+              "scopeId": "scope_main_output",
+              "selectItemId": "scope_main_output_output_7",
+            },
+            "conditionReferences": [
+              {
+                "columnName": "last_paid_at",
+                "definedInScopeId": "scope_cte_payment_summary",
+                "id": "ref:cte_payment_summary:last_paid_at",
+                "nodeId": "cte_payment_summary",
+                "nodeLabel": "payment_summary",
+                "roles": [
+                  "column_lineage",
+                ],
+                "scopeId": "scope_main_output",
+                "usages": [
+                  {
+                    "role": "column_lineage",
+                    "scopeId": "scope_main_output",
+                    "usageKind": "case_when_condition",
+                  },
+                ],
+                "usedInScopeIds": [
+                  "scope_main_output",
+                ],
+              },
+            ],
+            "conditionSql": "ps.last_paid_at < current_date - INTERVAL '30 days'",
+            "expressionSql": "ps.last_paid_at < current_date - INTERVAL '30 days' then 'needs_followup'",
+            "id": "case_1_when_2",
+            "kind": "case_rule",
+            "label": "when ps.last_paid_at < current_date - INTERVAL '30 days'",
+            "resultReferences": [],
+            "resultSql": "'needs_followup'",
+            "scopeId": "scope_main_output",
+          },
+          {
+            "caseLabel": undefined,
+            "children": [],
+            "column": {
+              "columnName": "payment_status",
+              "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
+              "nodeId": "main_output",
+              "nodeLabel": "Final Result",
+              "nodeType": "output",
+              "outputIndex": 6,
+              "scopeId": "scope_main_output",
+              "selectItemId": "scope_main_output_output_7",
+            },
+            "conditionReferences": [],
+            "conditionSql": undefined,
+            "expressionSql": "else 'active'",
+            "id": "case_1_else",
+            "kind": "case_rule",
+            "label": "else",
+            "resultReferences": [],
+            "resultSql": "'active'",
+            "scopeId": "scope_main_output",
+          },
+        ],
+        "column": {
+          "columnName": "payment_status",
+          "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+          "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "outputIndex": 6,
+          "scopeId": "scope_main_output",
+          "selectItemId": "scope_main_output_output_7",
+        },
+        "kind": "column",
+        "leaf": false,
+      },
+    ],
+  },
   "json": "{
   "candidateConcerns": [
     {
@@ -480,11 +837,11 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
   "kind": "column-diagnostic-packet",
   "omittedContext": {
     "message": "Unrelated nodes and expressions were omitted.",
-    "omittedColumnCount": 19,
+    "omittedColumnCount": 16,
     "omittedInfluenceCount": 5,
     "omittedNodeCount": 4
   },
-  "populationOrigin": {
+  "rowLineage": {
     "influences": [
       {
         "effects": [
@@ -501,12 +858,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_payments",
             "nodeLabel": "payments",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_cte_payment_summary",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_cte_payment_summary",
                 "usageKind": "where"
               }
@@ -536,12 +893,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_payments",
             "nodeLabel": "payments",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_cte_payment_summary",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_cte_payment_summary",
                 "usageKind": "group_by"
               }
@@ -571,12 +928,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customers",
             "nodeLabel": "customers",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "where"
               }
@@ -591,12 +948,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customer_favorites",
             "nodeLabel": "customer_favorites",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "where"
               }
@@ -611,12 +968,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customer_favorites",
             "nodeLabel": "customer_favorites",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "where"
               }
@@ -647,12 +1004,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "main_output",
             "nodeLabel": "Final Result",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "order_by"
               }
@@ -697,12 +1054,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "cte_payment_summary",
             "nodeLabel": "payment_summary",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "join_on"
               }
@@ -717,12 +1074,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customers",
             "nodeLabel": "customers",
             "roles": [
-              "population_origin"
+              "row_lineage"
             ],
             "scopeId": "scope_main_output",
             "usages": [
               {
-                "role": "population_origin",
+                "role": "row_lineage",
                 "scopeId": "scope_main_output",
                 "usageKind": "join_on"
               }
@@ -822,7 +1179,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
         ]
       }
     ],
-    "summary": "6 population-origin influence(s) were found on the value-origin route."
+    "summary": "6 row lineage influence(s) were found on the column lineage route."
   },
   "target": {
     "columnName": "payment_status",
@@ -834,7 +1191,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     "selectItemId": "scope_main_output_output_7",
     "scopeId": "scope_main_output"
   },
-  "valueOrigin": {
+  "columnLineage": {
     "caseRules": [
       {
         "columnName": "payment_status",
@@ -996,17 +1353,17 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
         "nodeId": "cte_payment_summary",
         "nodeLabel": "payment_summary",
         "roles": [
-          "value_origin"
+          "column_lineage"
         ],
         "scopeId": "scope_main_output",
         "usages": [
           {
-            "role": "value_origin",
+            "role": "column_lineage",
             "scopeId": "scope_main_output",
             "usageKind": "case_when_condition"
           },
           {
-            "role": "value_origin",
+            "role": "column_lineage",
             "scopeId": "scope_cte_payment_summary",
             "usageKind": "column_value"
           }
@@ -1022,12 +1379,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
         "nodeId": "table_payments",
         "nodeLabel": "payments",
         "roles": [
-          "value_origin"
+          "column_lineage"
         ],
         "scopeId": "scope_cte_payment_summary",
         "usages": [
           {
-            "role": "value_origin",
+            "role": "column_lineage",
             "scopeId": "scope_cte_payment_summary",
             "usageKind": "column_value"
           }
@@ -1069,8 +1426,8 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
   },
   "version": 1,
   "views": {
-    "valueOriginTree": {
-      "derivedFrom": "valueOrigin",
+    "columnLineageTree": {
+      "derivedFrom": "columnLineage",
       "tree": [
         {
           "children": [
@@ -1126,12 +1483,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
                   "nodeId": "cte_payment_summary",
                   "nodeLabel": "payment_summary",
                   "roles": [
-                    "value_origin"
+                    "column_lineage"
                   ],
                   "scopeId": "scope_main_output",
                   "usages": [
                     {
-                      "role": "value_origin",
+                      "role": "column_lineage",
                       "scopeId": "scope_main_output",
                       "usageKind": "case_when_condition"
                     }
@@ -1202,12 +1559,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
                   "nodeId": "cte_payment_summary",
                   "nodeLabel": "payment_summary",
                   "roles": [
-                    "value_origin"
+                    "column_lineage"
                   ],
                   "scopeId": "scope_main_output",
                   "usages": [
                     {
-                      "role": "value_origin",
+                      "role": "column_lineage",
                       "scopeId": "scope_main_output",
                       "usageKind": "case_when_condition"
                     }
@@ -1267,7 +1624,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     }
   }
 }",
-  "populationOrigin": {
+  "rowLineage": {
     "influences": [
       {
         "effects": [
@@ -1283,10 +1640,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_payments",
             "nodeLabel": "payments",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:where:scope_cte_payment_summary",
+              "row_lineage:where:scope_cte_payment_summary",
             ],
           },
         ],
@@ -1309,10 +1666,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_payments",
             "nodeLabel": "payments",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:group_by:scope_cte_payment_summary",
+              "row_lineage:group_by:scope_cte_payment_summary",
             ],
           },
         ],
@@ -1343,10 +1700,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customers",
             "nodeLabel": "customers",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:where:scope_main_output",
+              "row_lineage:where:scope_main_output",
             ],
           },
           {
@@ -1354,10 +1711,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customer_favorites",
             "nodeLabel": "customer_favorites",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:where:scope_main_output",
+              "row_lineage:where:scope_main_output",
             ],
           },
           {
@@ -1365,10 +1722,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customer_favorites",
             "nodeLabel": "customer_favorites",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:where:scope_main_output",
+              "row_lineage:where:scope_main_output",
             ],
           },
         ],
@@ -1391,10 +1748,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "main_output",
             "nodeLabel": "Final Result",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:order_by:scope_main_output",
+              "row_lineage:order_by:scope_main_output",
             ],
           },
         ],
@@ -1432,10 +1789,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "cte_payment_summary",
             "nodeLabel": "payment_summary",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:join_on:scope_main_output",
+              "row_lineage:join_on:scope_main_output",
             ],
           },
           {
@@ -1443,10 +1800,10 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
             "nodeId": "table_customers",
             "nodeLabel": "customers",
             "roles": [
-              "population_origin",
+              "row_lineage",
             ],
             "usages": [
-              "population_origin:join_on:scope_main_output",
+              "row_lineage:join_on:scope_main_output",
             ],
           },
         ],
@@ -1539,369 +1896,12 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
         ],
       },
     ],
-    "summary": "6 population-origin influence(s) were found on the value-origin route.",
+    "summary": "6 row lineage influence(s) were found on the column lineage route.",
   },
   "target": {
     "columnName": "payment_status",
     "nodeLabel": "Final Result",
     "nodeType": "output",
-  },
-  "valueOrigin": {
-    "caseRules": [
-      {
-        "conditionReferences": [
-          {
-            "columnName": "last_paid_at",
-            "nodeId": "cte_payment_summary",
-            "nodeLabel": "payment_summary",
-            "roles": [
-              "value_origin",
-            ],
-            "usages": [
-              "value_origin:case_when_condition:scope_main_output",
-              "value_origin:column_value:scope_cte_payment_summary",
-            ],
-          },
-        ],
-        "conditionSql": "ps.last_paid_at is null",
-        "id": "case_1_when_1",
-        "label": "when ps.last_paid_at is null",
-        "resultReferences": [],
-        "resultSql": "'unknown'",
-      },
-      {
-        "conditionReferences": [
-          {
-            "columnName": "last_paid_at",
-            "nodeId": "cte_payment_summary",
-            "nodeLabel": "payment_summary",
-            "roles": [
-              "value_origin",
-            ],
-            "usages": [
-              "value_origin:case_when_condition:scope_main_output",
-              "value_origin:column_value:scope_cte_payment_summary",
-            ],
-          },
-        ],
-        "conditionSql": "ps.last_paid_at < current_date - INTERVAL '30 days'",
-        "id": "case_1_when_2",
-        "label": "when ps.last_paid_at < current_date - INTERVAL '30 days'",
-        "resultReferences": [],
-        "resultSql": "'needs_followup'",
-      },
-      {
-        "conditionReferences": [],
-        "conditionSql": undefined,
-        "id": "case_1_else",
-        "label": "else",
-        "resultReferences": [],
-        "resultSql": "'active'",
-      },
-    ],
-    "expressions": [
-      {
-        "columnName": "payment_status",
-        "expressionId": "expr:step:main_output:payment_status:scope_main_output_output_7:out6",
-        "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-        "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
-        "nodeId": "main_output",
-        "nodeLabel": "Final Result",
-        "nodeType": "output",
-        "outputIndex": 6,
-        "scopeId": "scope_main_output",
-        "selectItemId": "scope_main_output_output_7",
-      },
-      {
-        "columnName": "last_paid_at",
-        "expressionId": "expr:step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
-        "expressionSql": "max(p.paid_at)",
-        "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
-        "nodeId": "cte_payment_summary",
-        "nodeLabel": "payment_summary",
-        "nodeType": "cte",
-        "outputIndex": 2,
-        "scopeId": "scope_cte_payment_summary",
-        "selectItemId": "scope_cte_payment_summary_output_3",
-      },
-    ],
-    "sourceColumns": [
-      {
-        "columnName": "last_paid_at",
-        "nodeId": "cte_payment_summary",
-        "nodeLabel": "payment_summary",
-        "roles": [
-          "value_origin",
-        ],
-        "usages": [
-          "value_origin:case_when_condition:scope_main_output",
-          "value_origin:column_value:scope_cte_payment_summary",
-        ],
-      },
-      {
-        "columnName": "paid_at",
-        "nodeId": "table_payments",
-        "nodeLabel": "payments",
-        "roles": [
-          "value_origin",
-        ],
-        "usages": [
-          "value_origin:column_value:scope_cte_payment_summary",
-        ],
-      },
-    ],
-    "sourceLeaves": [
-      {
-        "columnName": "paid_at",
-        "expressionSql": undefined,
-        "id": "step:table_payments:paid_at",
-        "nodeId": "table_payments",
-        "nodeLabel": "payments",
-        "nodeType": "table",
-        "outputIndex": undefined,
-        "scopeId": "scope_table_payments_source_leaf",
-        "selectItemId": undefined,
-      },
-    ],
-    "summary": "1 source leaf column(s), 1 intermediate reference(s), 2 expression step(s), 3 CASE rule(s)",
-    "tree": [
-      {
-        "children": [
-          {
-            "caseLabel": undefined,
-            "children": [
-              {
-                "children": [
-                  {
-                    "children": [],
-                    "column": {
-                      "columnName": "paid_at",
-                      "expressionSql": undefined,
-                      "id": "step:table_payments:paid_at",
-                      "nodeId": "table_payments",
-                      "nodeLabel": "payments",
-                      "nodeType": "table",
-                      "outputIndex": undefined,
-                      "scopeId": "scope_table_payments_source_leaf",
-                      "selectItemId": undefined,
-                    },
-                    "kind": "column",
-                    "leaf": true,
-                  },
-                ],
-                "column": {
-                  "columnName": "last_paid_at",
-                  "expressionSql": "max(p.paid_at)",
-                  "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
-                  "nodeId": "cte_payment_summary",
-                  "nodeLabel": "payment_summary",
-                  "nodeType": "cte",
-                  "outputIndex": 2,
-                  "scopeId": "scope_cte_payment_summary",
-                  "selectItemId": "scope_cte_payment_summary_output_3",
-                },
-                "kind": "column",
-                "leaf": false,
-              },
-            ],
-            "column": {
-              "columnName": "payment_status",
-              "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
-              "nodeId": "main_output",
-              "nodeLabel": "Final Result",
-              "nodeType": "output",
-              "outputIndex": 6,
-              "scopeId": "scope_main_output",
-              "selectItemId": "scope_main_output_output_7",
-            },
-            "conditionReferences": [
-              {
-                "columnName": "last_paid_at",
-                "definedInScopeId": "scope_cte_payment_summary",
-                "id": "ref:cte_payment_summary:last_paid_at",
-                "nodeId": "cte_payment_summary",
-                "nodeLabel": "payment_summary",
-                "roles": [
-                  "value_origin",
-                ],
-                "scopeId": "scope_main_output",
-                "usages": [
-                  {
-                    "role": "value_origin",
-                    "scopeId": "scope_main_output",
-                    "usageKind": "case_when_condition",
-                  },
-                ],
-                "usedInScopeIds": [
-                  "scope_main_output",
-                ],
-              },
-            ],
-            "conditionSql": "ps.last_paid_at is null",
-            "expressionSql": "ps.last_paid_at is null then 'unknown'",
-            "id": "case_1_when_1",
-            "kind": "case_rule",
-            "label": "when ps.last_paid_at is null",
-            "resultReferences": [],
-            "resultSql": "'unknown'",
-            "scopeId": "scope_main_output",
-          },
-          {
-            "caseLabel": undefined,
-            "children": [
-              {
-                "children": [
-                  {
-                    "children": [],
-                    "column": {
-                      "columnName": "paid_at",
-                      "expressionSql": undefined,
-                      "id": "step:table_payments:paid_at",
-                      "nodeId": "table_payments",
-                      "nodeLabel": "payments",
-                      "nodeType": "table",
-                      "outputIndex": undefined,
-                      "scopeId": "scope_table_payments_source_leaf",
-                      "selectItemId": undefined,
-                    },
-                    "kind": "column",
-                    "leaf": true,
-                  },
-                ],
-                "column": {
-                  "columnName": "last_paid_at",
-                  "expressionSql": "max(p.paid_at)",
-                  "id": "step:cte_payment_summary:last_paid_at:scope_cte_payment_summary_output_3:out2",
-                  "nodeId": "cte_payment_summary",
-                  "nodeLabel": "payment_summary",
-                  "nodeType": "cte",
-                  "outputIndex": 2,
-                  "scopeId": "scope_cte_payment_summary",
-                  "selectItemId": "scope_cte_payment_summary_output_3",
-                },
-                "kind": "column",
-                "leaf": false,
-              },
-            ],
-            "column": {
-              "columnName": "payment_status",
-              "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
-              "nodeId": "main_output",
-              "nodeLabel": "Final Result",
-              "nodeType": "output",
-              "outputIndex": 6,
-              "scopeId": "scope_main_output",
-              "selectItemId": "scope_main_output_output_7",
-            },
-            "conditionReferences": [
-              {
-                "columnName": "last_paid_at",
-                "definedInScopeId": "scope_cte_payment_summary",
-                "id": "ref:cte_payment_summary:last_paid_at",
-                "nodeId": "cte_payment_summary",
-                "nodeLabel": "payment_summary",
-                "roles": [
-                  "value_origin",
-                ],
-                "scopeId": "scope_main_output",
-                "usages": [
-                  {
-                    "role": "value_origin",
-                    "scopeId": "scope_main_output",
-                    "usageKind": "case_when_condition",
-                  },
-                ],
-                "usedInScopeIds": [
-                  "scope_main_output",
-                ],
-              },
-            ],
-            "conditionSql": "ps.last_paid_at < current_date - INTERVAL '30 days'",
-            "expressionSql": "ps.last_paid_at < current_date - INTERVAL '30 days' then 'needs_followup'",
-            "id": "case_1_when_2",
-            "kind": "case_rule",
-            "label": "when ps.last_paid_at < current_date - INTERVAL '30 days'",
-            "resultReferences": [],
-            "resultSql": "'needs_followup'",
-            "scopeId": "scope_main_output",
-          },
-          {
-            "caseLabel": undefined,
-            "children": [],
-            "column": {
-              "columnName": "payment_status",
-              "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-              "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
-              "nodeId": "main_output",
-              "nodeLabel": "Final Result",
-              "nodeType": "output",
-              "outputIndex": 6,
-              "scopeId": "scope_main_output",
-              "selectItemId": "scope_main_output_output_7",
-            },
-            "conditionReferences": [],
-            "conditionSql": undefined,
-            "expressionSql": "else 'active'",
-            "id": "case_1_else",
-            "kind": "case_rule",
-            "label": "else",
-            "resultReferences": [],
-            "resultSql": "'active'",
-            "scopeId": "scope_main_output",
-          },
-        ],
-        "column": {
-          "columnName": "payment_status",
-          "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-          "id": "step:main_output:payment_status:scope_main_output_output_7:out6",
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "outputIndex": 6,
-          "scopeId": "scope_main_output",
-          "selectItemId": "scope_main_output_output_7",
-        },
-        "kind": "column",
-        "leaf": false,
-      },
-    ],
   },
 }
 `;
@@ -1911,7 +1911,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
   "edges": [
     {
       "effects": [],
-      "kind": "value_origin",
+      "kind": "column_lineage",
       "sourceIds": [
         "source:cte_payment_summary.last_paid_at",
       ],
@@ -1919,7 +1919,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     },
     {
       "effects": [],
-      "kind": "value_origin",
+      "kind": "column_lineage",
       "sourceIds": [
         "source:table_payments.paid_at",
       ],
@@ -1939,7 +1939,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "row_filter",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_cte_payment_summary_where_1",
       ],
@@ -1959,7 +1959,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "grain_change",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_cte_payment_summary_group_by_1",
       ],
@@ -1981,7 +1981,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "row_filter",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_main_output_where_1",
       ],
@@ -2001,7 +2001,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "output_selection",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_main_output_order_by_1",
       ],
@@ -2019,7 +2019,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "output_cap",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_main_output_limit_1",
       ],
@@ -2040,7 +2040,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "effects": [
         "null_extension",
       ],
-      "kind": "population_origin",
+      "kind": "row_lineage",
       "sourceIds": [
         "influence:scope_main_output_join_2",
       ],
@@ -2230,6 +2230,95 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         ],
       },
     ],
+    "columnLineage": {
+      "caseRules": [],
+      "expressionChain": [
+        {
+          "columnName": "customer_id",
+          "expressionId": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
+          "expressionSql": "c.id",
+          "id": "step:main_output:customer_id:scope_main_output_output_1:out0",
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "outputIndex": 0,
+          "scopeId": "scope_main_output",
+          "selectItemId": "scope_main_output_output_1",
+        },
+      ],
+      "expressions": [
+        {
+          "id": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:table_customers:id",
+            },
+          ],
+          "kind": "column_ref",
+          "operator": undefined,
+          "ownerStepId": "step:main_output:customer_id:scope_main_output_output_1:out0",
+          "semanticKind": "column_passthrough",
+          "sql": "c.id",
+        },
+      ],
+      "references": [
+        {
+          "columnName": "id",
+          "definedInScopeId": undefined,
+          "id": "ref:table_customers:id",
+          "nodeId": "table_customers",
+          "nodeLabel": "customers",
+          "roles": [
+            "column_lineage",
+            "row_lineage",
+          ],
+          "scopeId": "scope_main_output",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_main_output",
+              "usageKind": "column_value",
+            },
+            {
+              "role": "row_lineage",
+              "scopeId": "scope_main_output",
+              "usageKind": "where",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_main_output",
+          ],
+        },
+      ],
+      "root": "step:main_output:customer_id:scope_main_output_output_1:out0",
+      "scopeChain": [
+        {
+          "label": "select:Final Result",
+          "nodeId": "main_output",
+          "scopeId": "scope_main_output",
+        },
+      ],
+      "sourceLeaves": [
+        {
+          "columnName": "id",
+          "expressionSql": undefined,
+          "id": "step:table_customers:id",
+          "nodeId": "table_customers",
+          "nodeLabel": "customers",
+          "nodeType": "table",
+          "outputIndex": undefined,
+          "scopeId": "scope_table_customers_source_leaf",
+          "selectItemId": undefined,
+        },
+      ],
+      "summary": {
+        "caseRuleCount": 0,
+        "expressionStepCount": 1,
+        "intermediateReferenceCount": 0,
+        "sourceLeafCount": 1,
+      },
+    },
     "diagnostics": [
       {
         "code": "lineage_metadata_added",
@@ -2241,11 +2330,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 27,
+      "omittedColumnCount": 22,
       "omittedInfluenceCount": 8,
       "omittedNodeCount": 6,
     },
-    "populationOrigin": {
+    "rowLineage": {
       "influences": [
         {
           "effects": [
@@ -2271,12 +2360,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2292,12 +2381,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2313,12 +2402,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2349,12 +2438,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "main_output",
               "nodeLabel": "Final Result",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "order_by",
                 },
@@ -2435,7 +2524,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           ],
         },
       ],
-      "summary": "3 population-origin influence(s) were found on the value-origin route.",
+      "summary": "3 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "customer_id",
@@ -2447,99 +2536,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       "scopeId": "scope_main_output",
       "selectItemId": "scope_main_output_output_1",
     },
-    "valueOrigin": {
-      "caseRules": [],
-      "expressionChain": [
-        {
-          "columnName": "customer_id",
-          "expressionId": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
-          "expressionSql": "c.id",
-          "id": "step:main_output:customer_id:scope_main_output_output_1:out0",
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "outputIndex": 0,
-          "scopeId": "scope_main_output",
-          "selectItemId": "scope_main_output_output_1",
-        },
-      ],
-      "expressions": [
-        {
-          "id": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:table_customers:id",
-            },
-          ],
-          "kind": "column_ref",
-          "operator": undefined,
-          "ownerStepId": "step:main_output:customer_id:scope_main_output_output_1:out0",
-          "semanticKind": "column_passthrough",
-          "sql": "c.id",
-        },
-      ],
-      "references": [
-        {
-          "columnName": "id",
-          "definedInScopeId": undefined,
-          "id": "ref:table_customers:id",
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "roles": [
-            "value_origin",
-            "population_origin",
-          ],
-          "scopeId": "scope_main_output",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_main_output",
-              "usageKind": "column_value",
-            },
-            {
-              "role": "population_origin",
-              "scopeId": "scope_main_output",
-              "usageKind": "where",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_main_output",
-          ],
-        },
-      ],
-      "root": "step:main_output:customer_id:scope_main_output_output_1:out0",
-      "scopeChain": [
-        {
-          "label": "select:Final Result",
-          "nodeId": "main_output",
-          "scopeId": "scope_main_output",
-        },
-      ],
-      "sourceLeaves": [
-        {
-          "columnName": "id",
-          "expressionSql": undefined,
-          "id": "step:table_customers:id",
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "outputIndex": undefined,
-          "scopeId": "scope_table_customers_source_leaf",
-          "selectItemId": undefined,
-        },
-      ],
-      "summary": {
-        "caseRuleCount": 0,
-        "expressionStepCount": 1,
-        "intermediateReferenceCount": 0,
-        "sourceLeafCount": 1,
-      },
-    },
     "version": 1,
     "views": {
-      "valueOriginTree": {
-        "derivedFrom": "valueOrigin",
+      "columnLineageTree": {
+        "derivedFrom": "columnLineage",
         "tree": [
           {
             "children": [
@@ -2757,7 +2757,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "coalesce",
           "function_call",
         ],
-        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the value-origin route.",
+        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the column lineage route.",
         "scopeId": "scope_main_output",
         "signals": [],
       },
@@ -2787,6 +2787,107 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         "signals": [],
       },
     ],
+    "columnLineage": {
+      "caseRules": [],
+      "expressionChain": [
+        {
+          "columnName": "order_count",
+          "expressionId": "expr:step:main_output:order_count:scope_main_output_output_4:out3",
+          "expressionSql": "coalesce(ot.order_count, 0)",
+          "id": "step:main_output:order_count:scope_main_output_output_4:out3",
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "outputIndex": 3,
+          "scopeId": "scope_main_output",
+          "selectItemId": "scope_main_output_output_4",
+        },
+        {
+          "columnName": "order_count",
+          "expressionId": "expr:step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
+          "expressionSql": "count(*)",
+          "id": "step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
+          "nodeType": "cte",
+          "outputIndex": 1,
+          "scopeId": "scope_cte_order_totals",
+          "selectItemId": "scope_cte_order_totals_output_2",
+        },
+      ],
+      "expressions": [
+        {
+          "id": "expr:step:main_output:order_count:scope_main_output_output_4:out3",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:cte_order_totals:order_count",
+            },
+            {
+              "kind": "literal",
+              "sql": "0",
+            },
+          ],
+          "kind": "function_call",
+          "operator": "coalesce",
+          "ownerStepId": "step:main_output:order_count:scope_main_output_output_4:out3",
+          "semanticKind": "null_replacement",
+          "sql": "coalesce(ot.order_count, 0)",
+        },
+        {
+          "id": "expr:step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
+          "inputs": [],
+          "kind": "aggregate",
+          "operator": "count",
+          "ownerStepId": "step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
+          "semanticKind": "aggregation",
+          "sql": "count(*)",
+        },
+      ],
+      "references": [
+        {
+          "columnName": "order_count",
+          "definedInScopeId": "scope_cte_order_totals",
+          "id": "ref:cte_order_totals:order_count",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_order_totals",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_order_totals",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_order_totals",
+          ],
+        },
+      ],
+      "root": "step:main_output:order_count:scope_main_output_output_4:out3",
+      "scopeChain": [
+        {
+          "label": "select:Final Result",
+          "nodeId": "main_output",
+          "scopeId": "scope_main_output",
+        },
+        {
+          "label": "cte:order_totals",
+          "nodeId": "cte_order_totals",
+          "scopeId": "scope_cte_order_totals",
+        },
+      ],
+      "sourceLeaves": [],
+      "summary": {
+        "caseRuleCount": 0,
+        "expressionStepCount": 2,
+        "intermediateReferenceCount": 1,
+        "sourceLeafCount": 0,
+      },
+    },
     "diagnostics": [
       {
         "code": "lineage_metadata_added",
@@ -2798,11 +2899,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 15,
+      "omittedColumnCount": 12,
       "omittedInfluenceCount": 6,
       "omittedNodeCount": 4,
     },
-    "populationOrigin": {
+    "rowLineage": {
       "influences": [
         {
           "effects": [
@@ -2820,12 +2921,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "cte_recent_orders",
               "nodeLabel": "recent_orders",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_order_totals",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_order_totals",
                   "usageKind": "group_by",
                 },
@@ -2864,12 +2965,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2885,12 +2986,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2906,12 +3007,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -2942,12 +3043,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "main_output",
               "nodeLabel": "Final Result",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "order_by",
                 },
@@ -2993,12 +3094,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "cte_order_totals",
               "nodeLabel": "order_totals",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -3014,12 +3115,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -3116,7 +3217,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           ],
         },
       ],
-      "summary": "5 population-origin influence(s) were found on the value-origin route.",
+      "summary": "5 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "order_count",
@@ -3128,111 +3229,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       "scopeId": "scope_main_output",
       "selectItemId": "scope_main_output_output_4",
     },
-    "valueOrigin": {
-      "caseRules": [],
-      "expressionChain": [
-        {
-          "columnName": "order_count",
-          "expressionId": "expr:step:main_output:order_count:scope_main_output_output_4:out3",
-          "expressionSql": "coalesce(ot.order_count, 0)",
-          "id": "step:main_output:order_count:scope_main_output_output_4:out3",
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "outputIndex": 3,
-          "scopeId": "scope_main_output",
-          "selectItemId": "scope_main_output_output_4",
-        },
-        {
-          "columnName": "order_count",
-          "expressionId": "expr:step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
-          "expressionSql": "count(*)",
-          "id": "step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "nodeType": "cte",
-          "outputIndex": 1,
-          "scopeId": "scope_cte_order_totals",
-          "selectItemId": "scope_cte_order_totals_output_2",
-        },
-      ],
-      "expressions": [
-        {
-          "id": "expr:step:main_output:order_count:scope_main_output_output_4:out3",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:cte_order_totals:order_count",
-            },
-            {
-              "kind": "literal",
-              "sql": "0",
-            },
-          ],
-          "kind": "function_call",
-          "operator": "coalesce",
-          "ownerStepId": "step:main_output:order_count:scope_main_output_output_4:out3",
-          "semanticKind": "null_replacement",
-          "sql": "coalesce(ot.order_count, 0)",
-        },
-        {
-          "id": "expr:step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
-          "inputs": [],
-          "kind": "aggregate",
-          "operator": "count",
-          "ownerStepId": "step:cte_order_totals:order_count:scope_cte_order_totals_output_2:out1",
-          "semanticKind": "aggregation",
-          "sql": "count(*)",
-        },
-      ],
-      "references": [
-        {
-          "columnName": "order_count",
-          "definedInScopeId": "scope_cte_order_totals",
-          "id": "ref:cte_order_totals:order_count",
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_order_totals",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_order_totals",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_order_totals",
-          ],
-        },
-      ],
-      "root": "step:main_output:order_count:scope_main_output_output_4:out3",
-      "scopeChain": [
-        {
-          "label": "select:Final Result",
-          "nodeId": "main_output",
-          "scopeId": "scope_main_output",
-        },
-        {
-          "label": "cte:order_totals",
-          "nodeId": "cte_order_totals",
-          "scopeId": "scope_cte_order_totals",
-        },
-      ],
-      "sourceLeaves": [],
-      "summary": {
-        "caseRuleCount": 0,
-        "expressionStepCount": 2,
-        "intermediateReferenceCount": 1,
-        "sourceLeafCount": 0,
-      },
-    },
     "version": 1,
     "views": {
-      "valueOriginTree": {
-        "derivedFrom": "valueOrigin",
+      "columnLineageTree": {
+        "derivedFrom": "columnLineage",
         "tree": [
           {
             "children": [
@@ -3499,7 +3499,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "coalesce",
           "function_call",
         ],
-        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the value-origin route.",
+        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the column lineage route.",
         "scopeId": "scope_main_output",
         "signals": [],
       },
@@ -3529,6 +3529,145 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         "signals": [],
       },
     ],
+    "columnLineage": {
+      "caseRules": [],
+      "expressionChain": [
+        {
+          "columnName": "paid_amount",
+          "expressionId": "expr:step:main_output:paid_amount:scope_main_output_output_6:out5",
+          "expressionSql": "coalesce(ps.paid_amount, 0)",
+          "id": "step:main_output:paid_amount:scope_main_output_output_6:out5",
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "outputIndex": 5,
+          "scopeId": "scope_main_output",
+          "selectItemId": "scope_main_output_output_6",
+        },
+        {
+          "columnName": "paid_amount",
+          "expressionId": "expr:step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
+          "expressionSql": "sum(p.amount)",
+          "id": "step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
+          "nodeId": "cte_payment_summary",
+          "nodeLabel": "payment_summary",
+          "nodeType": "cte",
+          "outputIndex": 1,
+          "scopeId": "scope_cte_payment_summary",
+          "selectItemId": "scope_cte_payment_summary_output_2",
+        },
+      ],
+      "expressions": [
+        {
+          "id": "expr:step:main_output:paid_amount:scope_main_output_output_6:out5",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:cte_payment_summary:paid_amount",
+            },
+            {
+              "kind": "literal",
+              "sql": "0",
+            },
+          ],
+          "kind": "function_call",
+          "operator": "coalesce",
+          "ownerStepId": "step:main_output:paid_amount:scope_main_output_output_6:out5",
+          "semanticKind": "null_replacement",
+          "sql": "coalesce(ps.paid_amount, 0)",
+        },
+        {
+          "id": "expr:step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:table_payments:amount",
+            },
+          ],
+          "kind": "aggregate",
+          "operator": "sum",
+          "ownerStepId": "step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
+          "semanticKind": "aggregation",
+          "sql": "sum(p.amount)",
+        },
+      ],
+      "references": [
+        {
+          "columnName": "paid_amount",
+          "definedInScopeId": "scope_cte_payment_summary",
+          "id": "ref:cte_payment_summary:paid_amount",
+          "nodeId": "cte_payment_summary",
+          "nodeLabel": "payment_summary",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_payment_summary",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_payment_summary",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_payment_summary",
+          ],
+        },
+        {
+          "columnName": "amount",
+          "definedInScopeId": undefined,
+          "id": "ref:table_payments:amount",
+          "nodeId": "table_payments",
+          "nodeLabel": "payments",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_payment_summary",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_payment_summary",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_payment_summary",
+          ],
+        },
+      ],
+      "root": "step:main_output:paid_amount:scope_main_output_output_6:out5",
+      "scopeChain": [
+        {
+          "label": "select:Final Result",
+          "nodeId": "main_output",
+          "scopeId": "scope_main_output",
+        },
+        {
+          "label": "cte:payment_summary",
+          "nodeId": "cte_payment_summary",
+          "scopeId": "scope_cte_payment_summary",
+        },
+      ],
+      "sourceLeaves": [
+        {
+          "columnName": "amount",
+          "expressionSql": undefined,
+          "id": "step:table_payments:amount",
+          "nodeId": "table_payments",
+          "nodeLabel": "payments",
+          "nodeType": "table",
+          "outputIndex": undefined,
+          "scopeId": "scope_table_payments_source_leaf",
+          "selectItemId": undefined,
+        },
+      ],
+      "summary": {
+        "caseRuleCount": 0,
+        "expressionStepCount": 2,
+        "intermediateReferenceCount": 1,
+        "sourceLeafCount": 1,
+      },
+    },
     "diagnostics": [
       {
         "code": "lineage_metadata_added",
@@ -3540,11 +3679,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 19,
+      "omittedColumnCount": 16,
       "omittedInfluenceCount": 5,
       "omittedNodeCount": 4,
     },
-    "populationOrigin": {
+    "rowLineage": {
       "influences": [
         {
           "effects": [
@@ -3562,12 +3701,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_payments",
               "nodeLabel": "payments",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_payment_summary",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_payment_summary",
                   "usageKind": "where",
                 },
@@ -3598,12 +3737,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_payments",
               "nodeLabel": "payments",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_payment_summary",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_payment_summary",
                   "usageKind": "group_by",
                 },
@@ -3642,12 +3781,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -3663,12 +3802,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -3684,12 +3823,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -3720,12 +3859,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "main_output",
               "nodeLabel": "Final Result",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "order_by",
                 },
@@ -3771,12 +3910,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "cte_payment_summary",
               "nodeLabel": "payment_summary",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -3792,12 +3931,12 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -3897,7 +4036,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           ],
         },
       ],
-      "summary": "6 population-origin influence(s) were found on the value-origin route.",
+      "summary": "6 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "paid_amount",
@@ -3909,149 +4048,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       "scopeId": "scope_main_output",
       "selectItemId": "scope_main_output_output_6",
     },
-    "valueOrigin": {
-      "caseRules": [],
-      "expressionChain": [
-        {
-          "columnName": "paid_amount",
-          "expressionId": "expr:step:main_output:paid_amount:scope_main_output_output_6:out5",
-          "expressionSql": "coalesce(ps.paid_amount, 0)",
-          "id": "step:main_output:paid_amount:scope_main_output_output_6:out5",
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "outputIndex": 5,
-          "scopeId": "scope_main_output",
-          "selectItemId": "scope_main_output_output_6",
-        },
-        {
-          "columnName": "paid_amount",
-          "expressionId": "expr:step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
-          "expressionSql": "sum(p.amount)",
-          "id": "step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
-          "nodeId": "cte_payment_summary",
-          "nodeLabel": "payment_summary",
-          "nodeType": "cte",
-          "outputIndex": 1,
-          "scopeId": "scope_cte_payment_summary",
-          "selectItemId": "scope_cte_payment_summary_output_2",
-        },
-      ],
-      "expressions": [
-        {
-          "id": "expr:step:main_output:paid_amount:scope_main_output_output_6:out5",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:cte_payment_summary:paid_amount",
-            },
-            {
-              "kind": "literal",
-              "sql": "0",
-            },
-          ],
-          "kind": "function_call",
-          "operator": "coalesce",
-          "ownerStepId": "step:main_output:paid_amount:scope_main_output_output_6:out5",
-          "semanticKind": "null_replacement",
-          "sql": "coalesce(ps.paid_amount, 0)",
-        },
-        {
-          "id": "expr:step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:table_payments:amount",
-            },
-          ],
-          "kind": "aggregate",
-          "operator": "sum",
-          "ownerStepId": "step:cte_payment_summary:paid_amount:scope_cte_payment_summary_output_2:out1",
-          "semanticKind": "aggregation",
-          "sql": "sum(p.amount)",
-        },
-      ],
-      "references": [
-        {
-          "columnName": "paid_amount",
-          "definedInScopeId": "scope_cte_payment_summary",
-          "id": "ref:cte_payment_summary:paid_amount",
-          "nodeId": "cte_payment_summary",
-          "nodeLabel": "payment_summary",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_payment_summary",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_payment_summary",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_payment_summary",
-          ],
-        },
-        {
-          "columnName": "amount",
-          "definedInScopeId": undefined,
-          "id": "ref:table_payments:amount",
-          "nodeId": "table_payments",
-          "nodeLabel": "payments",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_payment_summary",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_payment_summary",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_payment_summary",
-          ],
-        },
-      ],
-      "root": "step:main_output:paid_amount:scope_main_output_output_6:out5",
-      "scopeChain": [
-        {
-          "label": "select:Final Result",
-          "nodeId": "main_output",
-          "scopeId": "scope_main_output",
-        },
-        {
-          "label": "cte:payment_summary",
-          "nodeId": "cte_payment_summary",
-          "scopeId": "scope_cte_payment_summary",
-        },
-      ],
-      "sourceLeaves": [
-        {
-          "columnName": "amount",
-          "expressionSql": undefined,
-          "id": "step:table_payments:amount",
-          "nodeId": "table_payments",
-          "nodeLabel": "payments",
-          "nodeType": "table",
-          "outputIndex": undefined,
-          "scopeId": "scope_table_payments_source_leaf",
-          "selectItemId": undefined,
-        },
-      ],
-      "summary": {
-        "caseRuleCount": 0,
-        "expressionStepCount": 2,
-        "intermediateReferenceCount": 1,
-        "sourceLeafCount": 1,
-      },
-    },
     "version": 1,
     "views": {
-      "valueOriginTree": {
-        "derivedFrom": "valueOrigin",
+      "columnLineageTree": {
+        "derivedFrom": "columnLineage",
         "tree": [
           {
             "children": [
@@ -4363,394 +4363,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         "signals": [],
       },
     ],
-    "diagnostics": [
-      {
-        "code": "lineage_metadata_added",
-        "message": "Lineage metadata such as scopeId, nodeId, upstream references, and diagnostic roles was added on top of rawsql-ts analysis.",
-        "scopeId": "scope_main_output",
-        "severity": "info",
-      },
-    ],
-    "kind": "column-diagnostic-packet",
-    "omittedContext": {
-      "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 19,
-      "omittedInfluenceCount": 5,
-      "omittedNodeCount": 4,
-    },
-    "populationOrigin": {
-      "influences": [
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "p.status = 'succeeded'",
-          "id": "scope_cte_payment_summary_where_1",
-          "kind": "where",
-          "mechanism": "where",
-          "references": [
-            {
-              "columnName": "status",
-              "definedInScopeId": undefined,
-              "id": "ref:table_payments:status",
-              "nodeId": "table_payments",
-              "nodeLabel": "payments",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_cte_payment_summary",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_cte_payment_summary",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_cte_payment_summary",
-              ],
-            },
-          ],
-          "scopeId": "scope_cte_payment_summary",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "grain_change",
-          ],
-          "expressionSql": "p.customer_id",
-          "id": "scope_cte_payment_summary_group_by_1",
-          "kind": "group_by",
-          "mechanism": "group_by",
-          "references": [
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_payments:customer_id",
-              "nodeId": "table_payments",
-              "nodeLabel": "payments",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_cte_payment_summary",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_cte_payment_summary",
-                  "usageKind": "group_by",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_cte_payment_summary",
-              ],
-            },
-          ],
-          "scopeId": "scope_cte_payment_summary",
-          "signals": [
-            "group_by",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-          "id": "scope_main_output_where_1",
-          "kind": "where",
-          "mechanism": "exists",
-          "references": [
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:customer_id",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "is_active",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:is_active",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "output_selection",
-          ],
-          "expressionSql": "total_amount desc",
-          "id": "scope_main_output_order_by_1",
-          "kind": "order_by",
-          "mechanism": "order_by",
-          "references": [
-            {
-              "columnName": "total_amount",
-              "definedInScopeId": "scope_main_output",
-              "id": "ref:main_output:total_amount",
-              "nodeId": "main_output",
-              "nodeLabel": "Final Result",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "order_by",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "output_cap",
-          ],
-          "expressionSql": "limit
-  100",
-          "id": "scope_main_output_limit_1",
-          "kind": "limit",
-          "mechanism": "limit",
-          "references": [],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "limit",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "expressionSql": "on ps.customer_id = c.id",
-          "id": "scope_main_output_join_2",
-          "kind": "join_on",
-          "mechanism": "join",
-          "references": [
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": "scope_cte_payment_summary",
-              "id": "ref:cte_payment_summary:customer_id",
-              "nodeId": "cte_payment_summary",
-              "nodeLabel": "payment_summary",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "join_on",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "population_origin",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "population_origin",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "join_on",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "outer_join",
-          ],
-          "sourceNodeId": "cte_payment_summary",
-        },
-      ],
-      "nodeImpacts": [
-        {
-          "effects": [
-            "row_filter",
-            "grain_change",
-          ],
-          "influenceIds": [
-            "scope_cte_payment_summary_where_1",
-            "scope_cte_payment_summary_group_by_1",
-          ],
-          "nodeId": "table_payments",
-          "nodeLabel": "payments",
-          "nodeType": "table",
-          "role": "population_and_value",
-          "signals": [
-            "where",
-            "group_by",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "output_selection",
-            "output_cap",
-          ],
-          "influenceIds": [
-            "scope_main_output_order_by_1",
-            "scope_main_output_limit_1",
-          ],
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "role": "population_and_value",
-          "signals": [
-            "limit",
-            "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "influenceIds": [
-            "scope_main_output_join_2",
-          ],
-          "nodeId": "cte_payment_summary",
-          "nodeLabel": "payment_summary",
-          "nodeType": "cte",
-          "role": "population_and_value",
-          "signals": [
-            "outer_join",
-          ],
-        },
-      ],
-      "summary": "6 population-origin influence(s) were found on the value-origin route.",
-    },
-    "target": {
-      "columnName": "payment_status",
-      "expressionSql": "case
-  when ps.last_paid_at is null then
-    'unknown'
-  when ps.last_paid_at < current_date - INTERVAL '30 days' then
-    'needs_followup'
-  else
-    'active'
-end",
-      "nodeId": "main_output",
-      "nodeLabel": "Final Result",
-      "nodeType": "output",
-      "outputIndex": 6,
-      "scopeId": "scope_main_output",
-      "selectItemId": "scope_main_output_output_7",
-    },
-    "valueOrigin": {
+    "columnLineage": {
       "caseRules": [
         {
           "caseLabel": undefined,
@@ -4931,17 +4544,17 @@ end",
           "nodeId": "cte_payment_summary",
           "nodeLabel": "payment_summary",
           "roles": [
-            "value_origin",
+            "column_lineage",
           ],
           "scopeId": "scope_main_output",
           "usages": [
             {
-              "role": "value_origin",
+              "role": "column_lineage",
               "scopeId": "scope_main_output",
               "usageKind": "case_when_condition",
             },
             {
-              "role": "value_origin",
+              "role": "column_lineage",
               "scopeId": "scope_cte_payment_summary",
               "usageKind": "column_value",
             },
@@ -4958,12 +4571,12 @@ end",
           "nodeId": "table_payments",
           "nodeLabel": "payments",
           "roles": [
-            "value_origin",
+            "column_lineage",
           ],
           "scopeId": "scope_cte_payment_summary",
           "usages": [
             {
-              "role": "value_origin",
+              "role": "column_lineage",
               "scopeId": "scope_cte_payment_summary",
               "usageKind": "column_value",
             },
@@ -5006,10 +4619,397 @@ end",
         "sourceLeafCount": 1,
       },
     },
+    "diagnostics": [
+      {
+        "code": "lineage_metadata_added",
+        "message": "Lineage metadata such as scopeId, nodeId, upstream references, and diagnostic roles was added on top of rawsql-ts analysis.",
+        "scopeId": "scope_main_output",
+        "severity": "info",
+      },
+    ],
+    "kind": "column-diagnostic-packet",
+    "omittedContext": {
+      "message": "Unrelated nodes and expressions were omitted.",
+      "omittedColumnCount": 16,
+      "omittedInfluenceCount": 5,
+      "omittedNodeCount": 4,
+    },
+    "rowLineage": {
+      "influences": [
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "expressionSql": "p.status = 'succeeded'",
+          "id": "scope_cte_payment_summary_where_1",
+          "kind": "where",
+          "mechanism": "where",
+          "references": [
+            {
+              "columnName": "status",
+              "definedInScopeId": undefined,
+              "id": "ref:table_payments:status",
+              "nodeId": "table_payments",
+              "nodeLabel": "payments",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_cte_payment_summary",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_cte_payment_summary",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_cte_payment_summary",
+              ],
+            },
+          ],
+          "scopeId": "scope_cte_payment_summary",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "grain_change",
+          ],
+          "expressionSql": "p.customer_id",
+          "id": "scope_cte_payment_summary_group_by_1",
+          "kind": "group_by",
+          "mechanism": "group_by",
+          "references": [
+            {
+              "columnName": "customer_id",
+              "definedInScopeId": undefined,
+              "id": "ref:table_payments:customer_id",
+              "nodeId": "table_payments",
+              "nodeLabel": "payments",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_cte_payment_summary",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_cte_payment_summary",
+                  "usageKind": "group_by",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_cte_payment_summary",
+              ],
+            },
+          ],
+          "scopeId": "scope_cte_payment_summary",
+          "signals": [
+            "group_by",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "expressionSql": "exists (
+  select
+    1
+  from
+    customer_favorites as cf
+  where
+    cf.customer_id = c.id
+    and cf.is_active = true
+)",
+          "id": "scope_main_output_where_1",
+          "kind": "where",
+          "mechanism": "exists",
+          "references": [
+            {
+              "columnName": "id",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customers:id",
+              "nodeId": "table_customers",
+              "nodeLabel": "customers",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+            {
+              "columnName": "customer_id",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customer_favorites:customer_id",
+              "nodeId": "table_customer_favorites",
+              "nodeLabel": "customer_favorites",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+            {
+              "columnName": "is_active",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customer_favorites:is_active",
+              "nodeId": "table_customer_favorites",
+              "nodeLabel": "customer_favorites",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+          ],
+          "scopeId": "scope_main_output",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "output_selection",
+          ],
+          "expressionSql": "total_amount desc",
+          "id": "scope_main_output_order_by_1",
+          "kind": "order_by",
+          "mechanism": "order_by",
+          "references": [
+            {
+              "columnName": "total_amount",
+              "definedInScopeId": "scope_main_output",
+              "id": "ref:main_output:total_amount",
+              "nodeId": "main_output",
+              "nodeLabel": "Final Result",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "order_by",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+          ],
+          "scopeId": "scope_main_output",
+          "signals": [
+            "order_by",
+          ],
+        },
+        {
+          "effects": [
+            "output_cap",
+          ],
+          "expressionSql": "limit
+  100",
+          "id": "scope_main_output_limit_1",
+          "kind": "limit",
+          "mechanism": "limit",
+          "references": [],
+          "scopeId": "scope_main_output",
+          "signals": [
+            "limit",
+          ],
+        },
+        {
+          "effects": [
+            "null_extension",
+          ],
+          "expressionSql": "on ps.customer_id = c.id",
+          "id": "scope_main_output_join_2",
+          "kind": "join_on",
+          "mechanism": "join",
+          "references": [
+            {
+              "columnName": "customer_id",
+              "definedInScopeId": "scope_cte_payment_summary",
+              "id": "ref:cte_payment_summary:customer_id",
+              "nodeId": "cte_payment_summary",
+              "nodeLabel": "payment_summary",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "join_on",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+            {
+              "columnName": "id",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customers:id",
+              "nodeId": "table_customers",
+              "nodeLabel": "customers",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_main_output",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_main_output",
+                  "usageKind": "join_on",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_main_output",
+              ],
+            },
+          ],
+          "scopeId": "scope_main_output",
+          "signals": [
+            "outer_join",
+          ],
+          "sourceNodeId": "cte_payment_summary",
+        },
+      ],
+      "nodeImpacts": [
+        {
+          "effects": [
+            "row_filter",
+            "grain_change",
+          ],
+          "influenceIds": [
+            "scope_cte_payment_summary_where_1",
+            "scope_cte_payment_summary_group_by_1",
+          ],
+          "nodeId": "table_payments",
+          "nodeLabel": "payments",
+          "nodeType": "table",
+          "role": "population_and_value",
+          "signals": [
+            "where",
+            "group_by",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "influenceIds": [
+            "scope_main_output_where_1",
+          ],
+          "nodeId": "table_customers",
+          "nodeLabel": "customers",
+          "nodeType": "table",
+          "role": "population_only",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "influenceIds": [
+            "scope_main_output_where_1",
+          ],
+          "nodeId": "table_customer_favorites",
+          "nodeLabel": "customer_favorites",
+          "nodeType": "table",
+          "role": "population_only",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "output_selection",
+            "output_cap",
+          ],
+          "influenceIds": [
+            "scope_main_output_order_by_1",
+            "scope_main_output_limit_1",
+          ],
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "role": "population_and_value",
+          "signals": [
+            "limit",
+            "order_by",
+          ],
+        },
+        {
+          "effects": [
+            "null_extension",
+          ],
+          "influenceIds": [
+            "scope_main_output_join_2",
+          ],
+          "nodeId": "cte_payment_summary",
+          "nodeLabel": "payment_summary",
+          "nodeType": "cte",
+          "role": "population_and_value",
+          "signals": [
+            "outer_join",
+          ],
+        },
+      ],
+      "summary": "6 row lineage influence(s) were found on the column lineage route.",
+    },
+    "target": {
+      "columnName": "payment_status",
+      "expressionSql": "case
+  when ps.last_paid_at is null then
+    'unknown'
+  when ps.last_paid_at < current_date - INTERVAL '30 days' then
+    'needs_followup'
+  else
+    'active'
+end",
+      "nodeId": "main_output",
+      "nodeLabel": "Final Result",
+      "nodeType": "output",
+      "outputIndex": 6,
+      "scopeId": "scope_main_output",
+      "selectItemId": "scope_main_output_output_7",
+    },
     "version": 1,
     "views": {
-      "valueOriginTree": {
-        "derivedFrom": "valueOrigin",
+      "columnLineageTree": {
+        "derivedFrom": "columnLineage",
         "tree": [
           {
             "children": [
@@ -5076,12 +5076,12 @@ end",
                     "nodeId": "cte_payment_summary",
                     "nodeLabel": "payment_summary",
                     "roles": [
-                      "value_origin",
+                      "column_lineage",
                     ],
                     "scopeId": "scope_main_output",
                     "usages": [
                       {
-                        "role": "value_origin",
+                        "role": "column_lineage",
                         "scopeId": "scope_main_output",
                         "usageKind": "case_when_condition",
                       },
@@ -5163,12 +5163,12 @@ end",
                     "nodeId": "cte_payment_summary",
                     "nodeLabel": "payment_summary",
                     "roles": [
-                      "value_origin",
+                      "column_lineage",
                     ],
                     "scopeId": "scope_main_output",
                     "usages": [
                       {
-                        "role": "value_origin",
+                        "role": "column_lineage",
                         "scopeId": "scope_main_output",
                         "usageKind": "case_when_condition",
                       },
@@ -5533,7 +5533,7 @@ end",
           "coalesce",
           "function_call",
         ],
-        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the value-origin route.",
+        "reason": "The expression may replace NULL values; review nullable source columns and outer joins on the column lineage route.",
         "scopeId": "scope_main_output",
         "signals": [],
       },
@@ -5563,6 +5563,239 @@ end",
         "signals": [],
       },
     ],
+    "columnLineage": {
+      "caseRules": [],
+      "expressionChain": [
+        {
+          "columnName": "total_amount",
+          "expressionId": "expr:step:main_output:total_amount:scope_main_output_output_5:out4",
+          "expressionSql": "coalesce(ot.total_amount, 0)",
+          "id": "step:main_output:total_amount:scope_main_output_output_5:out4",
+          "nodeId": "main_output",
+          "nodeLabel": "Final Result",
+          "nodeType": "output",
+          "outputIndex": 4,
+          "scopeId": "scope_main_output",
+          "selectItemId": "scope_main_output_output_5",
+        },
+        {
+          "columnName": "total_amount",
+          "comments": [
+            "Total ordered amount per customer.",
+          ],
+          "expressionId": "expr:step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
+          "expressionSql": "sum(amount)",
+          "id": "step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
+          "nodeType": "cte",
+          "outputIndex": 2,
+          "scopeId": "scope_cte_order_totals",
+          "selectItemId": "scope_cte_order_totals_output_3",
+        },
+        {
+          "columnName": "amount",
+          "comments": [
+            "Extended line amount.",
+          ],
+          "expressionId": "expr:step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
+          "expressionSql": "oi.quantity * oi.unit_price",
+          "id": "step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
+          "nodeId": "cte_recent_orders",
+          "nodeLabel": "recent_orders",
+          "nodeType": "cte",
+          "outputIndex": 6,
+          "scopeId": "scope_cte_recent_orders",
+          "selectItemId": "scope_cte_recent_orders_output_7",
+        },
+      ],
+      "expressions": [
+        {
+          "id": "expr:step:main_output:total_amount:scope_main_output_output_5:out4",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:cte_order_totals:total_amount",
+            },
+            {
+              "kind": "literal",
+              "sql": "0",
+            },
+          ],
+          "kind": "function_call",
+          "operator": "coalesce",
+          "ownerStepId": "step:main_output:total_amount:scope_main_output_output_5:out4",
+          "semanticKind": "null_replacement",
+          "sql": "coalesce(ot.total_amount, 0)",
+        },
+        {
+          "id": "expr:step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:cte_recent_orders:amount",
+            },
+          ],
+          "kind": "aggregate",
+          "operator": "sum",
+          "ownerStepId": "step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
+          "semanticKind": "aggregation",
+          "sql": "sum(amount)",
+        },
+        {
+          "id": "expr:step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:table_order_items:quantity",
+            },
+            {
+              "kind": "column_ref",
+              "refId": "ref:table_order_items:unit_price",
+            },
+          ],
+          "kind": "operator",
+          "operator": "*",
+          "ownerStepId": "step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
+          "semanticKind": "arithmetic",
+          "sql": "oi.quantity * oi.unit_price",
+        },
+      ],
+      "references": [
+        {
+          "columnName": "total_amount",
+          "definedInScopeId": "scope_cte_order_totals",
+          "id": "ref:cte_order_totals:total_amount",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_order_totals",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_order_totals",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_order_totals",
+          ],
+        },
+        {
+          "columnName": "amount",
+          "definedInScopeId": "scope_cte_recent_orders",
+          "id": "ref:cte_recent_orders:amount",
+          "nodeId": "cte_recent_orders",
+          "nodeLabel": "recent_orders",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_recent_orders",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_recent_orders",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_recent_orders",
+          ],
+        },
+        {
+          "columnName": "quantity",
+          "definedInScopeId": undefined,
+          "id": "ref:table_order_items:quantity",
+          "nodeId": "table_order_items",
+          "nodeLabel": "order_items",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_recent_orders",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_recent_orders",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_recent_orders",
+          ],
+        },
+        {
+          "columnName": "unit_price",
+          "definedInScopeId": undefined,
+          "id": "ref:table_order_items:unit_price",
+          "nodeId": "table_order_items",
+          "nodeLabel": "order_items",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_recent_orders",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_recent_orders",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_recent_orders",
+          ],
+        },
+      ],
+      "root": "step:main_output:total_amount:scope_main_output_output_5:out4",
+      "scopeChain": [
+        {
+          "label": "select:Final Result",
+          "nodeId": "main_output",
+          "scopeId": "scope_main_output",
+        },
+        {
+          "label": "cte:order_totals",
+          "nodeId": "cte_order_totals",
+          "scopeId": "scope_cte_order_totals",
+        },
+        {
+          "label": "cte:recent_orders",
+          "nodeId": "cte_recent_orders",
+          "scopeId": "scope_cte_recent_orders",
+        },
+      ],
+      "sourceLeaves": [
+        {
+          "columnName": "quantity",
+          "expressionSql": undefined,
+          "id": "step:table_order_items:quantity",
+          "nodeId": "table_order_items",
+          "nodeLabel": "order_items",
+          "nodeType": "table",
+          "outputIndex": undefined,
+          "scopeId": "scope_table_order_items_source_leaf",
+          "selectItemId": undefined,
+        },
+        {
+          "columnName": "unit_price",
+          "expressionSql": undefined,
+          "id": "step:table_order_items:unit_price",
+          "nodeId": "table_order_items",
+          "nodeLabel": "order_items",
+          "nodeType": "table",
+          "outputIndex": undefined,
+          "scopeId": "scope_table_order_items_source_leaf",
+          "selectItemId": undefined,
+        },
+      ],
+      "summary": {
+        "caseRuleCount": 0,
+        "expressionStepCount": 3,
+        "intermediateReferenceCount": 2,
+        "sourceLeafCount": 2,
+      },
+    },
     "diagnostics": [
       {
         "code": "lineage_metadata_added",
@@ -5574,11 +5807,11 @@ end",
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 8,
+      "omittedColumnCount": 6,
       "omittedInfluenceCount": 3,
       "omittedNodeCount": 2,
     },
-    "populationOrigin": {
+    "rowLineage": {
       "influences": [
         {
           "effects": [
@@ -5596,12 +5829,12 @@ end",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_recent_orders",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_recent_orders",
                   "usageKind": "where",
                 },
@@ -5632,12 +5865,12 @@ end",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_recent_orders",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_recent_orders",
                   "usageKind": "where",
                 },
@@ -5669,12 +5902,12 @@ end",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_recent_orders",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_recent_orders",
                   "usageKind": "join_on",
                 },
@@ -5690,12 +5923,12 @@ end",
               "nodeId": "table_order_items",
               "nodeLabel": "order_items",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_recent_orders",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_recent_orders",
                   "usageKind": "join_on",
                 },
@@ -5727,12 +5960,12 @@ end",
               "nodeId": "cte_recent_orders",
               "nodeLabel": "recent_orders",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_cte_order_totals",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_cte_order_totals",
                   "usageKind": "group_by",
                 },
@@ -5771,12 +6004,12 @@ end",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -5792,12 +6025,12 @@ end",
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -5813,12 +6046,12 @@ end",
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "where",
                 },
@@ -5849,12 +6082,12 @@ end",
               "nodeId": "main_output",
               "nodeLabel": "Final Result",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "order_by",
                 },
@@ -5900,12 +6133,12 @@ end",
               "nodeId": "cte_order_totals",
               "nodeLabel": "order_totals",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -5921,12 +6154,12 @@ end",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
               "roles": [
-                "population_origin",
+                "row_lineage",
               ],
               "scopeId": "scope_main_output",
               "usages": [
                 {
-                  "role": "population_origin",
+                  "role": "row_lineage",
                   "scopeId": "scope_main_output",
                   "usageKind": "join_on",
                 },
@@ -6058,7 +6291,7 @@ end",
           ],
         },
       ],
-      "summary": "8 population-origin influence(s) were found on the value-origin route.",
+      "summary": "8 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "total_amount",
@@ -6070,243 +6303,10 @@ end",
       "scopeId": "scope_main_output",
       "selectItemId": "scope_main_output_output_5",
     },
-    "valueOrigin": {
-      "caseRules": [],
-      "expressionChain": [
-        {
-          "columnName": "total_amount",
-          "expressionId": "expr:step:main_output:total_amount:scope_main_output_output_5:out4",
-          "expressionSql": "coalesce(ot.total_amount, 0)",
-          "id": "step:main_output:total_amount:scope_main_output_output_5:out4",
-          "nodeId": "main_output",
-          "nodeLabel": "Final Result",
-          "nodeType": "output",
-          "outputIndex": 4,
-          "scopeId": "scope_main_output",
-          "selectItemId": "scope_main_output_output_5",
-        },
-        {
-          "columnName": "total_amount",
-          "comments": [
-            "Total ordered amount per customer.",
-          ],
-          "expressionId": "expr:step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
-          "expressionSql": "sum(amount)",
-          "id": "step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "nodeType": "cte",
-          "outputIndex": 2,
-          "scopeId": "scope_cte_order_totals",
-          "selectItemId": "scope_cte_order_totals_output_3",
-        },
-        {
-          "columnName": "amount",
-          "comments": [
-            "Extended line amount.",
-          ],
-          "expressionId": "expr:step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
-          "expressionSql": "oi.quantity * oi.unit_price",
-          "id": "step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
-          "nodeId": "cte_recent_orders",
-          "nodeLabel": "recent_orders",
-          "nodeType": "cte",
-          "outputIndex": 6,
-          "scopeId": "scope_cte_recent_orders",
-          "selectItemId": "scope_cte_recent_orders_output_7",
-        },
-      ],
-      "expressions": [
-        {
-          "id": "expr:step:main_output:total_amount:scope_main_output_output_5:out4",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:cte_order_totals:total_amount",
-            },
-            {
-              "kind": "literal",
-              "sql": "0",
-            },
-          ],
-          "kind": "function_call",
-          "operator": "coalesce",
-          "ownerStepId": "step:main_output:total_amount:scope_main_output_output_5:out4",
-          "semanticKind": "null_replacement",
-          "sql": "coalesce(ot.total_amount, 0)",
-        },
-        {
-          "id": "expr:step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:cte_recent_orders:amount",
-            },
-          ],
-          "kind": "aggregate",
-          "operator": "sum",
-          "ownerStepId": "step:cte_order_totals:total_amount:scope_cte_order_totals_output_3:out2",
-          "semanticKind": "aggregation",
-          "sql": "sum(amount)",
-        },
-        {
-          "id": "expr:step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
-          "inputs": [
-            {
-              "kind": "column_ref",
-              "refId": "ref:table_order_items:quantity",
-            },
-            {
-              "kind": "column_ref",
-              "refId": "ref:table_order_items:unit_price",
-            },
-          ],
-          "kind": "operator",
-          "operator": "*",
-          "ownerStepId": "step:cte_recent_orders:amount:scope_cte_recent_orders_output_7:out6",
-          "semanticKind": "arithmetic",
-          "sql": "oi.quantity * oi.unit_price",
-        },
-      ],
-      "references": [
-        {
-          "columnName": "total_amount",
-          "definedInScopeId": "scope_cte_order_totals",
-          "id": "ref:cte_order_totals:total_amount",
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_order_totals",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_order_totals",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_order_totals",
-          ],
-        },
-        {
-          "columnName": "amount",
-          "definedInScopeId": "scope_cte_recent_orders",
-          "id": "ref:cte_recent_orders:amount",
-          "nodeId": "cte_recent_orders",
-          "nodeLabel": "recent_orders",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_recent_orders",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_recent_orders",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_recent_orders",
-          ],
-        },
-        {
-          "columnName": "quantity",
-          "definedInScopeId": undefined,
-          "id": "ref:table_order_items:quantity",
-          "nodeId": "table_order_items",
-          "nodeLabel": "order_items",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_recent_orders",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_recent_orders",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_recent_orders",
-          ],
-        },
-        {
-          "columnName": "unit_price",
-          "definedInScopeId": undefined,
-          "id": "ref:table_order_items:unit_price",
-          "nodeId": "table_order_items",
-          "nodeLabel": "order_items",
-          "roles": [
-            "value_origin",
-          ],
-          "scopeId": "scope_cte_recent_orders",
-          "usages": [
-            {
-              "role": "value_origin",
-              "scopeId": "scope_cte_recent_orders",
-              "usageKind": "column_value",
-            },
-          ],
-          "usedInScopeIds": [
-            "scope_cte_recent_orders",
-          ],
-        },
-      ],
-      "root": "step:main_output:total_amount:scope_main_output_output_5:out4",
-      "scopeChain": [
-        {
-          "label": "select:Final Result",
-          "nodeId": "main_output",
-          "scopeId": "scope_main_output",
-        },
-        {
-          "label": "cte:order_totals",
-          "nodeId": "cte_order_totals",
-          "scopeId": "scope_cte_order_totals",
-        },
-        {
-          "label": "cte:recent_orders",
-          "nodeId": "cte_recent_orders",
-          "scopeId": "scope_cte_recent_orders",
-        },
-      ],
-      "sourceLeaves": [
-        {
-          "columnName": "quantity",
-          "expressionSql": undefined,
-          "id": "step:table_order_items:quantity",
-          "nodeId": "table_order_items",
-          "nodeLabel": "order_items",
-          "nodeType": "table",
-          "outputIndex": undefined,
-          "scopeId": "scope_table_order_items_source_leaf",
-          "selectItemId": undefined,
-        },
-        {
-          "columnName": "unit_price",
-          "expressionSql": undefined,
-          "id": "step:table_order_items:unit_price",
-          "nodeId": "table_order_items",
-          "nodeLabel": "order_items",
-          "nodeType": "table",
-          "outputIndex": undefined,
-          "scopeId": "scope_table_order_items_source_leaf",
-          "selectItemId": undefined,
-        },
-      ],
-      "summary": {
-        "caseRuleCount": 0,
-        "expressionStepCount": 3,
-        "intermediateReferenceCount": 2,
-        "sourceLeafCount": 2,
-      },
-    },
     "version": 1,
     "views": {
-      "valueOriginTree": {
-        "derivedFrom": "valueOrigin",
+      "columnLineageTree": {
+        "derivedFrom": "columnLineage",
         "tree": [
           {
             "children": [

@@ -11,16 +11,17 @@ import {
   type EdgeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw } from 'lucide-react';
+import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
-import { buildGraphModel, type GraphFlowDirection } from '../graph/buildGraphModel';
-import { collectCollapsibleUpstreamGroups, collectDefaultCollapsedGroupRootIds, collapseLineageGroups } from '../graph/collapseGroups';
+import { buildGraphModel, collectUnreachableCteNodeIds, type GraphFlowDirection } from '../graph/buildGraphModel';
+import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
 import { buildColumnDiagnosticPacket, type ColumnDiagnosticPacket } from '../lineage/diagnostics';
 import { buildDiagnosticTreeViewModel } from '../lineage/diagnosticViewModel';
+import { isUnionNode } from '../lineage/nodeKind';
 import { problemIntentLabels, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
 import { populationImpactLabelsByNodeIdForIntent, sourceDataValueLabelsByNodeIdForIntent } from '../lineage/problemIntentViewModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -65,10 +66,20 @@ export type GraphHighlightTarget =
     }
   | null;
 
-type GraphSelectionSnapshot =
+type GraphOriginSelection =
   | { kind: 'none' }
   | { kind: 'node'; nodeId: string }
   | { columnId: string; columnName: string; kind: 'column'; nodeId: string };
+
+type InspectorCommentMode = 'all' | 'none' | 'smart';
+const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
+type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse';
+
+interface GraphDisplaySnapshot {
+  highlightTarget: GraphHighlightTarget;
+  originSelection: GraphOriginSelection;
+  visibleNodeIdsForAutoLayout?: Set<string>;
+}
 
 export interface CaseRuleSelection {
   columnId: string;
@@ -105,12 +116,12 @@ interface InspectorColumnGroup {
   items: InspectorColumnItem[];
 }
 
-type SelectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => void;
+type SelectInspectorCard = (cardId: string, nodeId?: string, columnId?: string) => void;
 
 export interface InspectorCardSelection {
   cardId: string;
+  columnId?: string;
   focusNodeId?: string;
-  highlightTarget?: GraphHighlightTarget;
 }
 
 type InspectorColumnTreeNode = InspectorColumnTreeColumnNode | InspectorColumnTreeExpressionNode | InspectorColumnTreeRuleNode;
@@ -137,24 +148,24 @@ interface InspectorColumnTreeExpressionNode {
 }
 
 export function LineageGraph({
+  activeInspectorCardColumnId,
   autoInspectOutputNonce,
   caseRuleSelection,
   expandedExpressionColumnIds,
   focusTarget,
   flowDirection,
-  highlightTargetRequest,
   lineage,
   onInspectorSelectionChange,
   onProblemIntentChange,
   outputTitle,
   problemIntent,
 }: {
+  activeInspectorCardColumnId?: string | null;
   autoInspectOutputNonce?: number;
   caseRuleSelection?: CaseRuleSelection | null;
   expandedExpressionColumnIds?: Set<string>;
   focusTarget?: { nonce: number; nodeId: string } | null;
   flowDirection: GraphFlowDirection;
-  highlightTargetRequest?: { nonce: number; target: GraphHighlightTarget } | null;
   lineage: LineageModel;
   onInspectorSelectionChange?: (selection: InspectorSelection) => void;
   onProblemIntentChange?: (intent: ProblemIntent) => void;
@@ -165,23 +176,34 @@ export function LineageGraph({
   const previousFlowDirectionRef = useRef(flowDirection);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
+  const lastHandledFocusExpansionNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
-  const lastHandledHighlightNonceRef = useRef<number | null>(null);
-  const lastCommittedSelectionRef = useRef<GraphSelectionSnapshot>({ kind: 'none' });
+  const lastCommittedSelectionRef = useRef<GraphOriginSelection>({ kind: 'none' });
+  const outputViewportCorrectionPendingRef = useRef(true);
+  const draggedNodeIdsRef = useRef(new Set<string>());
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const previousGraphStructureKeyRef = useRef<string | null>(null);
+  const previousNodeStructureKeyRef = useRef<string | null>(null);
+  const previousAutoLayoutRequestIdRef = useRef(0);
+  const previousAutoLayoutEnabledRef = useRef(true);
+  const pendingAutoLayoutFrameRef = useRef<number | null>(null);
+  const pendingAutoLayoutReasonRef = useRef<AutoLayoutReason | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
-  const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => collectDefaultCollapsedGroupRootIds(lineage));
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
-  const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, collapsedGroupRootIds), [collapsedGroupRootIds, lineage]);
+  const [collapsedGroupRootIds, setCollapsedGroupRootIds] = useState<Set<string>>(() => createInitialCollapsedGroupRootIds(collapsibleGroups));
+  const effectiveCollapsedGroupRootIds = collapsedGroupRootIds;
+  const collapsedLineage = useMemo(() => collapseLineageGroups(lineage, effectiveCollapsedGroupRootIds), [effectiveCollapsedGroupRootIds, lineage]);
   const viewLineage = collapsedLineage.lineage;
   const displayLineage = useMemo(() => applyOutputTitle(viewLineage, outputTitle), [outputTitle, viewLineage]);
   const layoutLineage = useMemo(() => applyOutputTitle(lineage, outputTitle), [lineage, outputTitle]);
   const displayLineageRef = useRef(displayLineage);
   const layoutLineageRef = useRef(layoutLineage);
   const [showParameterNodes, setShowParameterNodes] = useState(false);
+  const [showUnreachableCtes, setShowUnreachableCtes] = useState(false);
+  const hasParameterNodes = useMemo(() => lineage.nodes.some((node) => node.type === 'parameter_table'), [lineage.nodes]);
+  const hasUnreachableCtes = useMemo(() => collectUnreachableCteNodeIds(lineage).size > 0, [lineage]);
   const graphDisplayLineage = useMemo(
     () => (showParameterNodes ? displayLineage : hideParameterNodesForGraph(displayLineage)),
     [displayLineage, showParameterNodes],
@@ -190,11 +212,18 @@ export function LineageGraph({
     () => (showParameterNodes ? layoutLineage : hideParameterNodesForGraph(layoutLineage)),
     [layoutLineage, showParameterNodes],
   );
-  const graph = useMemo(() => buildGraphModel(graphDisplayLineage, flowDirection, graphLayoutLineage), [flowDirection, graphDisplayLineage, graphLayoutLineage]);
+  const baseGraph = useMemo(
+    () => buildGraphModel(graphDisplayLineage, flowDirection, graphLayoutLineage, { showUnreachableCtes }),
+    [flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
+  );
   const hideableColumnNodeIds = useMemo(() => new Set(displayLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [displayLineage.nodes, flowDirection]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(displayLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
   const [highlightTarget, setHighlightTarget] = useState<GraphHighlightTarget>(null);
+  const [graphDisplaySnapshot, setGraphDisplaySnapshot] = useState<GraphDisplaySnapshot>({
+    highlightTarget: null,
+    originSelection: { kind: 'none' },
+  });
   const initialOutputNodeId = useMemo(() => displayLineage.nodes.find((node) => node.type === 'output')?.id ?? null, [displayLineage.nodes]);
   const [selectedNodeCommentTargetId, setSelectedNodeCommentTargetId] = useState<string | null>(() =>
     initialOutputNodeId ? nodeCommentTargetId(initialOutputNodeId) : null,
@@ -209,6 +238,28 @@ export function LineageGraph({
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const [showEdgeAliases, setShowEdgeAliases] = useState(false);
+  const [autoLayoutEnabled, setAutoLayoutEnabled] = useState(true);
+  const [autoLayoutRequestId, setAutoLayoutRequestId] = useState(0);
+  const scheduleAutoLayout = useCallback((reason: AutoLayoutReason) => {
+    if (!autoLayoutEnabled || typeof window === 'undefined') {
+      return;
+    }
+    pendingAutoLayoutReasonRef.current = reason;
+    if (pendingAutoLayoutFrameRef.current !== null) {
+      return;
+    }
+    pendingAutoLayoutFrameRef.current = window.requestAnimationFrame(() => {
+      pendingAutoLayoutFrameRef.current = null;
+      setAutoLayoutRequestId((current) => current + 1);
+    });
+  }, [autoLayoutEnabled]);
+  useEffect(() => {
+    return () => {
+      if (pendingAutoLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingAutoLayoutFrameRef.current);
+      }
+    };
+  }, []);
   const resetZoom = useCallback(() => {
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
@@ -217,6 +268,16 @@ export function LineageGraph({
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
+  useEffect(() => {
+    if (!hasParameterNodes) {
+      setShowParameterNodes(false);
+    }
+  }, [hasParameterNodes]);
+  useEffect(() => {
+    if (!hasUnreachableCtes) {
+      setShowUnreachableCtes(false);
+    }
+  }, [hasUnreachableCtes]);
   const toggleAllColumns = useCallback(() => {
     setHiddenColumnNodeIds((current) => {
       if (hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => current.has(nodeId))) {
@@ -238,10 +299,25 @@ export function LineageGraph({
     });
   }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
+    const shouldRelayout = !collapsedGroupRootIds.has(nodeId);
+    for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
+      const renderedPosition = readRenderedNodePosition(graphShellRef.current, helperNodeId);
+      if (renderedPosition) {
+        draggedNodeIdsRef.current.add(helperNodeId);
+        nodePositionsRef.current.set(helperNodeId, renderedPosition);
+      }
+    }
     setCollapsedGroupRootIds((current) => new Set(current).add(nodeId));
-  }, []);
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-collapse');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroup = useCallback((nodeId: string) => {
+    const shouldRelayout = collapsedGroupRootIds.has(nodeId);
     setCollapsedGroupRootIds((current) => {
+      if (!current.has(nodeId)) {
+        return current;
+      }
       const next = new Set(current);
       next.delete(nodeId);
       for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
@@ -249,8 +325,37 @@ export function LineageGraph({
       }
       return next;
     });
-  }, [collapsibleGroups]);
-  const commitSelectionHistory = useCallback((selection: GraphSelectionSnapshot, mode: 'push' | 'replace' = 'push') => {
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-expand');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  const expandGroupForNode = useCallback((nodeId: string) => {
+    const shouldRelayout = [...collapsibleGroups].some(
+      ([rootNodeId, group]) => collapsedGroupRootIds.has(rootNodeId) && (rootNodeId === nodeId || group.helperNodeIds.includes(nodeId)),
+    );
+    setCollapsedGroupRootIds((current) => {
+      const next = new Set(current);
+      let changed = false;
+      for (const [rootNodeId, group] of collapsibleGroups) {
+        if (rootNodeId === nodeId || group.helperNodeIds.includes(nodeId)) {
+          next.delete(rootNodeId);
+          changed = true;
+        }
+      }
+      return changed ? next : current;
+    });
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-expand');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  const resetCollapsedGroups = useCallback(() => {
+    const nextCollapsedGroupRootIds = createInitialCollapsedGroupRootIds(collapsibleGroups);
+    if (!areStringSetsEqual(collapsedGroupRootIds, nextCollapsedGroupRootIds)) {
+      scheduleAutoLayout('group-collapse');
+    }
+    setCollapsedGroupRootIds(nextCollapsedGroupRootIds);
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  const commitSelectionHistory = useCallback((selection: GraphOriginSelection, mode: 'push' | 'replace' = 'push') => {
     if (typeof window === 'undefined') {
       return;
     }
@@ -270,7 +375,7 @@ export function LineageGraph({
     }
     lastCommittedSelectionRef.current = selection;
   }, []);
-  const applySelectionSnapshot = useCallback((selection: GraphSelectionSnapshot) => {
+  const applySelectionSnapshot = useCallback((selection: GraphOriginSelection) => {
     const currentLineage = displayLineageRef.current;
     const diagnosticLineage = layoutLineageRef.current;
     setDismissedCommentTargetIds(new Set());
@@ -281,6 +386,7 @@ export function LineageGraph({
         const targetId = nodeCommentTargetId(node.id);
         setSelectedColumn(null);
         setHighlightTarget(null);
+        setGraphDisplaySnapshot({ highlightTarget: null, originSelection: selection });
         setSelectedNodeCommentTargetId(targetId);
         setAutoExpandedColumnNodeId(node.id);
         setActiveCommentTargetId(targetId);
@@ -306,8 +412,10 @@ export function LineageGraph({
           }, problemIntentRef.current),
           scopeId: column.scopeId,
         };
+        const nextHighlightTarget: GraphHighlightTarget = { column: nextColumn, kind: 'column' };
         setSelectedColumn(nextColumn);
-        setHighlightTarget({ column: nextColumn, kind: 'column' });
+        setHighlightTarget(nextHighlightTarget);
+        setGraphDisplaySnapshot({ highlightTarget: nextHighlightTarget, originSelection: selection });
         setActiveCommentTargetId(targetId);
         setAutoExpandedColumnNodeId(node.id);
         return;
@@ -316,37 +424,52 @@ export function LineageGraph({
 
     setSelectedColumn(null);
     setHighlightTarget(null);
+    setGraphDisplaySnapshot({ highlightTarget: null, originSelection: selection });
     setSelectedNodeCommentTargetId(null);
     setAutoExpandedColumnNodeId(null);
     setActiveCommentTargetId(null);
   }, []);
   const selectNode = useCallback((nodeId: string) => {
     suppressInitialOutputSelectionRef.current = false;
-    const targetId = nodeCommentTargetId(nodeId);
-    const nextSelection: GraphSelectionSnapshot = selectedNodeCommentTargetId === targetId ? { kind: 'none' } : { kind: 'node', nodeId };
+    if (collapsedLineage.groups.has(nodeId)) {
+      expandGroup(nodeId);
+    }
+    const nextSelection: GraphOriginSelection = { kind: 'node', nodeId };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, commitSelectionHistory, selectedNodeCommentTargetId]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const inspectNode = useCallback((nodeId: string) => {
     suppressInitialOutputSelectionRef.current = false;
-    const nextSelection: GraphSelectionSnapshot = { kind: 'node', nodeId };
+    if (collapsedLineage.groups.has(nodeId)) {
+      expandGroup(nodeId);
+    }
+    const nextSelection: GraphOriginSelection = { kind: 'node', nodeId };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, commitSelectionHistory]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     suppressInitialOutputSelectionRef.current = false;
-    const nextSelection: GraphSelectionSnapshot =
-      selectedColumn?.columnId === column.id
-        ? { kind: 'none' }
-        : {
-            columnId: column.id,
-            columnName: column.name,
-            kind: 'column',
-            nodeId,
-          };
+    const nextSelection: GraphOriginSelection = {
+      columnId: column.id,
+      columnName: column.name,
+      kind: 'column',
+      nodeId,
+    };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, commitSelectionHistory, selectedColumn?.columnId]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, commitSelectionHistory, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
     setActiveCommentTargetId((current) => (current === targetId ? null : current));
@@ -392,7 +515,12 @@ export function LineageGraph({
     }
     return columnIds;
   }, [activeLineageRootColumnIds, autoExpandedColumnNodeId, columnHighlights.highlightedColumnIds, columnHighlights.sourceColumnIds, displayLineage.nodes, selectedColumn]);
-  const graphSelectedColumnId = activeLineageRootColumnIds.size === 1 ? [...activeLineageRootColumnIds][0] : selectedColumn?.columnId ?? null;
+  const visibleActiveLineageRootColumnIds = useMemo(
+    () => (activeInspectorCardColumnId ? new Set<string>() : activeLineageRootColumnIds),
+    [activeInspectorCardColumnId, activeLineageRootColumnIds],
+  );
+  const graphOriginSelectedColumnId = activeLineageRootColumnIds.size === 1 ? [...activeLineageRootColumnIds][0] : selectedColumn?.columnId ?? null;
+  const graphSelectedColumnId = activeInspectorCardColumnId ?? graphOriginSelectedColumnId;
   const selectedRuleExpressionByColumnId = useMemo(() => {
     if (!selectedColumn) {
       return undefined;
@@ -405,6 +533,83 @@ export function LineageGraph({
 
     return new Map([[selectedColumn.columnId, rule.expressionSql]]);
   }, [caseRuleSelection, displayLineage.nodes, selectedColumn]);
+  const visibleNodeIdBySourceNodeId = useMemo(() => createVisibleNodeIdBySourceNodeId(collapsedLineage.groups), [collapsedLineage.groups]);
+  const selectedNodeId = selectedNodeCommentTargetId?.replace(/^node:/, '') ?? null;
+  const visibleSelectedNodeId = mapToVisibleNodeId(selectedNodeId, visibleNodeIdBySourceNodeId);
+  const graphSelectedNodeId = visibleSelectedNodeId;
+  const activeGraphSelection = useMemo(() => {
+    const activeNodeIds = new Set<string>();
+    const activeEdgeIds = new Set<string>();
+
+    if (selectedColumn || columnHighlights.highlightedEdgeIds.size > 0) {
+      if (selectedColumn) {
+        activeNodeIds.add(mapToVisibleNodeId(selectedColumn.nodeId, visibleNodeIdBySourceNodeId) ?? selectedColumn.nodeId);
+      }
+      for (const edge of baseGraph.edges) {
+        if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
+          continue;
+        }
+        activeEdgeIds.add(edge.id);
+        activeNodeIds.add(edge.source);
+        activeNodeIds.add(edge.target);
+      }
+      for (const nodeId of columnHighlights.highlightedNodeIds) {
+        activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
+      }
+      for (const nodeId of columnHighlights.highlightedSourceDataNodeIds) {
+        activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
+      }
+      for (const edge of baseGraph.edges) {
+        if (activeNodeIds.has(edge.source) && activeNodeIds.has(edge.target)) {
+          activeEdgeIds.add(edge.id);
+        }
+      }
+      return activeNodeIds.size > 0 ? { activeEdgeIds, activeNodeIds } : null;
+    }
+
+    if (visibleSelectedNodeId) {
+      return collectLineageSelectionWithDownstream(visibleSelectedNodeId, displayLineage.edges);
+    }
+
+    return null;
+  }, [
+    columnHighlights.highlightedEdgeIds,
+    columnHighlights.highlightedNodeIds,
+    columnHighlights.highlightedSourceDataNodeIds,
+    displayLineage.edges,
+    baseGraph.edges,
+    selectedColumn,
+    visibleNodeIdBySourceNodeId,
+    visibleSelectedNodeId,
+  ]);
+  useEffect(() => {
+    setGraphDisplaySnapshot((current) => {
+      const nextVisibleNodeIds = activeGraphSelection?.activeNodeIds;
+      if (current.highlightTarget === highlightTarget && areStringSetsEqual(current.visibleNodeIdsForAutoLayout, nextVisibleNodeIds)) {
+        return current;
+      }
+      return {
+        ...current,
+        highlightTarget,
+        visibleNodeIdsForAutoLayout: nextVisibleNodeIds ? new Set(nextVisibleNodeIds) : undefined,
+      };
+    });
+  }, [activeGraphSelection, highlightTarget]);
+  const autoLayoutVisibleNodeIds = useMemo(() => {
+    if (!autoLayoutEnabled || !graphDisplaySnapshot.visibleNodeIdsForAutoLayout || graphDisplaySnapshot.visibleNodeIdsForAutoLayout.size === 0) {
+      return undefined;
+    }
+
+    return graphDisplaySnapshot.visibleNodeIdsForAutoLayout;
+  }, [autoLayoutEnabled, graphDisplaySnapshot.visibleNodeIdsForAutoLayout]);
+  const graph = useMemo(
+    () =>
+      buildGraphModel(graphDisplayLineage, flowDirection, autoLayoutEnabled || autoLayoutVisibleNodeIds ? graphDisplayLineage : graphLayoutLineage, {
+        showUnreachableCtes,
+        visibleNodeIds: autoLayoutVisibleNodeIds,
+      }),
+    [autoLayoutEnabled, autoLayoutVisibleNodeIds, flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
+  );
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
       return resolveInspectorColumnSelection(
@@ -434,7 +639,7 @@ export function LineageGraph({
       return;
     }
 
-    const initialSelection: GraphSelectionSnapshot = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
+    const initialSelection: GraphOriginSelection = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
     suppressInitialOutputSelectionRef.current = true;
     lastCommittedSelectionRef.current = initialSelection;
     applySelectionSnapshot(initialSelection);
@@ -546,19 +751,22 @@ export function LineageGraph({
           canToggleColumns: false,
           canCollapseUpstream: collapsibleGroups.has(node.id),
           collapsedGroup: collapsedLineage.groups.get(node.id),
+          showGroupControls: true,
           columnsVisible: !hiddenColumnNodeIds.has(node.id),
           forcedVisibleColumnIds,
           onCollapseUpstream: collapseUpstream,
           onExpandGroup: expandGroup,
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
-          selectedNodeId: selectedNodeCommentTargetId?.replace(/^node:/, '') ?? null,
+          dimmed: activeGraphSelection ? !activeGraphSelection.activeNodeIds.has(node.id) : false,
+          selectedNodeId: graphSelectedNodeId,
           selectedColumnId: graphSelectedColumnId,
+          originSelectedColumnId: graphOriginSelectedColumnId,
           selectedCommentTargetIds,
           selectedRuleExpressionByColumnId,
           activeCommentTargetId,
           viewportZoom,
-          activeLineageRootColumnIds,
+          activeLineageRootColumnIds: visibleActiveLineageRootColumnIds,
           highlightedNodeIds: columnHighlights.highlightedNodeIds,
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           highlightedNodeImpactLabels: columnHighlights.highlightedNodeImpactLabels,
@@ -566,7 +774,8 @@ export function LineageGraph({
           highlightedSourceDataLabels: columnHighlights.highlightedSourceDataLabels,
           highlightedSourceDataNodeIds: columnHighlights.highlightedSourceDataNodeIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
-          passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
+          passthroughColumnsCompressed:
+            node.data.lineageNode.type !== 'output' && graphSelectedNodeId !== node.id && !expandedPassthroughNodeIds.has(node.id),
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
@@ -580,6 +789,7 @@ export function LineageGraph({
       columnHighlights.highlightedSourceDataLabels,
       columnHighlights.highlightedSourceDataNodeIds,
       columnHighlights.sourceColumnIds,
+      activeGraphSelection,
       collapseUpstream,
       collapsedLineage.groups,
       collapsibleGroups,
@@ -593,20 +803,23 @@ export function LineageGraph({
       selectColumn,
       closeComment,
       focusComment,
+      visibleActiveLineageRootColumnIds,
       activeCommentTargetId,
       activeLineageRootColumnIds,
       viewportZoom,
       graphSelectedColumnId,
+      graphSelectedNodeId,
+      graphOriginSelectedColumnId,
       selectedColumn?.columnId,
       selectedRuleExpressionByColumnId,
       selectedCommentTargetIds,
-      selectedNodeCommentTargetId,
       togglePassthroughColumns,
     ],
   );
   const graphEdges = useMemo<GraphEdge[]>(
     () =>
       graph.edges.map((edge) => {
+        const edgeDimmed = activeGraphSelection ? !activeGraphSelection.activeEdgeIds.has(edge.id) : false;
         const displayEdge = showEdgeAliases
           ? edge
           : {
@@ -615,14 +828,24 @@ export function LineageGraph({
               labelBgPadding: undefined,
               labelBgBorderRadius: undefined,
             };
+        const dimmedEdge = edgeDimmed
+          ? {
+              ...displayEdge,
+              className: [displayEdge.className, 'lineage-edge-dimmed'].filter(Boolean).join(' '),
+              style: {
+                ...(displayEdge.style ?? {}),
+                opacity: 0.16,
+              },
+            }
+          : displayEdge;
 
         if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
-          return displayEdge;
+          return dimmedEdge;
         }
 
-        const baseStyle = displayEdge.style ?? {};
+        const baseStyle = dimmedEdge.style ?? {};
         return {
-          ...displayEdge,
+          ...dimmedEdge,
           animated: false,
           zIndex: 1000,
           style: {
@@ -639,7 +862,7 @@ export function LineageGraph({
               : edge.markerEnd,
         };
       }),
-    [columnHighlights.edgeTone, columnHighlights.highlightedEdgeIds, graph.edges, showEdgeAliases],
+    [activeGraphSelection, columnHighlights.edgeTone, columnHighlights.highlightedEdgeIds, graph.edges, showEdgeAliases],
   );
   const graphStructureKey = useMemo(
     () =>
@@ -651,20 +874,74 @@ export function LineageGraph({
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
+  const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
+    for (const change of changes) {
+      if (change.type === 'position' && change.position) {
+        draggedNodeIdsRef.current.add(change.id);
+      }
+    }
+    onNodesChange(changes);
+  }, [onNodesChange]);
 
   useEffect(() => {
-    if (previousLineageRef.current !== lineage || previousFlowDirectionRef.current !== flowDirection) {
+    const lineageChanged = previousLineageRef.current !== lineage;
+    const flowDirectionChanged = previousFlowDirectionRef.current !== flowDirection;
+    if (lineageChanged || flowDirectionChanged) {
       previousLineageRef.current = lineage;
       previousFlowDirectionRef.current = flowDirection;
+      previousNodeStructureKeyRef.current = graphStructureKey;
+      previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
+      previousAutoLayoutEnabledRef.current = autoLayoutEnabled;
+      outputViewportCorrectionPendingRef.current = lineageChanged;
       nodePositionsRef.current = new Map(graphNodes.map((node) => [node.id, node.position]));
       setNodes(graphNodes);
       return;
     }
 
+    const graphStructureChanged =
+      previousNodeStructureKeyRef.current !== null && previousNodeStructureKeyRef.current !== graphStructureKey;
+    const autoLayoutJustEnabled = autoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
+    const autoLayoutRequested = autoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
+    previousNodeStructureKeyRef.current = graphStructureKey;
+    previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
+    previousAutoLayoutEnabledRef.current = autoLayoutEnabled;
+
     setNodes((currentNodes) => {
       const currentById = new Map(currentNodes.map((node) => [node.id, node]));
+      const originNodeId = getGraphOriginNodeId(graphDisplaySnapshot.originSelection);
+      const visibleOriginNodeId = mapToVisibleNodeId(originNodeId, visibleNodeIdBySourceNodeId);
+      const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
+      const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
+      const autoLayoutOffset =
+        autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested) && currentOriginNode && nextOriginNode
+          ? {
+              x: currentOriginNode.position.x - nextOriginNode.position.x,
+              y: currentOriginNode.position.y - nextOriginNode.position.y,
+            }
+          : null;
       return graphNodes.map((node) => {
         const current = currentById.get(node.id);
+        if (autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested)) {
+          const savedPosition = nodePositionsRef.current.get(node.id);
+          const shouldKeepDraggedPosition = draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
+          return {
+            ...node,
+            dragging: current?.dragging,
+            measured: current?.measured,
+            position: shouldKeepDraggedPosition
+              ? current?.position ?? savedPosition!
+              : current || !savedPosition
+              ? autoLayoutOffset
+                ? {
+                    x: node.position.x + autoLayoutOffset.x,
+                    y: node.position.y + autoLayoutOffset.y,
+                  }
+                : node.position
+              : savedPosition,
+            selected: current?.selected,
+          };
+        }
+
         if (!current) {
           return {
             ...node,
@@ -681,7 +958,7 @@ export function LineageGraph({
         };
       });
     });
-  }, [flowDirection, graphNodes, lineage, setNodes]);
+  }, [autoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -710,15 +987,26 @@ export function LineageGraph({
     if (!focusTarget) {
       return;
     }
+    if (lastHandledFocusExpansionNonceRef.current === focusTarget.nonce) {
+      return;
+    }
+    lastHandledFocusExpansionNonceRef.current = focusTarget.nonce;
+    expandGroupForNode(focusTarget.nodeId);
+  }, [expandGroupForNode, focusTarget?.nodeId, focusTarget?.nonce]);
+
+  useEffect(() => {
+    if (!focusTarget) {
+      return;
+    }
     if (lastHandledFocusNonceRef.current === focusTarget.nonce) {
       return;
     }
 
-    const targetNode = nodes.find((node) => node.id === focusTarget.nodeId);
+    const visibleFocusNodeId = mapToVisibleNodeId(focusTarget.nodeId, visibleNodeIdBySourceNodeId);
+    const targetNode = nodes.find((node) => node.id === visibleFocusNodeId);
     if (!targetNode) {
       return;
     }
-    lastHandledFocusNonceRef.current = focusTarget.nonce;
 
     const timeoutId = window.setTimeout(() => {
       const shell = graphShellRef.current;
@@ -727,36 +1015,63 @@ export function LineageGraph({
       }
 
       const shellRect = shell.getBoundingClientRect();
-      const width = targetNode.measured?.width ?? targetNode.width ?? 220;
       const height = targetNode.measured?.height ?? targetNode.height ?? 140;
       const zoom = viewportZoom;
-      const x = shellRect.width / 2 - (targetNode.position.x + width / 2) * zoom;
+      const leftPadding = 48;
+      const x = leftPadding - targetNode.position.x * zoom;
       const y = shellRect.height / 2 - (targetNode.position.y + height / 2) * zoom;
 
+      lastHandledFocusNonceRef.current = focusTarget.nonce;
       void flowInstanceRef.current?.setViewport({ x, y, zoom }, { duration: 220 });
     }, 200);
 
     return () => window.clearTimeout(timeoutId);
-  }, [focusTarget?.nodeId, focusTarget?.nonce]);
+  }, [focusTarget?.nodeId, focusTarget?.nonce, nodes, viewportZoom, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
-    if (!highlightTargetRequest) {
-      return;
-    }
-    if (lastHandledHighlightNonceRef.current === highlightTargetRequest.nonce) {
+    if (!outputViewportCorrectionPendingRef.current) {
       return;
     }
 
-    lastHandledHighlightNonceRef.current = highlightTargetRequest.nonce;
-    setHighlightTarget(highlightTargetRequest.target);
-  }, [highlightTargetRequest?.nonce, highlightTargetRequest?.target]);
+    const outputNodeId = initialOutputNodeId ? mapToVisibleNodeId(initialOutputNodeId, visibleNodeIdBySourceNodeId) : null;
+    const outputNode = outputNodeId ? nodes.find((node) => node.id === outputNodeId) : undefined;
+    if (!outputNode) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      const shell = graphShellRef.current;
+      const flow = flowInstanceRef.current;
+      if (!shell || !flow) {
+        return;
+      }
+
+      const shellRect = shell.getBoundingClientRect();
+      const viewport = flow.toObject().viewport;
+      const width = outputNode.measured?.width ?? outputNode.width ?? 220;
+      const height = outputNode.measured?.height ?? outputNode.height ?? 140;
+      if (isGraphNodeFullyInView(outputNode.position, width, height, viewport, shellRect)) {
+        outputViewportCorrectionPendingRef.current = false;
+        return;
+      }
+
+      const zoom = viewport.zoom;
+      const leftPadding = 48;
+      const x = leftPadding - outputNode.position.x * zoom;
+      const y = shellRect.height / 2 - (outputNode.position.y + height / 2) * zoom;
+      outputViewportCorrectionPendingRef.current = false;
+      void flow.setViewport({ x, y, zoom }, { duration: 180 });
+    }, 240);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [initialOutputNodeId, nodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     setDismissedCommentTargetIds(new Set());
     setHiddenColumnNodeIds(createDefaultHiddenColumnNodeIds(lineage.nodes, flowDirection));
-    setCollapsedGroupRootIds(collectDefaultCollapsedGroupRootIds(lineage));
+    setCollapsedGroupRootIds(createInitialCollapsedGroupRootIds(collectCollapsibleUpstreamGroups(lineage)));
     setExpandedPassthroughNodeIds(new Set());
-    const initialSelection: GraphSelectionSnapshot = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
+    const initialSelection: GraphOriginSelection = initialOutputNodeId ? { kind: 'node', nodeId: initialOutputNodeId } : { kind: 'none' };
     suppressInitialOutputSelectionRef.current = true;
     applySelectionSnapshot(initialSelection);
     commitSelectionHistory(initialSelection, 'replace');
@@ -774,9 +1089,25 @@ export function LineageGraph({
           <input aria-label="Show aliases" type="checkbox" checked={showEdgeAliases} onChange={(event) => setShowEdgeAliases(event.target.checked)} />
           Aliases
         </label>
+        {hasParameterNodes ? (
+          <label className="graph-alias-toggle">
+            <input aria-label="Show parameters" type="checkbox" checked={showParameterNodes} onChange={(event) => setShowParameterNodes(event.target.checked)} />
+            Parameters
+          </label>
+        ) : null}
+        {hasUnreachableCtes ? (
+          <label className="graph-alias-toggle">
+            <input aria-label="Show unused CTEs" type="checkbox" checked={showUnreachableCtes} onChange={(event) => setShowUnreachableCtes(event.target.checked)} />
+            Unused CTEs
+          </label>
+        ) : null}
+        <button className="graph-column-toggle" type="button" onClick={resetCollapsedGroups}>
+          <Rows3 size={15} />
+          Collapse groups
+        </button>
         <label className="graph-alias-toggle">
-          <input aria-label="Show parameters" type="checkbox" checked={showParameterNodes} onChange={(event) => setShowParameterNodes(event.target.checked)} />
-          Parameters
+          <input aria-label="Auto layout" type="checkbox" checked={autoLayoutEnabled} onChange={(event) => setAutoLayoutEnabled(event.target.checked)} />
+          Auto layout
         </label>
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
@@ -789,8 +1120,12 @@ export function LineageGraph({
           edges={edges}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
+          onNodeDragStop={(_, node) => {
+            draggedNodeIdsRef.current.add(node.id);
+            nodePositionsRef.current.set(node.id, node.position);
+          }}
           defaultViewport={defaultViewport}
           onInit={(instance) => {
             flowInstanceRef.current = instance;
@@ -809,11 +1144,13 @@ export function LineageGraph({
             pannable
             zoomable
             nodeColor={(node) => {
-              const type = (node.data as { lineageNode?: { type?: string } } | undefined)?.lineageNode?.type;
+              const lineageNode = (node.data as { lineageNode?: LineageNode } | undefined)?.lineageNode;
+              const type = lineageNode?.type;
               if (type === 'table') return '#dbeafe';
               if (type === 'cte') return '#dcfce7';
               if (type === 'parameter_table') return '#ccfbf1';
               if (type === 'output') return '#f3e8ff';
+              if (lineageNode && isUnionNode(lineageNode)) return '#ffe4e6';
               return '#fef3c7';
             }}
           />
@@ -823,14 +1160,146 @@ export function LineageGraph({
   );
 }
 
+function collectLineageSelectionWithDownstream(rootNodeId: string, edges: LineageEdge[]) {
+  const activeNodeIds = new Set<string>([rootNodeId]);
+  const activeEdgeIds = new Set<string>();
+  const upstreamQueue = [rootNodeId];
+  const downstreamQueue = [rootNodeId];
+
+  while (upstreamQueue.length > 0) {
+    const currentNodeId = upstreamQueue.shift();
+    if (!currentNodeId) {
+      continue;
+    }
+
+    for (const edge of edges) {
+      if (edge.type !== 'dataFlow' || edge.target !== currentNodeId) {
+        continue;
+      }
+
+      activeEdgeIds.add(edge.id);
+
+      const nextNodeId = edge.source;
+      if (!activeNodeIds.has(nextNodeId)) {
+        activeNodeIds.add(nextNodeId);
+        upstreamQueue.push(nextNodeId);
+      }
+    }
+  }
+
+  while (downstreamQueue.length > 0) {
+    const currentNodeId = downstreamQueue.shift();
+    if (!currentNodeId) {
+      continue;
+    }
+
+    for (const edge of edges) {
+      if (edge.type !== 'dataFlow' || edge.source !== currentNodeId) {
+        continue;
+      }
+
+      activeEdgeIds.add(edge.id);
+
+      const nextNodeId = edge.target;
+      if (!activeNodeIds.has(nextNodeId)) {
+        activeNodeIds.add(nextNodeId);
+        downstreamQueue.push(nextNodeId);
+      }
+    }
+  }
+
+  return { activeEdgeIds, activeNodeIds };
+}
+
+function createVisibleNodeIdBySourceNodeId(groups: Map<string, { helperNodeIds: string[] }>) {
+  const visibleNodeIdBySourceNodeId = new Map<string, string>();
+  for (const [rootNodeId, group] of groups) {
+    visibleNodeIdBySourceNodeId.set(rootNodeId, rootNodeId);
+    for (const helperNodeId of group.helperNodeIds) {
+      visibleNodeIdBySourceNodeId.set(helperNodeId, rootNodeId);
+    }
+  }
+  return visibleNodeIdBySourceNodeId;
+}
+
+function isGraphNodeFullyInView(
+  position: { x: number; y: number },
+  width: number,
+  height: number,
+  viewport: { x: number; y: number; zoom: number },
+  shellRect: DOMRect,
+) {
+  const tolerance = 4;
+  const left = position.x * viewport.zoom + viewport.x;
+  const top = position.y * viewport.zoom + viewport.y;
+  const right = left + width * viewport.zoom;
+  const bottom = top + height * viewport.zoom;
+  return left >= -tolerance && top >= -tolerance && right <= shellRect.width + tolerance && bottom <= shellRect.height + tolerance;
+}
+
+function mapToVisibleNodeId(nodeId: string | null | undefined, visibleNodeIdBySourceNodeId: Map<string, string>) {
+  if (!nodeId) {
+    return null;
+  }
+  return visibleNodeIdBySourceNodeId.get(nodeId) ?? nodeId;
+}
+
+function getGraphOriginNodeId(selection: GraphOriginSelection) {
+  if (selection.kind === 'none') {
+    return null;
+  }
+  return selection.nodeId;
+}
+
+function areStringSetsEqual(left: Set<string> | undefined, right: Set<string> | undefined) {
+  if (!left || !right) {
+    return left === right;
+  }
+  if (left.size !== right.size) {
+    return false;
+  }
+  for (const value of left) {
+    if (!right.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function readRenderedNodePosition(container: HTMLElement | null, nodeId: string) {
+  const element = container?.querySelector(`[data-id="${cssEscape(nodeId)}"]`);
+  if (!(element instanceof HTMLElement)) {
+    return null;
+  }
+
+  const transform = window.getComputedStyle(element).transform;
+  const matrix = transform.match(/^matrix\(([^)]+)\)$/);
+  if (!matrix) {
+    return null;
+  }
+
+  const values = matrix[1].split(',').map((value) => Number(value.trim()));
+  if (values.length < 6 || values.some((value) => Number.isNaN(value))) {
+    return null;
+  }
+  return { x: values[4], y: values[5] };
+}
+
+function cssEscape(value: string) {
+  if (typeof CSS !== 'undefined' && CSS.escape) {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, '\\$&');
+}
+
 export function LineageInspector({
   activeCaseRule,
   expandedExpressionColumnIds,
   lineage,
   onClearCaseRule,
   onFocusNode,
-  onHighlightTarget,
   onClearInspectorCard,
+  onDeleteOutputTitle,
   onRenameOutputTitle,
   onSelectInspectorCard,
   onToggleExpressionBreakdown,
@@ -845,7 +1314,7 @@ export function LineageInspector({
   onClearInspectorCard?: (recordHistory?: boolean) => void;
   onClearCaseRule?: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onHighlightTarget?: (target: GraphHighlightTarget) => void;
+  onDeleteOutputTitle?: () => void;
   onRenameOutputTitle?: (title: string) => void;
   onSelectInspectorCard?: (selection: InspectorCardSelection) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
@@ -854,9 +1323,12 @@ export function LineageInspector({
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const [editingOutputTitle, setEditingOutputTitle] = useState(false);
+  const [confirmDeleteOutputTitle, setConfirmDeleteOutputTitle] = useState(false);
   const [draftOutputTitle, setDraftOutputTitle] = useState('');
+  const [commentMode, setCommentMode] = useState<InspectorCommentMode>(readInspectorCommentMode);
   const selectedNode = selection?.kind === 'node' ? selection.node : undefined;
   const canRenameOutput = selectedNode?.type === 'output' && Boolean(onRenameOutputTitle);
+  const canDeleteOutput = selectedNode?.type === 'output' && Boolean(onDeleteOutputTitle);
   const inspectorTitle = selection ? (selection.kind === 'column' ? selection.selected.column.name : selection.node.label) : 'No selection';
 
   useEffect(() => {
@@ -864,9 +1336,16 @@ export function LineageInspector({
       setDraftOutputTitle(selectedNode?.label ?? '');
     }
   }, [editingOutputTitle, selectedNode?.label]);
+  useEffect(() => {
+    setConfirmDeleteOutputTitle(false);
+  }, [selectedNode?.id, selectedNode?.label]);
+  useEffect(() => {
+    writeInspectorCommentMode(commentMode);
+  }, [commentMode]);
 
   const startEditingOutputTitle = () => {
     setDraftOutputTitle(selectedNode?.label ?? '');
+    setConfirmDeleteOutputTitle(false);
     setEditingOutputTitle(true);
   };
 
@@ -878,6 +1357,14 @@ export function LineageInspector({
   const saveOutputTitle = () => {
     onRenameOutputTitle?.(draftOutputTitle);
     setEditingOutputTitle(false);
+  };
+  const requestDeleteOutputTitle = () => {
+    if (!confirmDeleteOutputTitle) {
+      setConfirmDeleteOutputTitle(true);
+      return;
+    }
+    onDeleteOutputTitle?.();
+    setConfirmDeleteOutputTitle(false);
   };
 
   const copyCteSql = async () => {
@@ -932,15 +1419,38 @@ export function LineageInspector({
               <button className="lineage-copy-button" type="button" onClick={cancelEditingOutputTitle}>Cancel</button>
             </form>
           ) : (
-            <h2>{inspectorTitle}</h2>
+            <h2>
+              {canRenameOutput ? (
+                <button className="lineage-inspector-title-button" type="button" onClick={startEditingOutputTitle}>
+                  {inspectorTitle}
+                </button>
+              ) : (
+                inspectorTitle
+              )}
+            </h2>
           )}
         </div>
-        {canRenameOutput && !editingOutputTitle ? (
-          <button className="lineage-copy-button lineage-output-title-edit-button" type="button" onClick={startEditingOutputTitle}>
-            <Pencil size={12} aria-hidden="true" />
-            Edit
-          </button>
-        ) : null}
+        <div className="lineage-inspector-header-actions">
+          {selection?.kind === 'column' ? <InspectorCommentModeControl mode={commentMode} onChange={setCommentMode} /> : null}
+          {canRenameOutput && !editingOutputTitle ? (
+            <div className="lineage-output-title-actions">
+              <button className="lineage-copy-button lineage-output-title-edit-button" type="button" onClick={startEditingOutputTitle}>
+                <Pencil size={12} aria-hidden="true" />
+                Edit
+              </button>
+              {canDeleteOutput ? (
+                <button
+                  className={`lineage-copy-button lineage-output-title-delete-button ${confirmDeleteOutputTitle ? 'lineage-output-title-delete-confirm' : ''}`}
+                  type="button"
+                  onClick={requestDeleteOutputTitle}
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                  {confirmDeleteOutputTitle ? 'Confirm' : 'Delete'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
       {selection ? (
         selection.kind === 'column' ? (
@@ -952,14 +1462,14 @@ export function LineageInspector({
             onClearCaseRule={onClearCaseRule}
             onClearInspectorCard={onClearInspectorCard}
             onFocusNode={onFocusNode}
-            onHighlightTarget={onHighlightTarget}
             onSelectInspectorCard={onSelectInspectorCard}
             onToggleExpressionBreakdown={onToggleExpressionBreakdown}
             problemIntent={problemIntent}
             selection={selection}
+            commentMode={commentMode}
           />
         ) : (
-          <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
+          <NodeInspector commentMode={commentMode} copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
         )
       ) : (
         <div className="lineage-inspector-empty">Select a column or node title to inspect lineage details.</div>
@@ -970,11 +1480,11 @@ export function LineageInspector({
 
 function ColumnInspector({
   activeCaseRule,
+  commentMode,
   expandedExpressionColumnIds,
   lineage,
   onClearCaseRule,
   onFocusNode,
-  onHighlightTarget,
   onClearInspectorCard,
   onSelectInspectorCard,
   onToggleExpressionBreakdown,
@@ -984,12 +1494,12 @@ function ColumnInspector({
 }: {
   activeInspectorCardId?: string | null;
   activeCaseRule?: CaseRuleSelection | null;
+  commentMode: InspectorCommentMode;
   expandedExpressionColumnIds?: Set<string>;
   lineage: LineageModel;
   onClearCaseRule?: () => void;
   onClearInspectorCard?: (recordHistory?: boolean) => void;
   onFocusNode?: (nodeId: string) => void;
-  onHighlightTarget?: (target: GraphHighlightTarget) => void;
   onSelectInspectorCard?: (selection: InspectorCardSelection) => void;
   onToggleExpressionBreakdown?: (columnId: string) => void;
   problemIntent: ProblemIntent;
@@ -1019,16 +1529,6 @@ function ColumnInspector({
   const selectWholeColumn = () => {
     onClearInspectorCard?.(true);
     onFocusNode?.(selection.selected.node.id);
-    onHighlightTarget?.({
-      column: {
-        ...inspectorItemToHighlightColumn(selection.selected),
-        populationNodeIds: populationNodeIdsFromPacket(diagnosticPacket, problemIntent),
-        populationImpactLabelsByNodeId: populationImpactLabelsByNodeIdFromPacket(diagnosticPacket, problemIntent),
-        sourceDataLabelsByNodeId: sourceDataLabelsByNodeIdFromPacket(diagnosticPacket, problemIntent),
-        sourceDataNodeIds: sourceDataNodeIdsFromPacket(diagnosticPacket, problemIntent),
-      },
-      kind: 'column',
-    });
     onClearCaseRule?.();
   };
   const toggleExpressionBreakdown = () => {
@@ -1036,8 +1536,8 @@ function ColumnInspector({
     onClearCaseRule?.();
     onToggleExpressionBreakdown?.(selection.selected.column.id);
   };
-  const selectInspectorCard = (cardId: string, nodeId?: string, target?: GraphHighlightTarget) => {
-    onSelectInspectorCard?.({ cardId, focusNodeId: nodeId, highlightTarget: target });
+  const selectInspectorCard = (cardId: string, nodeId?: string, columnId?: string) => {
+    onSelectInspectorCard?.({ cardId, columnId, focusNodeId: nodeId });
   };
   const copyDiagnosticJson = async () => {
     try {
@@ -1054,6 +1554,7 @@ function ColumnInspector({
     <div className="lineage-inspector-body">
       <InspectorSourceGroups
         activeInspectorCardId={activeInspectorCardId}
+        commentMode={commentMode}
         items={selection.sources}
         onFocusNode={onFocusNode}
         onSelectInspectorCard={selectInspectorCard}
@@ -1094,6 +1595,7 @@ function ColumnInspector({
           ) : activeTab === 'upstream' ? (
             <InspectorUpstreamTree
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
               onFocusNode={onFocusNode}
               onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
@@ -1120,7 +1622,6 @@ function ColumnInspector({
               rootItem={selection.selected}
               tree={selection.upstreamTree}
               onFocusNode={onFocusNode}
-              onHighlightTarget={onHighlightTarget}
               onCopyJson={() => void copyDiagnosticJson()}
               onSelectInspectorCard={selectInspectorCard}
               onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
@@ -1164,24 +1665,28 @@ function ColumnScopeSqlPanel({ executableSql, sql }: { executableSql?: string; s
   return (
     <section className="lineage-inspector-section lineage-inspector-sql-section">
       <div className="lineage-inspector-actions lineage-inspector-sql-actions">
-        <a
-          aria-disabled={!executableSql}
-          className={`lineage-open-link nodrag ${executableSql ? '' : 'lineage-action-disabled'}`}
-          href={executableSql ? buildViewerSqlUrl(executableSql) : undefined}
-          target="_blank"
-          rel="noreferrer"
-        >
-          <ExternalLink size={12} aria-hidden="true" />
-          Open in viewer
-        </a>
-        <button className="lineage-copy-button nodrag" type="button" disabled={!executableSql} onClick={() => void copyExecutableSql()}>
-          <Copy size={12} aria-hidden="true" />
-          {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
-        </button>
-        <label className="lineage-inspector-sql-toggle">
-          <input type="checkbox" checked={includeCtes} onChange={(event) => setIncludeCtes(event.currentTarget.checked)} />
-          <span>CTE</span>
-        </label>
+        <div className="lineage-inspector-sql-actions-left">
+          <label className="lineage-inspector-sql-toggle">
+            <input type="checkbox" checked={includeCtes} onChange={(event) => setIncludeCtes(event.currentTarget.checked)} />
+            <span>CTE</span>
+          </label>
+        </div>
+        <div className="lineage-inspector-sql-actions-right">
+          <a
+            aria-disabled={!executableSql}
+            className={`lineage-open-link nodrag ${executableSql ? '' : 'lineage-action-disabled'}`}
+            href={executableSql ? buildViewerSqlUrl(executableSql) : undefined}
+            target="_blank"
+            rel="noreferrer"
+          >
+            <ExternalLink size={12} aria-hidden="true" />
+            Open in viewer
+          </a>
+          <button className="lineage-copy-button nodrag" type="button" disabled={!executableSql} onClick={() => void copyExecutableSql()}>
+            <Copy size={12} aria-hidden="true" />
+            {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
+          </button>
+        </div>
       </div>
       <SqlCodeMirror className="lineage-inspector-code" value={displaySql} />
     </section>
@@ -1202,7 +1707,6 @@ function ColumnDiagnosticPacketPanel({
   onClearRoot: () => void;
   onCopyJson: () => void;
   onFocusNode?: (nodeId: string) => void;
-  onHighlightTarget?: (target: GraphHighlightTarget) => void;
   onSelectInspectorCard?: SelectInspectorCard;
   onToggleColumnExpressionBreakdown?: (columnId: string) => void;
   onToggleRootExpressionBreakdown?: () => void;
@@ -1238,10 +1742,6 @@ function DiagnosticOutputBlock({
   );
 }
 
-function populationNodeIdsFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): string[] {
-  return Object.keys(populationImpactLabelsByNodeIdFromPacket(packet, problemIntent));
-}
-
 function resolvePopulationHighlightContext(
   lineage: LineageModel,
   target: GraphHighlightColumnTarget,
@@ -1268,10 +1768,6 @@ function resolvePopulationHighlightContext(
 
 function populationImpactLabelsByNodeIdFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): Record<string, string[]> {
   return populationImpactLabelsByNodeIdForIntent(packet, problemIntent);
-}
-
-function sourceDataNodeIdsFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): string[] {
-  return Object.keys(sourceDataLabelsByNodeIdFromPacket(packet, problemIntent));
 }
 
 function sourceDataLabelsByNodeIdFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): Record<string, string[]> {
@@ -1307,11 +1803,73 @@ function ProblemIntentSelector({
   );
 }
 
+function InspectorCommentModeControl({
+  mode,
+  onChange,
+}: {
+  mode: InspectorCommentMode;
+  onChange: (mode: InspectorCommentMode) => void;
+}) {
+  return (
+    <div className="lineage-inspector-comment-mode" aria-label="Comment display">
+      <span>Comment</span>
+      <div className="lineage-inspector-comment-mode-buttons">
+        {(['none', 'smart', 'all'] as const).map((option) => (
+          <button
+            aria-pressed={mode === option}
+            className={mode === option ? 'lineage-inspector-comment-mode-active' : ''}
+            key={option}
+            type="button"
+            onClick={() => onChange(option)}
+          >
+            {formatInspectorCommentMode(option)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatInspectorCommentMode(mode: InspectorCommentMode) {
+  if (mode === 'none') return 'None';
+  if (mode === 'smart') return 'Smart';
+  return 'All';
+}
+
+function isInspectorCommentMode(value: string | null): value is InspectorCommentMode {
+  return value === 'all' || value === 'none' || value === 'smart';
+}
+
+function readInspectorCommentMode(): InspectorCommentMode {
+  if (typeof window === 'undefined') {
+    return 'all';
+  }
+  try {
+    const stored = window.localStorage.getItem(inspectorCommentModeStorageKey);
+    return isInspectorCommentMode(stored) ? stored : 'all';
+  } catch {
+    return 'all';
+  }
+}
+
+function writeInspectorCommentMode(mode: InspectorCommentMode) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(inspectorCommentModeStorageKey, mode);
+  } catch {
+    // Ignore storage quota or privacy mode failures.
+  }
+}
+
 function NodeInspector({
+  commentMode,
   copyState,
   node,
   onCopySql,
 }: {
+  commentMode: InspectorCommentMode;
   copyState: 'idle' | 'copied' | 'failed';
   node: LineageNode;
   onCopySql: () => void;
@@ -1325,7 +1883,7 @@ function NodeInspector({
           <span>columns</span>
         </div>
       </section>
-      {node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
+      {commentMode !== 'none' && node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
       {getNodeSql(node) ? (
         <section className="lineage-inspector-section lineage-inspector-sql-section">
           <div className="lineage-inspector-actions">
@@ -1347,11 +1905,13 @@ function NodeInspector({
 
 function InspectorSourceGroups({
   activeInspectorCardId,
+  commentMode,
   items,
   onFocusNode,
   onSelectInspectorCard,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -1365,6 +1925,7 @@ function InspectorSourceGroups({
           {groups.map((group) => (
             <InspectorSourceGroup
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               group={group}
               key={group.items[0]?.node.id ?? 'source'}
               onFocusNode={onFocusNode}
@@ -1381,11 +1942,12 @@ function InspectorSourceGroups({
 
 function InspectorSourceGroup({
   activeInspectorCardId,
+  commentMode,
   group,
-  onFocusNode,
   onSelectInspectorCard,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   group: InspectorColumnGroup;
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -1396,8 +1958,7 @@ function InspectorSourceGroup({
   }
   const cardId = inspectorSourceGroupKey(node);
   const active = activeInspectorCardId === cardId;
-  const focusNode = () => onFocusNode?.(node.id);
-  const selectGroup = () => onSelectInspectorCard?.(cardId, node.id, { kind: 'nodes', nodeIds: [node.id] });
+  const selectGroup = () => onSelectInspectorCard?.(cardId, node.id, group.items.length === 1 ? group.items[0]?.column.id : undefined);
   return (
     <div
       className={`lineage-inspector-source-group lineage-inspector-source-group-selectable ${active ? 'lineage-inspector-source-group-active' : ''}`}
@@ -1412,18 +1973,9 @@ function InspectorSourceGroup({
       }}
     >
       <div className="lineage-inspector-source-heading">
-        <InspectorTypeBadge node={node} />
-        <button
-          className="lineage-inspector-node-link lineage-inspector-focus-button"
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            focusNode();
-          }}
-        >
-          {node.label}
-        </button>
+        <InspectorNodeMeta node={node} />
       </div>
+      <InspectorNodeComments node={node} visible={shouldShowNodeCommentsForItems(group.items, commentMode)} />
       <div className="lineage-inspector-source-columns">
         {group.items.map((item, index) => {
           const expressionSql =
@@ -1434,7 +1986,7 @@ function InspectorSourceGroup({
               key={`${item.column.id}:${index}`}
             >
               <span className="lineage-inspector-column-name">{item.column.name}</span>
-              {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+              <InspectorColumnComments column={item.column} mode={commentMode} />
               {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
             </div>
           );
@@ -1446,6 +1998,7 @@ function InspectorSourceGroup({
 
 function InspectorUpstreamTree({
   activeInspectorCardId,
+  commentMode,
   expandedExpressionColumnIds,
   expressionExpanded,
   hasExpressionBreakdown,
@@ -1459,6 +2012,7 @@ function InspectorUpstreamTree({
   tree,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   expandedExpressionColumnIds?: Set<string>;
   expressionExpanded?: boolean;
   hasExpressionBreakdown?: boolean;
@@ -1478,6 +2032,7 @@ function InspectorUpstreamTree({
         <div className="lineage-inspector-tree-node">
           <InspectorColumnCard
             active={rootActive}
+            commentMode={commentMode}
             item={rootItem}
             onClearCaseRule={onSelectRoot}
             onFocusNode={onFocusNode}
@@ -1492,6 +2047,7 @@ function InspectorUpstreamTree({
           {tree.length > 0 ? (
             <InspectorColumnTreeNodes
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               depth={1}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
               nodes={tree}
@@ -1512,6 +2068,7 @@ function InspectorUpstreamTree({
 
 function InspectorColumnTreeNodes({
   activeInspectorCardId,
+  commentMode,
   depth = 0,
   expandedExpressionColumnIds,
   nodes,
@@ -1522,6 +2079,7 @@ function InspectorColumnTreeNodes({
   rootItem,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   depth?: number;
   expandedExpressionColumnIds?: Set<string>;
   nodes: InspectorColumnTreeNode[];
@@ -1534,14 +2092,15 @@ function InspectorColumnTreeNodes({
   const renderNodes = groupTerminalInspectorTreeNodes(nodes);
   return (
     <div className="lineage-inspector-tree" style={{ '--lineage-inspector-tree-depth': depth } as CSSProperties}>
-      {renderNodes.map((entry, index) => {
-        const cardId = `${pathKey ?? 'tree'}/${inspectorTreeEntryKey(entry, depth, index)}`;
+      {renderNodes.map((entry) => {
+        const cardId = `${pathKey ?? 'tree'}/${inspectorTreeEntryKey(entry)}`;
         if (entry.kind === 'group') {
           return (
             <div className="lineage-inspector-tree-node" key={cardId}>
               <InspectorColumnGroupCard
                 active={activeInspectorCardId === cardId}
                 cardId={cardId}
+                commentMode={commentMode}
                 items={entry.items}
                 onFocusNode={onFocusNode}
                 onSelectInspectorCard={onSelectInspectorCard}
@@ -1558,12 +2117,12 @@ function InspectorColumnTreeNodes({
                 cardId={cardId}
                 onSelectInspectorCard={onSelectInspectorCard}
                 ownerNode={entry.node.ownerNode}
-                rootItem={entry.node.item}
                 rule={entry.node.rule}
               />
               {entry.node.children.length > 0 ? (
                 <InspectorColumnTreeNodes
                   activeInspectorCardId={activeInspectorCardId}
+                  commentMode={commentMode}
                   depth={depth + 1}
                   expandedExpressionColumnIds={expandedExpressionColumnIds}
                   nodes={entry.node.children}
@@ -1585,6 +2144,7 @@ function InspectorColumnTreeNodes({
               {entry.node.children.length > 0 ? (
                 <InspectorColumnTreeNodes
                   activeInspectorCardId={activeInspectorCardId}
+                  commentMode={commentMode}
                   depth={depth + 1}
                   expandedExpressionColumnIds={expandedExpressionColumnIds}
                   nodes={entry.node.children}
@@ -1605,6 +2165,7 @@ function InspectorColumnTreeNodes({
             <InspectorColumnCard
               active={activeInspectorCardId === cardId}
               cardId={cardId}
+              commentMode={commentMode}
               expressionExpanded={expandedExpressionColumnIds?.has(treeNode.item.column.id)}
               hasExpressionBreakdown={Boolean(onToggleExpressionBreakdown && (treeNode.item.column.caseRules?.length || treeNode.item.column.expressionTree))}
               item={treeNode.item}
@@ -1616,6 +2177,7 @@ function InspectorColumnTreeNodes({
             {treeNode.children.length > 0 ? (
               <InspectorColumnTreeNodes
                 activeInspectorCardId={activeInspectorCardId}
+                commentMode={commentMode}
                 depth={depth + 1}
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
                 nodes={treeNode.children}
@@ -1666,31 +2228,32 @@ function isTerminalGroupableColumnNode(node: InspectorColumnTreeNode): node is I
   return node.kind === 'column' && node.children.length === 0 && (node.item.node.type === 'table' || node.item.node.type === 'output');
 }
 
-function inspectorTreeEntryKey(entry: InspectorColumnTreeRenderEntry, depth: number, index: number) {
+function inspectorTreeEntryKey(entry: InspectorColumnTreeRenderEntry) {
   return entry.kind === 'group'
-    ? `group:${entry.items[0]?.node.id ?? 'unknown'}:${entry.items.map((item) => item.column.id).join(',')}:${depth}:${index}`
-    : inspectorTreeNodeKey(entry.node, depth, index);
+    ? `group:${entry.items[0]?.node.id ?? 'unknown'}:${entry.items.map((item) => item.column.id).join(',')}`
+    : inspectorTreeNodeKey(entry.node);
 }
 
-function inspectorTreeNodeKey(node: InspectorColumnTreeNode, depth: number, index: number) {
+function inspectorTreeNodeKey(node: InspectorColumnTreeNode) {
   if (node.kind === 'rule') {
-    return `rule:${node.ownerNode.id}:${node.rule.id}:${depth}:${index}`;
+    return `rule:${node.ownerNode.id}:${node.rule.id}`;
   }
   if (node.kind === 'expression') {
-    return `expression:${node.ownerNode.id}:${node.expression.kind}:${node.expression.sql}:${depth}:${index}`;
+    return `expression:${node.ownerNode.id}:${node.expression.kind}:${node.expression.sql}`;
   }
-  return `${node.item.node.id}:${node.item.column.id}:${depth}:${index}`;
+  return `column:${node.item.node.id}:${node.item.column.id}`;
 }
 
 function InspectorColumnGroupCard({
   active,
   cardId,
+  commentMode,
   items,
-  onFocusNode,
   onSelectInspectorCard,
 }: {
   active?: boolean;
   cardId: string;
+  commentMode: InspectorCommentMode;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -1700,15 +2263,7 @@ function InspectorColumnGroupCard({
     return null;
   }
 
-  const focusNode = (event?: { stopPropagation: () => void }) => {
-    event?.stopPropagation();
-    onFocusNode?.(node.id);
-  };
-  const selectGroup = () =>
-    onSelectInspectorCard?.(cardId, node.id, {
-      columns: items.map((item) => inspectorItemToHighlightColumn(item)),
-      kind: 'columns',
-    });
+  const selectGroup = () => onSelectInspectorCard?.(cardId, node.id, items.length === 1 ? items[0]?.column.id : undefined);
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -1726,16 +2281,14 @@ function InspectorColumnGroupCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-column-meta">
-        <InspectorTypeBadge node={node} />
-        <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
-          {node.label}
-        </button>
+        <InspectorNodeMeta node={node} />
       </div>
+      <InspectorNodeComments node={node} visible={shouldShowNodeCommentsForItems(items, commentMode)} />
       <div className="lineage-inspector-group-columns">
         {items.map((item) => (
           <div className="lineage-inspector-group-column" key={item.column.id}>
             <span className="lineage-inspector-column-name">{item.column.name}</span>
-            {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+            <InspectorColumnComments column={item.column} mode={commentMode} />
           </div>
         ))}
       </div>
@@ -1748,22 +2301,16 @@ function InspectorRuleCard({
   cardId,
   onSelectInspectorCard,
   ownerNode,
-  rootItem,
   rule,
 }: {
   active?: boolean;
   cardId: string;
   onSelectInspectorCard?: SelectInspectorCard;
   ownerNode: LineageNode;
-  rootItem: InspectorColumnItem;
   rule: LineageCaseRule;
 }) {
   const ownerType = ownerNode.recursive ? 'recursive' : ownerNode.type;
-  const selectRule = () =>
-    onSelectInspectorCard?.(cardId, ownerNode.id, {
-      column: inspectorItemToHighlightColumn(rootItem, mergeInspectorColumnRefs(rule.conditionUpstream, rule.resultUpstream)),
-      kind: 'column',
-    });
+  const selectRule = () => onSelectInspectorCard?.(cardId, ownerNode.id);
   const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
@@ -1833,12 +2380,12 @@ function InspectorExpressionTreeCard({ expression }: { expression: LineageExpres
 function InspectorColumnCard({
   active,
   cardId,
+  commentMode,
   expressionExpanded,
   hasExpressionBreakdown,
   hideExpression,
   item,
   onClearCaseRule,
-  onFocusNode,
   onSelectInspectorCard,
   onToggleExpressionBreakdown,
   root,
@@ -1848,6 +2395,7 @@ function InspectorColumnCard({
 }: {
   active?: boolean;
   cardId?: string;
+  commentMode: InspectorCommentMode;
   expressionExpanded?: boolean;
   hasExpressionBreakdown?: boolean;
   hideExpression?: boolean;
@@ -1865,17 +2413,13 @@ function InspectorColumnCard({
     !hideExpression && item.column.expressionSql && (showSimpleExpression || !isSimpleColumnReference(item.column.expressionSql))
       ? item.column.expressionSql
       : undefined;
-  const focusNode = (event?: { stopPropagation: () => void }) => {
-    event?.stopPropagation();
-    onFocusNode?.(item.node.id);
-  };
   const groupDetails = collectInspectorGroupDetails(item);
   const selectWholeColumn = () => {
     if (selectable) {
       if (onClearCaseRule) {
         onClearCaseRule();
       } else {
-        onSelectInspectorCard?.(cardId ?? inspectorItemKey(item), item.node.id, { column: inspectorItemToHighlightColumn(item), kind: 'column' });
+        onSelectInspectorCard?.(cardId ?? inspectorItemKey(item), item.node.id, item.column.id);
       }
     }
   };
@@ -1898,15 +2442,14 @@ function InspectorColumnCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-column-meta">
-        <InspectorTypeBadge node={item.node} />
-        <button className="lineage-inspector-node-link lineage-inspector-focus-button" type="button" onClick={focusNode}>
-          {item.node.label}
-        </button>
+        <InspectorNodeMeta node={item.node} />
       </div>
+      <InspectorNodeComments node={item.node} visible={shouldShowCommentsForColumn(item.column, commentMode)} />
       <span className="lineage-inspector-column-name">{item.column.name}</span>
-      {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
+      <InspectorColumnComments column={item.column} mode={commentMode} />
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
+      {item.column.unresolvedUpstream?.length ? <UnresolvedUpstreamNotice column={item.column} lineage={item.lineage} /> : null}
       {groupDetails ? <InspectorGroupDetails details={groupDetails} /> : null}
       {hasExpressionBreakdown ? (
         <button
@@ -1923,6 +2466,43 @@ function InspectorColumnCard({
       ) : null}
     </div>
   );
+}
+
+function UnresolvedUpstreamNotice({ column, lineage }: { column: LineageColumn; lineage?: LineageModel }) {
+  return (
+    <div className="lineage-inspector-deadlink">
+      <div className="lineage-inspector-deadlink-title">Unresolved upstream</div>
+      {column.unresolvedUpstream?.map((item, index) => (
+        <div className="lineage-inspector-deadlink-item" key={`${item.reason}:${item.sql}:${index}`}>
+          <code>{item.sql}</code>
+          <span>{formatUnresolvedReason(item, lineage)}</span>
+          <small>{item.suggestion}</small>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function formatUnresolvedReason(item: NonNullable<LineageColumn['unresolvedUpstream']>[number], lineage?: LineageModel): string {
+  if (item.reason === 'unknown_qualified_source') {
+    return 'The qualifier is not defined in this SELECT scope.';
+  }
+  if (item.reason === 'ambiguous_unqualified_column') {
+    const candidates = formatCandidateNodeLabels(item.candidateNodeIds, lineage);
+    return candidates ? `The unqualified column matches multiple sources: ${candidates}.` : 'The unqualified column matches multiple sources.';
+  }
+  const candidates = formatCandidateNodeLabels(item.candidateNodeIds, lineage);
+  return candidates
+    ? `The source is unknown across available sources: ${candidates}.`
+    : 'The source is unknown. DDL/schema facts or an explicit qualifier may be required.';
+}
+
+function formatCandidateNodeLabels(candidateNodeIds: string[] | undefined, lineage?: LineageModel): string | undefined {
+  if (!candidateNodeIds || candidateNodeIds.length === 0) {
+    return undefined;
+  }
+  const nodesById = new Map(lineage?.nodes.map((node) => [node.id, node.label]) ?? []);
+  return candidateNodeIds.map((nodeId) => nodesById.get(nodeId) ?? nodeId).join(', ');
 }
 
 function InspectorGroupDetails({ details }: { details: { grainSql?: string; inputSql?: string } }) {
@@ -1987,16 +2567,6 @@ function inspectorItemKey(item: InspectorColumnItem) {
   return `${item.node.id}:${item.column.id}`;
 }
 
-function inspectorItemToHighlightColumn(item: InspectorColumnItem, upstreamRefs?: LineageColumnRef[]): GraphHighlightColumnTarget {
-  return {
-    columnId: item.column.id,
-    columnName: item.column.name,
-    nodeId: item.node.id,
-    scopeId: item.column.scopeId,
-    upstreamRefs,
-  };
-}
-
 function inspectorSourceGroupKey(node: LineageNode) {
   return `source:${node.id}`;
 }
@@ -2031,7 +2601,7 @@ function hideParameterNodesForGraph(lineage: LineageModel): LineageModel {
   };
 }
 
-function isSameGraphSelectionSnapshot(left: GraphSelectionSnapshot, right: GraphSelectionSnapshot) {
+function isSameGraphSelectionSnapshot(left: GraphOriginSelection, right: GraphOriginSelection) {
   if (left.kind !== right.kind) {
     return false;
   }
@@ -2047,7 +2617,7 @@ function isSameGraphSelectionSnapshot(left: GraphSelectionSnapshot, right: Graph
   return false;
 }
 
-function readSelectionHistoryState(state: unknown): GraphSelectionSnapshot | null {
+function readSelectionHistoryState(state: unknown): GraphOriginSelection | null {
   if (!isRecord(state)) {
     return null;
   }
@@ -2082,12 +2652,151 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
 
+function InspectorNodeMeta({ node }: { node: LineageNode }) {
+  const sql = getNodeSql(node);
+  const canOpen = Boolean(sql) && isOpenableInspectorNode(node);
+  return (
+    <>
+      <InspectorTypeBadge node={node} />
+      <span className="lineage-inspector-node-name">{node.label}</span>
+      {canOpen ? (
+        <a
+          className="lineage-open-link lineage-inspector-node-open nodrag"
+          href={buildViewerSqlUrl(sql ?? '')}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in viewer"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <ExternalLink size={12} aria-hidden="true" />
+          Open
+        </a>
+      ) : null}
+    </>
+  );
+}
+
+function InspectorNodeComments({
+  node,
+  visible,
+}: {
+  node: LineageNode;
+  visible: boolean;
+}) {
+  return visible ? <InspectorCommentBlock label={formatInspectorNodeCommentLabel(node)} values={node.comments} variant="node" /> : null;
+}
+
+function InspectorColumnComments({ column, mode }: { column: LineageColumn; mode: InspectorCommentMode }) {
+  return shouldShowCommentsForColumn(column, mode) ? <InspectorCommentBlock label="Column comment" values={column.comments} variant="column" /> : null;
+}
+
+function shouldShowNodeCommentsForItems(items: InspectorColumnItem[], mode: InspectorCommentMode) {
+  if (mode === 'none') return false;
+  if (mode === 'all') return true;
+  return items.some((item) => isProcessedInspectorColumn(item.column));
+}
+
+function shouldShowCommentsForColumn(column: LineageColumn, mode: InspectorCommentMode) {
+  if (mode === 'none') return false;
+  if (mode === 'all') return true;
+  return isProcessedInspectorColumn(column);
+}
+
+function isProcessedInspectorColumn(column: LineageColumn) {
+  if (column.caseRules?.length || column.expressionTree) {
+    return true;
+  }
+  return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));
+}
+
+function InspectorCommentBlock({
+  label,
+  values,
+  variant,
+}: {
+  label: string;
+  values?: string[];
+  variant: 'column' | 'node';
+}) {
+  const comments = values?.filter((value) => value.trim().length > 0) ?? [];
+  const commentKey = comments.join('\u0000');
+  const [expanded, setExpanded] = useState(false);
+  const [clamped, setClamped] = useState(false);
+  const commentTextRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (comments.length === 0 || expanded) {
+      return;
+    }
+
+    const element = commentTextRef.current;
+    if (!element) {
+      return;
+    }
+
+    const updateClamped = () => {
+      setClamped(element.scrollHeight > element.clientHeight + 1);
+    };
+
+    updateClamped();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', updateClamped);
+      return () => window.removeEventListener('resize', updateClamped);
+    }
+
+    const observer = new ResizeObserver(updateClamped);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [commentKey, comments.length, expanded]);
+  if (comments.length === 0) {
+    return null;
+  }
+
+  const expandable = comments.length > 1 || clamped;
+  return (
+    <div className={`lineage-inspector-comment-block lineage-inspector-comment-block-${variant} ${expanded ? 'lineage-inspector-comment-expanded' : ''}`}>
+      <div className="lineage-inspector-comment-heading">
+        <span className="lineage-inspector-comment-label">{label}</span>
+        {expandable ? (
+          <button
+            className="lineage-inspector-comment-toggle"
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              setExpanded((current) => !current);
+            }}
+          >
+            {expanded ? 'Collapse' : 'Show full'}
+          </button>
+        ) : null}
+      </div>
+      <div className="lineage-inspector-comment-text" ref={commentTextRef}>
+        {comments.map((comment, index) => (
+          <p key={`${comment}:${index}`}>{comment}</p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatInspectorNodeCommentLabel(node: LineageNode): string {
+  if (node.type === 'output') return 'Output comment';
+  if (node.type === 'cte') return node.recursive ? 'Recursive CTE comment' : 'CTE comment';
+  if (node.type === 'table') return 'Table comment';
+  if (node.type === 'derived' || node.type === 'scalar_subquery') return 'Subquery comment';
+  if (node.type === 'parameter_table') return 'Parameter table comment';
+  return 'Node comment';
+}
+
+function isOpenableInspectorNode(node: LineageNode): boolean {
+  return node.type === 'cte' || node.type === 'derived' || node.type === 'scalar_subquery';
+}
+
 function InspectorTypeBadge({ node }: { node: LineageNode }) {
-  const type = node.recursive ? 'recursive' : node.type;
+  const type = node.recursive ? 'recursive' : isUnionNode(node) ? 'union' : node.type;
   return <span className={`lineage-inspector-type lineage-inspector-type-${type}`}>{formatInspectorTypeLabel(type)}</span>;
 }
 
-function formatInspectorTypeLabel(type: LineageNode['type'] | 'recursive'): string {
+function formatInspectorTypeLabel(type: LineageNode['type'] | 'recursive' | 'union'): string {
   if (type === 'parameter_table') return 'PARAM';
   if (type === 'scalar_subquery') return 'SCALAR';
   return type.toUpperCase();
@@ -2732,6 +3441,21 @@ function createDefaultHiddenColumnNodeIds(nodes: LineageNode[], flowDirection: G
   return new Set(nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id));
 }
 
+function createInitialCollapsedGroupRootIds(groups: Map<string, { helperNodeIds: string[] }>) {
+  const rootIds = new Set(groups.keys());
+
+  for (const rootNodeId of [...rootIds]) {
+    for (const [ancestorRootId, group] of groups) {
+      if (ancestorRootId !== rootNodeId && rootIds.has(ancestorRootId) && group.helperNodeIds.includes(rootNodeId)) {
+        rootIds.delete(rootNodeId);
+        break;
+      }
+    }
+  }
+
+  return rootIds;
+}
+
 function nodeHasSelectedComment(node: LineageNode, selectedCommentTargetIds: Set<string>) {
   return (
     selectedCommentTargetIds.has(nodeCommentTargetId(node.id)) ||
@@ -2779,7 +3503,7 @@ function getColumnExecutableSql(lineage: LineageModel, scopeId: string | undefin
 function buildViewerSqlUrl(sql: string) {
   const url = new URL(window.location.href);
   url.search = '';
-  url.hash = new URLSearchParams({ sql }).toString();
+  url.hash = new URLSearchParams({ sql, history: '0' }).toString();
   return url.toString();
 }
 
