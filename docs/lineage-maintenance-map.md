@@ -193,10 +193,25 @@ Phase 2.5 dependency classification:
 | `ResolvedSource` | shared adapter/source type | This is the main type crossing source resolution, output columns, value origin, and population origin. Move only after the public shape is stable. |
 | `CollectQueryEdgesOptions` | keep in `rawsqlAdapter.ts` for now | This is orchestration state, not a slice contract. Passing it through a deps interface would make the interface too large. |
 
+Phase 3.5 minimal type boundary:
+
+`ResolvedSource` should not be moved as-is. It currently contains adapter-facing
+fields such as `sourceAlias`, `recursive`, and `wildcardPassthroughSource`.
+`resolveColumnReferences` only needs:
+
+- source aliases
+- target node id
+- target column names
+- target node type for unknown-column guidance
+
+Use `SourceReferenceTarget` as the future public input shape for reference
+resolution. Convert from `ResolvedSource` at the adapter boundary instead of
+passing adapter orchestration state into `source-references`.
+
 Minimum extraction order:
 
 1. Add boundary tests for `source-references` behavior through `analyzeSql`.
-2. Extract dependency-free helpers first: `mergeColumnRefs`, then `resolveColumnReferences` with its issue helpers if the `ResolvedSource` type can be moved or narrowed.
+2. Extract dependency-free helpers first: `mergeColumnRefs`, then narrow `resolveColumnReferences` to `SourceReferenceTarget`.
 3. Keep nested query reference collection in `rawsqlAdapter.ts` until `resolveSourceExpression` has its own boundary.
 4. Move `collectPopulationScope` only after it can depend on a small resolver API instead of the whole `CollectQueryEdgesOptions` object.
 
