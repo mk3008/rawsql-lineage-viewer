@@ -320,7 +320,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     const scopeId = nextScopeId(options, targetId);
     if (!fromClause) {
       const outputColumns = collectOutputColumns(query, [], options, scopeId);
-      scopes.push(createLineageScope(query, [], [], outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
+      scopes.push(collectPopulationScope(query, [], [], outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
       setNodeColumns(nodes, targetId, outputColumns);
       if (nodes.get(targetId)?.type !== 'parameter_table') {
         const parameterSource = createParameterTableNode('parameters', nodes);
@@ -372,7 +372,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     }
 
     const outputColumns = collectOutputColumns(query, sources, options, scopeId);
-    scopes.push(createLineageScope(query, sources, joins, outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
+    scopes.push(collectPopulationScope(query, sources, joins, outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
     setNodeColumns(nodes, targetId, outputColumns);
     setValueSourceColumns(outputColumns, nodes);
     setReferencedSourceColumns(query, sources, warnings, scopeId);
@@ -855,7 +855,11 @@ function nextScopeId(options: CollectQueryEdgesOptions, targetId: string): strin
   return `${baseId}_${options.scopeCounter.value}`;
 }
 
-function createLineageScope(
+// population-origin slice boundary:
+// Collects row-set influences into LineageScope without adding predicate-only
+// references to LineageNode.columns. Keep this block independent from display
+// column creation so it can move to population-origin/collectPopulationScope.ts.
+function collectPopulationScope(
   query: SimpleSelectQuery,
   sources: ResolvedSource[],
   joins: JoinClause[],
@@ -1113,6 +1117,9 @@ function toSourceReferences(
   }));
 }
 
+// output-columns slice boundary:
+// Returns SELECT-derived display columns only. Population-origin references are
+// collected by collectPopulationScope and must not be appended here.
 function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
   if (hasWildcardSelectItem(query)) {
     if (options.schemaFacts) {

@@ -1,0 +1,66 @@
+import { describe, expect, it } from 'vitest';
+import { analyzeSql } from '../rawsqlAdapter';
+
+describe('population-origin boundary', () => {
+  it('population-origin keeps WHERE references in scopes without adding node columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id
+      FROM orders
+      WHERE status = 'open'
+    `);
+
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(scope?.where?.[0]).toMatchObject({
+      expressionSql: "status = 'open'",
+      references: [expect.objectContaining({ nodeId: 'table_orders', columnName: 'status' })],
+    });
+  });
+
+  it('population-origin keeps HAVING and ORDER BY references in scopes without adding node columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id, count(*) AS order_count
+      FROM orders
+      GROUP BY customer_id
+      HAVING max(created_at) > :min_created_at
+      ORDER BY max(created_at) DESC
+    `);
+
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['customer_id', 'order_count']);
+    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(scope?.having?.[0]).toMatchObject({
+      expressionSql: 'max(created_at) > :min_created_at',
+      references: [expect.objectContaining({ nodeId: 'table_orders', columnName: 'created_at' })],
+    });
+    expect(scope?.orderBy?.[0]).toMatchObject({
+      expressionSql: 'max(created_at) desc',
+      references: [expect.objectContaining({ nodeId: 'table_orders', columnName: 'created_at' })],
+    });
+  });
+
+  it('population-origin records LIMIT / row influence without adding node columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT customer_id
+      FROM orders
+      LIMIT 10
+    `);
+
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id']);
+    expect(scope?.limit).toMatchObject({
+      expressionSql: expect.stringContaining('10'),
+      kind: 'limit',
+      references: [],
+    });
+  });
+});
