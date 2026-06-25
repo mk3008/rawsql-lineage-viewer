@@ -467,6 +467,32 @@ Move only the smallest coherent group:
 If dependencies make this too large, first group these helpers in `rawsqlAdapter.ts`
 and keep the file move for a follow-up PR.
 
+### Phase 5.5: Establish population-origin extraction seam
+
+Before moving `collectPopulationScope.ts`, keep the remaining adapter-only
+dependencies behind a small local seam:
+
+```text
+PopulationOriginDeps
+```
+
+Classify the dependencies this way:
+
+| Dependency | Classification | Notes |
+| --- | --- | --- |
+| `collectPopulationScope`, `collectConditionInfluences`, `collectOrderByInfluences`, `collectLimitInfluence`, `collectExpressionInfluences`, `createJoinInfluence` | `population-origin` | Move together as the smallest coherent population-origin unit. |
+| `formatExpressionSql` | callback dependency | General SQL expression display; do not place it in `population-origin`. |
+| `formatScopeQuerySql` | callback dependency | Scope SQL display; keep formatter ownership in the adapter or a future SQL-formatting utility. |
+| `collectNestedQueryReferences` | callback dependency for now | It still depends on nested source resolution and adapter execution state. |
+| `collectQueryLocalReferences` | keep in `rawsqlAdapter.ts` for now | It uses `resolveSourceExpression`, counters, nodes, scopes, warnings, CTE names, and schema facts. |
+| `ResolvedSource` | keep adapter-local | Do not export it. Convert to `SourceReferenceTarget` at reference-resolution boundaries. |
+| `toSourceReferenceTargets` | adapter-local mapper for now | It can move later only if `ResolvedSource` is replaced by a public source model. |
+| `toSourceReferences` | can move with `population-origin` | It is a small scoped reference mapper used by population influences. |
+
+Do not pass `CollectQueryEdgesOptions` through the extracted population-origin
+API. If nested references are needed, pass a callback shaped like
+`(value: unknown) => LineageColumnRef[]`.
+
 ### Phase 3: Extract output columns
 
 Suggested target:

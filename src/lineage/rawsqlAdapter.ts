@@ -315,6 +315,12 @@ interface ResolvedSource {
   };
 }
 
+interface PopulationOriginDeps {
+  collectNestedQueryReferences: (value: unknown) => LineageColumnRef[];
+  formatExpressionSql: (value: unknown) => string | undefined;
+  formatScopeQuerySql: (query: SimpleSelectQuery) => string | undefined;
+}
+
 function toSourceReferenceTargets(sources: ResolvedSource[]): SourceReferenceTarget[] {
   return sources.map((source) => ({
     aliases: source.aliases,
@@ -882,14 +888,15 @@ function collectPopulationScope(
   options: CollectQueryEdgesOptions,
   parentScopeId?: string,
 ): LineageScope {
-  const where = collectConditionInfluences(query.whereClause?.condition, 'where', scopeId, sources, ['may_filter_rows'], options);
-  const having = collectConditionInfluences(query.havingClause?.condition, 'having', scopeId, sources, ['may_filter_rows'], options);
-  const groupBy = collectExpressionInfluences(query.groupByClause?.grouping ?? [], 'group_by', scopeId, sources, ['may_change_grain']);
-  const orderBy = collectOrderByInfluences(query.orderByClause?.order ?? [], scopeId, sources, targetId, outputColumns);
-  const limit = collectLimitInfluence(query.limitClause, 'limit', scopeId);
-  const offset = collectLimitInfluence(query.offsetClause, 'offset', scopeId);
+  const deps = createPopulationOriginDeps(options);
+  const where = collectConditionInfluences(query.whereClause?.condition, 'where', scopeId, sources, ['may_filter_rows'], deps);
+  const having = collectConditionInfluences(query.havingClause?.condition, 'having', scopeId, sources, ['may_filter_rows'], deps);
+  const groupBy = collectExpressionInfluences(query.groupByClause?.grouping ?? [], 'group_by', scopeId, sources, ['may_change_grain'], deps);
+  const orderBy = collectOrderByInfluences(query.orderByClause?.order ?? [], scopeId, sources, targetId, outputColumns, deps);
+  const limit = collectLimitInfluence(query.limitClause, 'limit', scopeId, deps);
+  const offset = collectLimitInfluence(query.offsetClause, 'offset', scopeId, deps);
   const joinInfluences = joins
-    .map((join, index) => createJoinInfluence(join, sources[index + 1], index, scopeId, sources))
+    .map((join, index) => createJoinInfluence(join, sources[index + 1], index, scopeId, sources, deps))
     .filter((join): join is LineageJoinInfluence => join !== null);
 
   return {
@@ -904,8 +911,16 @@ function collectPopulationScope(
     offset,
     orderBy,
     parentScopeId,
-    querySql: formatScopeQuerySql(query),
+    querySql: deps.formatScopeQuerySql(query),
     where,
+  };
+}
+
+function createPopulationOriginDeps(options: CollectQueryEdgesOptions): PopulationOriginDeps {
+  return {
+    collectNestedQueryReferences: (value) => collectNestedQueryReferences(value, options),
+    formatExpressionSql,
+    formatScopeQuerySql,
   };
 }
 
@@ -931,7 +946,7 @@ function collectConditionInfluences(
   scopeId: string,
   sources: ResolvedSource[],
   impact: LineageCondition['impact'],
-  options?: CollectQueryEdgesOptions,
+  deps: PopulationOriginDeps,
 ): LineageCondition[] {
   if (!condition) {
     return [];
@@ -940,9 +955,9 @@ function collectConditionInfluences(
   const conditions = kind === 'where' || kind === 'having' ? splitAndConditions(condition) : [condition];
   const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
   return conditions.flatMap((item, index) => {
-    const expressionSql = formatExpressionSql(item);
+    const expressionSql = deps.formatExpressionSql(item);
     const references = toSourceReferences(
-      mergeColumnRefs(resolveColumnReferences(item, toSourceReferenceTargets(sources)), options ? collectNestedQueryReferences(item, options) : []),
+      mergeColumnRefs(resolveColumnReferences(item, toSourceReferenceTargets(sources)), deps.collectNestedQueryReferences(item)),
       scopeId,
       'row_lineage',
     );
@@ -967,10 +982,11 @@ function collectOrderByInfluences(
   sources: ResolvedSource[],
   targetId: string,
   outputColumns: LineageColumn[],
+  deps: PopulationOriginDeps,
 ): LineageExpressionInfluence[] {
   return orderItems.flatMap((orderItem, index) => {
     const expression = orderItem && typeof orderItem === 'object' && 'value' in orderItem ? (orderItem as { value?: unknown }).value : orderItem;
-    const expressionSql = formatExpressionSql(orderItem) ?? formatExpressionSql(expression);
+    const expressionSql = deps.formatExpressionSql(orderItem) ?? deps.formatExpressionSql(expression);
     const outputRefs = resolveOutputColumnReferences(expression, targetId, outputColumns);
     const sourceRefs = outputRefs.length > 0 ? [] : resolveColumnReferences(expression, toSourceReferenceTargets(sources));
     const references = toSourceReferences(mergeColumnRefs(sourceRefs, outputRefs), scopeId, 'row_lineage');
@@ -992,11 +1008,12 @@ function collectLimitInfluence(
   clause: unknown,
   kind: 'limit' | 'offset',
   scopeId: string,
+  deps: PopulationOriginDeps,
 ): LineageExpressionInfluence | undefined {
   if (!clause) {
     return undefined;
   }
-  const expressionSql = formatExpressionSql(clause);
+  const expressionSql = deps.formatExpressionSql(clause);
   return {
     expressionSql: expressionSql ?? kind,
     id: `${scopeId}_${kind}_1`,
@@ -1078,9 +1095,10 @@ function collectExpressionInfluences(
   scopeId: string,
   sources: ResolvedSource[],
   impact: LineageExpressionInfluence['impact'],
+  deps: PopulationOriginDeps,
 ): LineageExpressionInfluence[] {
   return expressions.flatMap((expression, index) => {
-    const expressionSql = formatExpressionSql(expression);
+    const expressionSql = deps.formatExpressionSql(expression);
     const references = toSourceReferences(resolveColumnReferences(expression, toSourceReferenceTargets(sources)), scopeId, 'row_lineage');
     if (!expressionSql && references.length === 0) {
       return [];
@@ -1102,9 +1120,10 @@ function createJoinInfluence(
   index: number,
   scopeId: string,
   sources: ResolvedSource[],
+  deps: PopulationOriginDeps,
 ): LineageJoinInfluence | null {
   const joinType = normalizeJoinType(join);
-  const condition = collectConditionInfluences(join.condition, 'join_on', scopeId, sources, joinType === 'inner' ? ['may_filter_rows'] : ['may_null_extend_rows'])[0];
+  const condition = collectConditionInfluences(join.condition, 'join_on', scopeId, sources, joinType === 'inner' ? ['may_filter_rows'] : ['may_null_extend_rows'], deps)[0];
   return {
     condition,
     id: `${scopeId}_join_${index + 1}`,
