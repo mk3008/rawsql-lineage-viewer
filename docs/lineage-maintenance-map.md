@@ -180,6 +180,28 @@ Look here when:
 - Unqualified columns are guessed when they should be ambiguous.
 - Missing sources or columns produce confusing dead-link warnings.
 
+Phase 2.5 dependency classification:
+
+| Dependency | Classification | Notes |
+| --- | --- | --- |
+| `resolveColumnReferences` | `source-references` | Core reference resolver for qualified, unqualified, unknown, and ambiguous references. Used by population, output, and value logic, so extract before moving `collectPopulationScope`. |
+| `toSourceReferences` | `source-references` adapter | Converts resolved column refs into scoped `LineageSourceReference` objects. It is small, but belongs near reference resolution once scope id and role are passed in. |
+| `mergeColumnRefs` | shared reference utility | Deduplicates resolved refs and is used by population and value lineage. Keep it tiny and dependency-free before moving. |
+| `formatExpressionSql` | shared SQL formatting utility | Needed for diagnostics, population-origin expressions, unresolved reference messages, and display text. Do not hide it inside `population-origin`. |
+| `collectNestedQueryReferences` | keep in `rawsqlAdapter.ts` for now | It resolves nested query sources by calling `resolveSourceExpression` and mutating local analysis state. Moving it now would pull adapter orchestration with it. |
+| `collectQueryLocalReferences` | keep in `rawsqlAdapter.ts` for now | Same coupling as nested query references: it needs CTE names, nodes, scopes, warnings, counters, schema facts, and source resolution. |
+| `ResolvedSource` | shared adapter/source type | This is the main type crossing source resolution, output columns, value origin, and population origin. Move only after the public shape is stable. |
+| `CollectQueryEdgesOptions` | keep in `rawsqlAdapter.ts` for now | This is orchestration state, not a slice contract. Passing it through a deps interface would make the interface too large. |
+
+Minimum extraction order:
+
+1. Add boundary tests for `source-references` behavior through `analyzeSql`.
+2. Extract dependency-free helpers first: `mergeColumnRefs`, then `resolveColumnReferences` with its issue helpers if the `ResolvedSource` type can be moved or narrowed.
+3. Keep nested query reference collection in `rawsqlAdapter.ts` until `resolveSourceExpression` has its own boundary.
+4. Move `collectPopulationScope` only after it can depend on a small resolver API instead of the whole `CollectQueryEdgesOptions` object.
+
+Avoid a large `PopulationOriginDeps` interface for now. A small injected resolver can work later, but an interface containing `resolveSourceExpression`, counters, nodes, scopes, warnings, CTE names, and schema facts would preserve the current coupling under a new name.
+
 ### `diagnostics`
 
 Owns diagnostic packets, row lineage analysis, column lineage analysis, candidate
@@ -441,6 +463,21 @@ src/lineage/output-columns/collectOutputColumns.ts
 Move only after dependencies are clearer. This area currently touches wildcard
 expansion, scalar subqueries, expression trees, comments, and node column finalization.
 
+### Phase 2.5: Establish source reference boundary
+
+Before moving `collectPopulationScope` out of `rawsqlAdapter.ts`, reduce the source-reference coupling that currently blocks a small extraction.
+
+Suggested target:
+
+```text
+src/lineage/source-references/sourceReferencesBoundary.test.ts
+src/lineage/source-references/resolveColumnReferences.ts
+src/lineage/source-references/mergeColumnRefs.ts
+src/lineage/source-references/sourceReferences.types.ts
+```
+
+Start with tests and dependency classification. Move production helpers only when they do not require exporting broad adapter orchestration types.
+
 ### Phase 4: Extract source references and value origin
 
 Suggested targets:
@@ -488,9 +525,10 @@ Move SQL history, share URL, and localStorage helpers out of `App.tsx`.
 
 The next production refactor should be one of these:
 
-1. Extract `population-origin/collectPopulationScope.ts`.
-2. If extraction is too large, keep it in `rawsqlAdapter.ts` but group and label the population-origin helper block.
-3. After that, extract `output-columns/collectOutputColumns.ts` only when dependency size is acceptable.
+1. Stabilize `source-references` enough that `collectPopulationScope` can call a small resolver API.
+2. Extract `population-origin/collectPopulationScope.ts` after source references no longer require `CollectQueryEdgesOptions`.
+3. If extraction is still too large, keep the helper block in `rawsqlAdapter.ts` and narrow one dependency at a time.
+4. After that, extract `output-columns/collectOutputColumns.ts` only when dependency size is acceptable.
 
 Do not start with `LineageGraph.tsx`. It is large, but UI slicing will be safer after
 lineage model boundaries are stable.
