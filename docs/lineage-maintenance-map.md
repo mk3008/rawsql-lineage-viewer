@@ -615,7 +615,10 @@ lineage model boundaries are stable.
 
 ## Working Rules For AI Agents
 
-- Start with this document when changing lineage behavior.
+- This document is the slice index for lineage changes. Repository entry rules live in `AGENTS.md`.
+- After opening this map, decide which slice owns the requested change.
+- Read only the owning slice and the directly connected tests before opening large files.
+- Do not inspect unrelated slices, the whole UI, or the whole app unless the request explicitly crosses those boundaries.
 - Identify the slice before reading large files.
 - Prefer `rg` for the slice name and test name before opening a large file.
 - Do not move shared domain types unless the task explicitly requires it.

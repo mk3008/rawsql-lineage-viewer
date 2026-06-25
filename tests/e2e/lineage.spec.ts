@@ -183,6 +183,10 @@ test('shows all columns while a node header is selected', async ({ page }) => {
   await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'name', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'email', exact: true })).toBeVisible();
+  await customersNode.getByRole('button', { name: 'customers', exact: true }).click();
+  await expect(customersNode.getByRole('button', { name: 'customers', exact: true })).toHaveClass(/lineage-comment-selected/);
+  await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customers' })).toBeVisible();
+  await expect(customersNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await customersNode.getByRole('button', { name: 'id', exact: true }).click();
   await expect(customersNode.getByRole('button', { name: 'name', exact: true })).toBeVisible();
   await expect(customersNode.getByRole('button', { name: 'email', exact: true })).toBeVisible();
@@ -195,6 +199,9 @@ test('restores the previous graph selection when browser back is pressed', async
   await page.goto('/');
 
   const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
+  await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customer_name' })).toBeVisible();
+  await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveClass(/lineage-column-selected/);
   await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
   await expect(page.getByTestId('lineage-inspector').getByRole('heading', { name: 'customer_name' })).toBeVisible();
   await expect(outputNode.getByRole('button', { name: 'customer_name', exact: true })).toHaveClass(/lineage-column-selected/);
@@ -507,7 +514,15 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   });
   await page.goto('/');
 
+  const orderTotalsNode = page.getByTestId('rf__node-cte_order_totals');
+  await orderTotalsNode.locator('.lineage-node-header').hover();
+  const expandOrderTotals = orderTotalsNode.getByRole('button', { name: 'Expand order_totals' });
+  if (await expandOrderTotals.isVisible()) {
+    await expandOrderTotals.click();
+  }
+
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
+  await expect(recentOrdersNode).toBeVisible();
   await recentOrdersNode.getByRole('button', { name: 'recent_orders', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   const inspector = page.getByTestId('lineage-inspector');
@@ -527,7 +542,14 @@ test('shows SQL comments when selecting CTEs and columns', async ({ page }) => {
   await recentOrdersNode.getByRole('button', { name: 'amount', exact: true }).click();
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
   await expect(inspector).toContainText('Extended line amount.');
-  await expect(inspector.locator('.lineage-inspector-root-card')).toContainText('oi.quantity * oi.unit_price');
+  const cteColumnCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(cteColumnCard).toContainText('Recent order line items used as the base sales fact.');
+  await expect(cteColumnCard).toContainText('oi.quantity * oi.unit_price');
+  const cteOpenLink = cteColumnCard.getByRole('link', { name: 'Open' });
+  await expect(cteOpenLink).toBeVisible();
+  const cteColumnOpenHref = await cteOpenLink.getAttribute('href');
+  expect(cteColumnOpenHref).toContain('#sql=');
+  expect(new URLSearchParams(new URL(cteColumnOpenHref ?? '').hash.replace(/^#/, '')).get('sql')).toMatch(/from\s+orders as o/);
 });
 
 test('shows title comments for output and derived nodes', async ({ page }) => {
@@ -555,6 +577,10 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(inspector).toContainText('Copy SQL');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Final output comment.');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id as user_id -- Output id comment.');
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  const outputColumnCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(outputColumnCard).toContainText('Final output comment.');
+  await expect(outputColumnCard).toContainText('Output id comment.');
 
   const derivedNode = page.getByTestId('lineage-node-derived');
   await derivedNode.getByRole('button', { name: 'src', exact: true }).click();
@@ -565,6 +591,13 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(inspector).toContainText('Copy SQL');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('-- Derived source comment.');
   await expect(inspector.locator('.lineage-inspector-code')).toContainText('id -- Derived id comment.');
+  await derivedNode.getByRole('button', { name: 'id', exact: true }).click();
+  const derivedColumnCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(derivedColumnCard).toContainText('Derived source comment.');
+  await expect(derivedColumnCard).toContainText('Derived id comment.');
+  const derivedOpenLink = derivedColumnCard.getByRole('link', { name: 'Open' });
+  await expect(derivedOpenLink).toBeVisible();
+  await expect(derivedOpenLink).toHaveAttribute('href', /select/);
 });
 
 test('keeps CTE comments in inspector SQL', async ({ page }) => {
@@ -1470,11 +1503,6 @@ test('highlights upstream lineage when an output column is selected', async ({ p
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('rf__edge-table_order_items-cte_recent_orders').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).not.toHaveClass(/animated/);
-  await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
-
-  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
-  await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).not.toHaveClass(/lineage-column-selected/);
-  await expect(page.getByTestId('rf__edge-cte_order_totals-main_output').locator('.react-flow__edge-path').first()).toHaveAttribute('style', /stroke-width: 2/);
   await expect(page.getByTestId('lineage-comment')).toHaveCount(0);
 });
 

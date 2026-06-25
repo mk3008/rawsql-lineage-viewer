@@ -386,14 +386,10 @@ export function LineageGraph({
     if (collapsedLineage.groups.has(nodeId)) {
       expandGroup(nodeId);
     }
-    const targetId = nodeCommentTargetId(nodeId);
-    const nextSelection: GraphOriginSelection =
-      selectedNodeCommentTargetId === targetId && !collapsedLineage.groups.has(nodeId)
-        ? { kind: 'none' }
-        : { kind: 'node', nodeId };
+    const nextSelection: GraphOriginSelection = { kind: 'node', nodeId };
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, selectedNodeCommentTargetId]);
+  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup]);
   const inspectNode = useCallback((nodeId: string) => {
     suppressInitialOutputSelectionRef.current = false;
     if (collapsedLineage.groups.has(nodeId)) {
@@ -405,18 +401,15 @@ export function LineageGraph({
   }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     suppressInitialOutputSelectionRef.current = false;
-    const nextSelection: GraphOriginSelection =
-      selectedColumn?.columnId === column.id
-        ? { kind: 'none' }
-        : {
-            columnId: column.id,
-            columnName: column.name,
-            kind: 'column',
-            nodeId,
-          };
+    const nextSelection: GraphOriginSelection = {
+      columnId: column.id,
+      columnName: column.name,
+      kind: 'column',
+      nodeId,
+    };
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, commitSelectionHistory, selectedColumn?.columnId]);
+  }, [applySelectionSnapshot, commitSelectionHistory]);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
     setActiveCommentTargetId((current) => (current === targetId ? null : current));
@@ -1810,9 +1803,9 @@ function InspectorSourceGroup({
       }}
     >
       <div className="lineage-inspector-source-heading">
-        <InspectorTypeBadge node={node} />
-        <span className="lineage-inspector-node-name">{node.label}</span>
+        <InspectorNodeMeta node={node} />
       </div>
+      <InspectorNodeComments node={node} />
       <div className="lineage-inspector-source-columns">
         {group.items.map((item, index) => {
           const expressionSql =
@@ -2105,9 +2098,9 @@ function InspectorColumnGroupCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-column-meta">
-        <InspectorTypeBadge node={node} />
-        <span className="lineage-inspector-node-name">{node.label}</span>
+        <InspectorNodeMeta node={node} />
       </div>
+      <InspectorNodeComments node={node} />
       <div className="lineage-inspector-group-columns">
         {items.map((item) => (
           <div className="lineage-inspector-group-column" key={item.column.id}>
@@ -2264,9 +2257,9 @@ function InspectorColumnCard({
       onKeyDown={handleKeyDown}
     >
       <div className="lineage-inspector-column-meta">
-        <InspectorTypeBadge node={item.node} />
-        <span className="lineage-inspector-node-name">{item.node.label}</span>
+        <InspectorNodeMeta node={item.node} />
       </div>
+      <InspectorNodeComments node={item.node} />
       <span className="lineage-inspector-column-name">{item.column.name}</span>
       {item.column.comments?.length ? <div className="lineage-inspector-card-note">{item.column.comments.join(' ')}</div> : null}
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
@@ -2472,6 +2465,38 @@ function readSelectionHistoryState(state: unknown): GraphOriginSelection | null 
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
+}
+
+function InspectorNodeMeta({ node }: { node: LineageNode }) {
+  const sql = getNodeSql(node);
+  const canOpen = Boolean(sql) && isOpenableInspectorNode(node);
+  return (
+    <>
+      <InspectorTypeBadge node={node} />
+      <span className="lineage-inspector-node-name">{node.label}</span>
+      {canOpen ? (
+        <a
+          className="lineage-open-link lineage-inspector-node-open nodrag"
+          href={buildViewerSqlUrl(sql ?? '')}
+          target="_blank"
+          rel="noreferrer"
+          title="Open in viewer"
+          onClick={(event) => event.stopPropagation()}
+        >
+          <ExternalLink size={12} aria-hidden="true" />
+          Open
+        </a>
+      ) : null}
+    </>
+  );
+}
+
+function InspectorNodeComments({ node }: { node: LineageNode }) {
+  return node.comments?.length ? <div className="lineage-inspector-card-note lineage-inspector-node-note">{node.comments.join(' ')}</div> : null;
+}
+
+function isOpenableInspectorNode(node: LineageNode): boolean {
+  return node.type === 'cte' || node.type === 'derived' || node.type === 'scalar_subquery';
 }
 
 function InspectorTypeBadge({ node }: { node: LineageNode }) {
