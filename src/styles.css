@@ -2300,7 +2300,7 @@ textarea {
 }
 
 .lineage-node-expanded:not(.lineage-node-passthrough-only) .lineage-node-body {
-  max-height: 260px;
+  max-height: 240px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }

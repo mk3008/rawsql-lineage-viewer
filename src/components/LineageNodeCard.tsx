@@ -13,7 +13,8 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const graphNodeId = id;
   const columnsVisible = data.columnsVisible ?? true;
   const selectedNodeExpanded = data.selectedNodeId === node.id;
-  const columnsExpanded = selectedNodeExpanded;
+  const selectedColumnExpanded = node.columns.some((column) => column.id === data.selectedColumnId);
+  const columnsExpanded = selectedNodeExpanded || selectedColumnExpanded;
   const forcedVisibleColumnIds = data.forcedVisibleColumnIds ?? new Set<string>();
   const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
   const shouldRenderColumns = columnsVisible || columnsExpanded || hasForcedVisibleColumns;
@@ -27,7 +28,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   return (
     <div
       ref={nodeRef}
-      className={`lineage-node lineage-node-${node.type} ${isUnion ? 'lineage-node-union' : ''} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.dimmed ? 'lineage-node-dimmed' : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
+      className={`lineage-node lineage-node-${node.type} ${isUnion ? 'lineage-node-union' : ''} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.dimmed ? 'lineage-node-dimmed' : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible || columnsExpanded ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
       data-testid={`lineage-node-${node.type}`}
     >
       {sourceDataLabels.length > 0 || data.collapsedGroup || populationImpactLabels.length > 0 ? (
@@ -228,7 +229,7 @@ function LineageColumnList({
   nodeId: string;
 }) {
   const isOutputNode = data.lineageNode.type === 'output';
-  const nodeExpanded = data.selectedNodeId === nodeId;
+  const nodeExpanded = data.selectedNodeId === nodeId || columns.some((column) => column.id === data.selectedColumnId);
   const shouldCompress = !isOutputNode && !nodeExpanded && (data.passthroughColumnsCompressed ?? false);
   const baseColumns = !isOutputNode && forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
   const displayColumns = nodeExpanded ? baseColumns : baseColumns.filter(isVisibleGraphColumn);

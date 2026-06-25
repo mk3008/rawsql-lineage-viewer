@@ -1690,17 +1690,50 @@ test('can collapse nested derived subquery internals and expand them again', asy
   await expect(derivedNodes).toHaveCount(2);
 });
 
-test('shows all expanded columns without node resizing or vertical scrolling', async ({ page }) => {
+test('caps expanded CTE columns to an internal mouse-wheel scroller', async ({ page }) => {
   await page.goto('/');
-  await showAllColumns(page);
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH health_base AS (
+      SELECT
+        u.customer_id,
+        u.account_code,
+        u.legal_name,
+        u.display_name,
+        u.customer_status,
+        u.latest_status,
+        u.status_reason,
+        u.segment,
+        u.industry,
+        u.country_code,
+        u.region_code,
+        u.sales_channel,
+        u.billing_currency,
+        u.account_owner_email,
+        u.account_owner_name
+      FROM crm.customers u
+    )
+    SELECT customer_id
+    FROM health_base
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
 
-  const node = page.getByTestId('rf__node-cte_recent_orders');
+  const node = page.getByTestId('rf__node-cte_health_base');
   await expect(node).toBeVisible();
-  await expect(node.getByText('amount')).toBeVisible();
-  await expect(page.locator('[aria-label="Resize recent_orders height"]')).toHaveCount(0);
+  await node.getByRole('button', { name: 'health_base', exact: true }).click();
+  await expect(node.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(page.locator('[aria-label="Resize health_base height"]')).toHaveCount(0);
 
-  const overflowY = await node.locator('.lineage-node-body').evaluate((element) => window.getComputedStyle(element).overflowY);
-  expect(overflowY).toBe('visible');
+  const body = node.locator('.lineage-node-body');
+  await expect(body).toHaveCSS('overflow-y', 'auto');
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await body.evaluate((element) => {
+    element.scrollTop = element.scrollHeight;
+  });
+  await expect(node.getByRole('button', { name: 'account_owner_name', exact: true })).toBeVisible();
+
+  await node.getByRole('button', { name: 'account_owner_email', exact: true }).click();
+  await expect(body).toHaveCSS('overflow-y', 'auto');
+  await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 });
 
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
