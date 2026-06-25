@@ -29,7 +29,7 @@ describe('column display helpers', () => {
   it('shows only selected output columns in graph node cards', () => {
     expect(isVisibleGraphColumn(column())).toBe(true);
     expect(isVisibleGraphColumn(column({ usage: { role: 'condition', reasons: ['subquery'] } }))).toBe(false);
-    expect(isVisibleGraphColumn(column({ outputIndex: 0, selectItemId: 'select-1', usage: { role: 'condition', reasons: ['groupBy'] } }))).toBe(true);
+    expect(isVisibleGraphColumn(column({ outputIndex: 0, selectItemId: 'select-1', usage: { role: 'condition', reasons: ['groupBy'] } }))).toBe(false);
     expect(isVisibleGraphColumn(column({ usage: { role: 'filter', reasons: ['where'] } }))).toBe(false);
     expect(isVisibleGraphColumn(column({ usage: { role: 'unused' } }))).toBe(false);
   });

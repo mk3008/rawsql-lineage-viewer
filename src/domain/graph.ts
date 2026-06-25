@@ -9,6 +9,7 @@ export type GraphNodeData = {
   forcedVisibleColumnIds?: Set<string>;
   collapsedGroup?: CollapsedLineageGroup;
   canCollapseUpstream?: boolean;
+  showGroupControls?: boolean;
   onToggleColumns?: (nodeId: string) => void;
   onCollapseUpstream?: (nodeId: string) => void;
   onExpandGroup?: (nodeId: string) => void;
@@ -26,6 +27,7 @@ export type GraphNodeData = {
   highlightedNodeTone?: 'population' | 'value';
   highlightedSourceDataLabels?: Map<string, string[]>;
   highlightedSourceDataNodeIds?: Set<string>;
+  dimmed?: boolean;
   passthroughColumnsCompressed?: boolean;
   showUnusedColumns?: boolean;
   sourceColumnIds?: Set<string>;

@@ -32,7 +32,7 @@ interface DiagnosticReport {
         matchedEffects: string[];
       };
     }>;
-    populationOrigin: {
+    rowLineage: {
       influences: Array<{
         effects: string[];
         expressionSql?: string;
@@ -229,7 +229,7 @@ function assertReportMatchesScenario(report: DiagnosticReport, expected: Scenari
   expect(packet.target.columnName).toBe(expected.targetColumn);
 
   const actualEffects = new Set([
-    ...packet.populationOrigin.influences.flatMap((influence) => influence.effects),
+    ...packet.rowLineage.influences.flatMap((influence) => influence.effects),
     ...packet.candidateConcerns.flatMap((concern) => concern.effects),
   ]);
   for (const effect of expected.expectedEffects) {
@@ -240,7 +240,7 @@ function assertReportMatchesScenario(report: DiagnosticReport, expected: Scenari
   }
 
   const actualMechanisms = new Set([
-    ...packet.populationOrigin.influences.map((influence) => influence.mechanism),
+    ...packet.rowLineage.influences.map((influence) => influence.mechanism),
     ...packet.candidateConcerns.flatMap((concern) => concern.mechanisms),
   ]);
   for (const mechanism of expected.expectedMechanisms) {
@@ -248,8 +248,8 @@ function assertReportMatchesScenario(report: DiagnosticReport, expected: Scenari
   }
 
   const evidenceText = [
-    ...packet.populationOrigin.influences.map((influence) => influence.expressionSql ?? ''),
-    ...packet.populationOrigin.influences.map((influence) => influence.mechanism),
+    ...packet.rowLineage.influences.map((influence) => influence.expressionSql ?? ''),
+    ...packet.rowLineage.influences.map((influence) => influence.mechanism),
     ...packet.candidateConcerns.flatMap((concern) => concern.evidence),
     ...packet.candidateConcerns.map((concern) => concern.kind),
     ...packet.candidateConcerns.flatMap((concern) => concern.mechanisms),

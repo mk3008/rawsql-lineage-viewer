@@ -411,6 +411,11 @@ textarea {
   border-color: #f59e0b;
 }
 
+.legend-dot.union {
+  background: #ffe4e6;
+  border-color: #f43f5e;
+}
+
 .legend-dot.scalar-subquery {
   background: #e0e7ff;
   border-color: #6366f1;
@@ -1085,13 +1090,9 @@ textarea {
 }
 
 .lineage-inspector-column-meta span:last-child,
-.lineage-inspector-node-link {
+.lineage-inspector-node-name {
   overflow: hidden;
-  border: 0;
-  padding: 0;
-  background: transparent;
   color: inherit;
-  font: inherit;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1120,6 +1121,11 @@ textarea {
 .lineage-inspector-type-derived {
   background: #fef3c7;
   color: #b45309;
+}
+
+.lineage-inspector-type-union {
+  background: #ffe4e6;
+  color: #be123c;
 }
 
 .lineage-inspector-type-scalar_subquery {
@@ -1215,6 +1221,50 @@ textarea {
   line-height: 1.4;
 }
 
+.lineage-inspector-deadlink {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding: 10px;
+  border: 1px solid #fecaca;
+  border-radius: 8px;
+  background: #fff7f7;
+  color: #7f1d1d;
+}
+
+.lineage-inspector-deadlink-title {
+  color: #991b1b;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.lineage-inspector-deadlink-item {
+  display: grid;
+  gap: 4px;
+}
+
+.lineage-inspector-deadlink code {
+  width: fit-content;
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 3px 6px;
+  border-radius: 6px;
+  background: #fee2e2;
+  color: #7f1d1d;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.lineage-inspector-deadlink span,
+.lineage-inspector-deadlink small {
+  color: #7f1d1d;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .lineage-inspector-column-group-card {
   gap: 8px;
 }
@@ -1290,7 +1340,20 @@ textarea {
 }
 
 .lineage-inspector-sql-actions {
-  justify-content: flex-start;
+  justify-content: space-between;
+  width: 100%;
+}
+
+.lineage-inspector-sql-actions-left,
+.lineage-inspector-sql-actions-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lineage-inspector-sql-actions-right {
+  justify-content: flex-end;
+  margin-left: auto;
 }
 
 .lineage-inspector-sql-toggle {
@@ -1560,6 +1623,29 @@ textarea {
   flex: 0 0 auto;
 }
 
+.lineage-output-title-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.lineage-output-title-delete-button {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #b91c1c;
+}
+
+.lineage-output-title-delete-button:hover {
+  background: #ffe4e6;
+}
+
+.lineage-output-title-delete-confirm {
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #991b1b;
+}
+
 .lineage-output-title-input {
   min-width: min(100%, 220px);
   flex: 1 1 180px;
@@ -1576,6 +1662,25 @@ textarea {
 .lineage-output-title-input:focus {
   border-color: #60a5fa;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
+}
+
+.lineage-inspector-title-button {
+  display: inline;
+  max-width: 100%;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 1px 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.lineage-inspector-title-button:hover {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .sql-history {
@@ -1675,12 +1780,6 @@ textarea {
   font-weight: 850;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.sql-history-time {
-  color: #64748b;
-  font-size: 11px;
-  font-weight: 750;
 }
 
 .sql-history-code {
@@ -1813,6 +1912,11 @@ textarea {
   background: #fffbeb;
 }
 
+.lineage-node-union {
+  border-color: #f43f5e;
+  background: #fff1f2;
+}
+
 .lineage-node-scalar_subquery {
   border-color: #6366f1;
   background: #eef2ff;
@@ -1839,6 +1943,14 @@ textarea {
   box-shadow:
     0 0 0 3px rgb(245 158 11 / 28%),
     0 12px 28px rgb(245 158 11 / 18%);
+}
+
+.lineage-node-dimmed {
+  opacity: 0.24;
+}
+
+.react-flow__edge.lineage-edge-dimmed {
+  opacity: 0.16;
 }
 
 .lineage-node-badge-stack {
@@ -1913,6 +2025,11 @@ textarea {
 .lineage-node-collapsed-group.lineage-node-derived {
   border-color: #d97706;
   background: #fef3c7;
+}
+
+.lineage-node-collapsed-group.lineage-node-union {
+  border-color: #be123c;
+  background: #ffe4e6;
 }
 
 .lineage-node-collapsed-group .lineage-node-header {
@@ -2044,10 +2161,18 @@ textarea {
   overflow: visible;
 }
 
+.lineage-node-expanded:not(.lineage-node-passthrough-only) .lineage-node-body {
+  max-height: 260px;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
 .lineage-column {
+  position: relative;
   display: block;
   width: 100%;
-  overflow: hidden;
+  min-width: 0;
+  overflow: visible;
   border: 1px solid transparent;
   border-radius: 5px;
   padding: 2px 5px;
@@ -2060,6 +2185,22 @@ textarea {
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.lineage-column-label {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lineage-column-selected-icon {
+  position: absolute;
+  top: 50%;
+  left: -14px;
+  transform: translateY(-50%);
+  color: currentColor;
+  pointer-events: none;
 }
 
 .lineage-column-group {
@@ -2228,6 +2369,26 @@ textarea {
 .lineage-copy-button:hover,
 .lineage-open-link:hover {
   background: #dbeafe;
+}
+
+.lineage-copy-button.lineage-output-title-delete-button {
+  border-color: #f87171;
+  background: #dc2626;
+  color: #fff;
+}
+
+.lineage-copy-button.lineage-output-title-delete-button:hover {
+  background: #b91c1c;
+}
+
+.lineage-copy-button.lineage-output-title-delete-button.lineage-output-title-delete-confirm {
+  border-color: #991b1b;
+  background: #991b1b;
+  color: #fff;
+}
+
+.lineage-copy-button.lineage-output-title-delete-button.lineage-output-title-delete-confirm:hover {
+  background: #7f1d1d;
 }
 
 .lineage-copy-button:disabled,
@@ -2404,6 +2565,15 @@ textarea {
   font-size: 14px;
 }
 
+.graph-info-warning {
+  color: #b45309;
+  font-weight: 750;
+}
+
+.graph-info-warning strong {
+  color: #b45309;
+}
+
 .empty-graph {
   display: grid;
   place-items: center;
@@ -2467,7 +2637,24 @@ textarea {
 
   .share-button,
   .github-link {
-    padding: 0 10px;
+    width: 36px;
+    padding: 0;
+  }
+
+  .share-button span,
+  .github-link span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+  }
+
+  .legend-toggle-button,
+  .legend,
+  .legend-panel {
+    display: none;
   }
 
   .workspace,
@@ -2475,19 +2662,19 @@ textarea {
   .workspace-legend-collapsed,
   .workspace-panel-collapsed.workspace-legend-collapsed {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(260px, 38vh) 1fr auto;
+    grid-template-rows: minmax(260px, 38vh) 1fr;
   }
 
   .workspace-panel-collapsed {
-    grid-template-rows: 0 1fr auto;
+    grid-template-rows: 0 1fr;
   }
 
   .workspace-legend-collapsed {
-    grid-template-rows: minmax(260px, 38vh) 1fr 0;
+    grid-template-rows: minmax(260px, 38vh) 1fr;
   }
 
   .workspace-panel-collapsed.workspace-legend-collapsed {
-    grid-template-rows: 0 1fr 0;
+    grid-template-rows: 0 1fr;
   }
 
   .sql-panel {
@@ -2497,16 +2684,6 @@ textarea {
 
   .canvas-area {
     padding: 12px;
-  }
-
-  .legend {
-    justify-content: flex-start;
-  }
-
-  .legend-panel {
-    max-height: 280px;
-    border-left: 0;
-    border-top: 1px solid #dfe6f1;
   }
 
 }

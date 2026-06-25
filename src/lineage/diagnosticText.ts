@@ -4,26 +4,26 @@ export function renderDiagnosticPacketText(packet: ColumnDiagnosticPacket): stri
   return [
     `Target: ${packet.target.columnName} (${packet.target.nodeType}: ${packet.target.nodeLabel})`,
     '',
-    renderValueOriginText(packet),
+    renderColumnLineageText(packet),
     '',
-    renderPopulationOriginText(packet),
+    renderRowLineageText(packet),
     '',
     renderCandidateConcernsText(packet),
   ].join('\n');
 }
 
-export function renderValueOriginText(packet: ColumnDiagnosticPacket): string {
-  const lines = ['Value origin:'];
-  lines.push(`- ${formatValueOriginSummary(packet.valueOrigin.summary)}`);
-  if (packet.valueOrigin.expressionChain.length > 0) {
+export function renderColumnLineageText(packet: ColumnDiagnosticPacket): string {
+  const lines = ['Column Lineage:'];
+  lines.push(`- ${formatColumnLineageSummary(packet.columnLineage.summary)}`);
+  if (packet.columnLineage.expressionChain.length > 0) {
     lines.push('- Expressions:');
-    for (const expression of packet.valueOrigin.expressionChain) {
+    for (const expression of packet.columnLineage.expressionChain) {
       lines.push(`  - ${expression.nodeId}.${expression.columnName}: ${oneLine(expression.expressionSql)}`);
     }
   }
-  if (packet.valueOrigin.caseRules.length > 0) {
+  if (packet.columnLineage.caseRules.length > 0) {
     lines.push('- CASE rules:');
-    for (const rule of packet.valueOrigin.caseRules) {
+    for (const rule of packet.columnLineage.caseRules) {
       lines.push(`  - ${rule.label}`);
       if (rule.conditionSql) {
         lines.push(`    condition: ${oneLine(rule.conditionSql)}`);
@@ -33,27 +33,27 @@ export function renderValueOriginText(packet: ColumnDiagnosticPacket): string {
       }
     }
   }
-  if (packet.valueOrigin.references.length > 0) {
+  if (packet.columnLineage.references.length > 0) {
     lines.push('- References:');
-    for (const reference of packet.valueOrigin.references) {
+    for (const reference of packet.columnLineage.references) {
       lines.push(`  - ${formatReference(reference)}`);
     }
   }
-  if (packet.valueOrigin.sourceLeaves.length > 0) {
+  if (packet.columnLineage.sourceLeaves.length > 0) {
     lines.push('- Source leaves:');
-    for (const source of packet.valueOrigin.sourceLeaves) {
+    for (const source of packet.columnLineage.sourceLeaves) {
       lines.push(`  - ${source.nodeLabel}.${source.columnName} (${source.nodeType})`);
     }
   }
   return lines.join('\n');
 }
 
-export function renderPopulationOriginText(packet: ColumnDiagnosticPacket): string {
-  const lines = ['Population origin:'];
-  lines.push(`- ${packet.populationOrigin.summary}`);
-  if (packet.populationOrigin.influences.length > 0) {
+export function renderRowLineageText(packet: ColumnDiagnosticPacket): string {
+  const lines = ['Row Lineage:'];
+  lines.push(`- ${packet.rowLineage.summary}`);
+  if (packet.rowLineage.influences.length > 0) {
     lines.push('- Influences:');
-    for (const influence of packet.populationOrigin.influences) {
+    for (const influence of packet.rowLineage.influences) {
       lines.push(`  - ${influence.mechanism}: ${oneLine(influence.expressionSql)}`);
       if (influence.references.length > 0) {
         lines.push(`    refs: ${influence.references.map(formatReference).join(', ')}`);
@@ -85,9 +85,9 @@ function formatReference(reference: DiagnosticSourceReference): string {
   return `${reference.nodeLabel}.${reference.columnName} [${reference.roles.join(', ')}]`;
 }
 
-function formatValueOriginSummary(summary: ColumnDiagnosticPacket['valueOrigin']['summary']): string {
+function formatColumnLineageSummary(summary: ColumnDiagnosticPacket['columnLineage']['summary']): string {
   if (summary.sourceLeafCount === 0) {
-    return 'No upstream value-origin source leaves were found for this target.';
+    return 'No upstream column lineage source leaves were found for this target.';
   }
   return [
     `${summary.sourceLeafCount} source leaf column(s)`,

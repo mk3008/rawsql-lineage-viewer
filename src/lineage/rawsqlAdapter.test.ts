@@ -116,6 +116,29 @@ describe('rawsqlAdapter', () => {
     );
   });
 
+  it('keeps unused CTE nodes in the model and reports them as warnings', () => {
+    const { lineage } = analyzeSql(`
+      WITH used_orders AS (
+        SELECT customer_id, amount
+        FROM orders
+      ),
+      unused_payments AS (
+        SELECT customer_id, amount
+        FROM payments
+      )
+      SELECT customer_id, amount
+      FROM used_orders
+    `);
+
+    expect(lineage.nodes.some((node) => node.id === 'cte_unused_payments')).toBe(true);
+    expect(lineage.analysisWarnings).toEqual(expect.arrayContaining([
+      {
+        code: 'unused_cte',
+        message: 'CTE "unused_payments" is not reachable from the final output.',
+      },
+    ]));
+  });
+
   it('represents SELECT statements without FROM as parameter table sources', () => {
     const { lineage } = analyzeSql(`
       select
@@ -1013,6 +1036,7 @@ describe('rawsqlAdapter', () => {
     const output = lineage.nodes.find((node) => node.id === 'main_output');
     const scalar = lineage.nodes.find((node) => node.type === 'scalar_subquery');
     const recentOrderCount = output?.columns.find((column) => column.name === 'recent_order_count');
+    const scalarExpression = scalar?.columns.find((column) => column.name === 'expr_1');
     const scalarScope = lineage.scopes.find((scope) => scope.nodeId === scalar?.id);
 
     expect(scalar).toMatchObject({
@@ -1057,6 +1081,7 @@ describe('rawsqlAdapter', () => {
     ]));
     expect(orders?.columns.map((column) => column.name)).toEqual(['customer_id', 'created_at', 'status']);
     expect(orders?.columns.every((column) => column.usage === undefined)).toBe(true);
+    expect(recentOrderCount?.unresolvedUpstream).toBeUndefined();
     expect(recentOrderCount?.upstream).toEqual([
       expect.objectContaining({
         nodeId: 'scalar_subquery_recent_order_count_1',
@@ -1064,6 +1089,11 @@ describe('rawsqlAdapter', () => {
         scopeId: scalarScope?.id,
       }),
     ]);
+    expect(scalarExpression?.upstream).toEqual(expect.arrayContaining([
+      { nodeId: 'table_orders', columnName: 'customer_id' },
+      { nodeId: 'table_orders', columnName: 'created_at' },
+      { nodeId: 'table_orders', columnName: 'status' },
+    ]));
     expect(scalarScope).toMatchObject({
       kind: 'scalar_subquery',
       parentScopeId: 'scope_main_output',
@@ -1211,6 +1241,56 @@ describe('rawsqlAdapter', () => {
         expect.objectContaining({ source: expect.stringMatching(/^derived_q_/), target: 'main_output' }),
       ]),
     );
+  });
+
+  it('infers derived wildcard columns from outer explicit column references', () => {
+    const { lineage } = analyzeSql(`
+      SELECT id, name
+      FROM (
+        SELECT *
+        FROM table_a
+      ) a
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const derived = lineage.nodes.find((node) => node.type === 'derived' && node.label === 'a');
+    const table = lineage.nodes.find((node) => node.id === 'table_table_a');
+
+    expect(output?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(derived?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(table?.columns.map((column) => column.name)).toEqual(['id', 'name']);
+    expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: derived?.id, columnName: 'id' },
+    ]);
+    expect(derived?.columns.find((column) => column.name === 'id')?.upstream).toEqual([
+      { nodeId: 'table_table_a', columnName: 'id' },
+    ]);
+    expect(derived?.columns.find((column) => column.name === 'name')?.upstream).toEqual([
+      { nodeId: 'table_table_a', columnName: 'name' },
+    ]);
+  });
+
+  it('records deadlink diagnostics when upstream column references cannot be resolved', () => {
+    const { lineage } = analyzeSql(`
+      SELECT value
+      FROM table_a
+      JOIN table_b ON a.table_a_id = b.table_a_id
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const value = output?.columns.find((column) => column.name === 'value');
+
+    expect(value?.upstream).toEqual([]);
+    expect(value?.unresolvedUpstream).toEqual([
+      expect.objectContaining({
+        columnName: 'value',
+        reason: 'unknown_unqualified_column',
+      }),
+    ]);
+    expect(lineage.analysisWarnings).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'deadlink_unknown_unqualified_column' }),
+      expect.objectContaining({ code: 'deadlink_unknown_qualified_source' }),
+    ]));
   });
 
   it('records executable SQL for CTEs with required dependencies', () => {

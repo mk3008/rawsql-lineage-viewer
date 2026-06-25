@@ -3,6 +3,12 @@ import type { LineageEdge, LineageModel, LineageNode } from '../domain/lineage';
 
 export type GraphFlowDirection = 'downstream' | 'upstream';
 
+export interface BuildGraphModelOptions {
+  layoutVisibleNodeIds?: Set<string>;
+  showUnreachableCtes?: boolean;
+  visibleNodeIds?: Set<string>;
+}
+
 const nodeSize = {
   width: 220,
   height: 120,
@@ -17,9 +23,14 @@ export function buildGraphModel(
   lineage: LineageModel,
   flowDirection: GraphFlowDirection = 'downstream',
   layoutLineage: LineageModel = lineage,
+  options: BuildGraphModelOptions = {},
 ): GraphModel {
-  const visibleNodeIds = collectOutputReachableNodeIds(lineage);
-  const layoutVisibleNodeIds = collectOutputReachableNodeIds(layoutLineage);
+  const visibleNodeIds = collectGraphVisibleNodeIds(lineage, options);
+  const layoutVisibleNodeIds = collectGraphVisibleNodeIds(layoutLineage, {
+    layoutVisibleNodeIds: options.layoutVisibleNodeIds,
+    showUnreachableCtes: options.showUnreachableCtes,
+    visibleNodeIds: options.layoutVisibleNodeIds ?? (layoutLineage === lineage ? options.visibleNodeIds : undefined),
+  });
   const visibleNodes = lineage.nodes.filter((node) => visibleNodeIds.has(node.id));
   const layoutVisibleNodes = layoutLineage.nodes.filter((node) => layoutVisibleNodeIds.has(node.id));
   const visibleEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow' && !isRecursiveDataFlow(edge) && visibleNodeIds.has(edge.source) && visibleNodeIds.has(edge.target));
@@ -45,9 +56,41 @@ export function buildGraphModel(
   };
 }
 
-function collectOutputReachableNodeIds(lineage: LineageModel): Set<string> {
+export function collectOutputReachableNodeIds(lineage: LineageModel): Set<string> {
   const outputNodeIds = lineage.nodes.filter((node) => node.type === 'output').map((node) => node.id);
-  const reachable = new Set(outputNodeIds);
+  return collectUpstreamReachableNodeIds(lineage, outputNodeIds);
+}
+
+export function collectUnreachableCteNodeIds(lineage: LineageModel): Set<string> {
+  const outputReachableNodeIds = collectOutputReachableNodeIds(lineage);
+  return new Set(lineage.nodes.filter((node) => node.type === 'cte' && !outputReachableNodeIds.has(node.id)).map((node) => node.id));
+}
+
+function collectGraphVisibleNodeIds(lineage: LineageModel, options: BuildGraphModelOptions): Set<string> {
+  if (options.visibleNodeIds) {
+    const lineageNodeIds = new Set(lineage.nodes.map((node) => node.id));
+    return new Set([...options.visibleNodeIds].filter((nodeId) => lineageNodeIds.has(nodeId)));
+  }
+
+  const outputReachableNodeIds = collectOutputReachableNodeIds(lineage);
+  if (!options.showUnreachableCtes) {
+    return outputReachableNodeIds;
+  }
+
+  const unreachableCteNodeIds = collectUnreachableCteNodeIds(lineage);
+  if (unreachableCteNodeIds.size === 0) {
+    return outputReachableNodeIds;
+  }
+
+  const visibleNodeIds = new Set(outputReachableNodeIds);
+  for (const nodeId of collectUpstreamReachableNodeIds(lineage, [...unreachableCteNodeIds])) {
+    visibleNodeIds.add(nodeId);
+  }
+  return visibleNodeIds;
+}
+
+function collectUpstreamReachableNodeIds(lineage: LineageModel, rootNodeIds: string[]): Set<string> {
+  const reachable = new Set(rootNodeIds);
   const incomingByTarget = new Map<string, LineageEdge[]>();
 
   for (const edge of lineage.edges) {
@@ -57,7 +100,7 @@ function collectOutputReachableNodeIds(lineage: LineageModel): Set<string> {
     incomingByTarget.set(edge.target, [...(incomingByTarget.get(edge.target) ?? []), edge]);
   }
 
-  const queue = [...outputNodeIds];
+  const queue = [...rootNodeIds];
   while (queue.length > 0) {
     const targetId = queue.shift()!;
     for (const edge of incomingByTarget.get(targetId) ?? []) {

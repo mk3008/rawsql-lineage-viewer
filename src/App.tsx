@@ -3,16 +3,19 @@ import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClos
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type GraphHighlightTarget, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
-import type { GraphFlowDirection } from './graph/buildGraphModel';
+import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/buildGraphModel';
+import type { AnalysisWarning } from './domain/lineage';
 import type { ProblemIntent } from './lineage/problemIntent';
 import { analyzeSql } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
+const sqlHistorySortStorageKey = 'rawsql-lineage-viewer:sql-history-sort';
 const legendPanelStorageKey = 'rawsql-lineage-viewer:legend-panel-open';
 const inspectorCardHistoryStateKey = 'rawsqlLineageViewerInspectorCard';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
+type SqlHistorySortMode = 'recent' | 'name';
 
 interface SqlHistoryItem {
   id: string;
@@ -22,9 +25,22 @@ interface SqlHistoryItem {
   title: string;
 }
 
+interface WarningCounters {
+  cteSql: number;
+  undefinedSources: number;
+  duplicates: number;
+  ddl: number;
+  unresolvedColumns: number;
+  other: number;
+  unsupported: number;
+  unusedCtes: number;
+  wildcards: number;
+}
+
 export function App() {
   const initialSql = useMemo(readInitialSqlFromUrl, []);
-  const initialHistory = useMemo(() => readSqlHistory(initialSql), [initialSql]);
+  const shouldRecordInitialSql = useMemo(readInitialSqlHistoryEnabledFromUrl, []);
+  const initialHistory = useMemo(() => readSqlHistory(initialSql, shouldRecordInitialSql), [initialSql, shouldRecordInitialSql]);
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(true);
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
@@ -32,6 +48,7 @@ export function App() {
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
+  const [activeInspectorFocusNodeId, setActiveInspectorFocusNodeId] = useState<string | null>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
   const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
@@ -111,6 +128,7 @@ export function App() {
         parameters: adapterResult.lineage.nodes.filter((node) => node.type === 'parameter_table').length,
         outputs: adapterResult.lineage.nodes.filter((node) => node.type === 'output').length,
         dataFlows: adapterResult.lineage.edges.filter((edge) => edge.type === 'dataFlow').length,
+        warnings: summarizeAnalysisWarnings(adapterResult.lineage.analysisWarnings, collectUnreachableCteNodeIds(adapterResult.lineage).size),
       }
     : null;
   useEffect(() => {
@@ -130,6 +148,7 @@ export function App() {
       if (!isSameInspectorSelection(current, selection)) {
         setCaseRuleSelection(null);
         setActiveInspectorCardId(null);
+        setActiveInspectorFocusNodeId(null);
         lastCommittedInspectorCardRef.current = null;
       }
       return selection;
@@ -141,6 +160,7 @@ export function App() {
   }, []);
   const applyInspectorCardSelection = useCallback((selection: InspectorCardSelection | null) => {
     setActiveInspectorCardId(selection?.cardId ?? null);
+    setActiveInspectorFocusNodeId(selection?.focusNodeId ?? null);
     if (!selection) {
       return;
     }
@@ -234,7 +254,11 @@ export function App() {
     setSql(nextSql);
     setLastAnalyzedSql(nextSql);
     setCaseRuleSelection(null);
+    setActiveInspectorCardId(null);
+    setActiveInspectorFocusNodeId(null);
+    lastCommittedInspectorCardRef.current = null;
     setExpandedExpressionColumnIds(new Set());
+    setGraphFocusTarget(null);
     setGraphHighlightTarget(null);
     setForcedInspectorSelection(nextInspectorSelection);
     setInspectorSelection(nextInspectorSelection);
@@ -274,6 +298,30 @@ export function App() {
       return next;
     });
   }, [lastAnalyzedSql]);
+  const deleteOutputTitle = useCallback(() => {
+    const normalizedSql = lastAnalyzedSql.trim();
+    setSql('');
+    setLastAnalyzedSql('');
+    setOutputTitle(defaultOutputTitle);
+    setPanelTab('sql');
+    setIsPanelOpen(true);
+    setCaseRuleSelection(null);
+    setActiveInspectorCardId(null);
+    setActiveInspectorFocusNodeId(null);
+    lastCommittedInspectorCardRef.current = null;
+    setExpandedExpressionColumnIds(new Set());
+    setGraphFocusTarget(null);
+    setGraphHighlightTarget(null);
+    setForcedInspectorSelection(null);
+    setInspectorSelection(null);
+    setShareStatus('idle');
+    pendingAutoInspectOutputNonceRef.current = null;
+    setSqlHistory((current) => {
+      const next = normalizedSql ? current.filter((item) => item.sql.trim() !== normalizedSql) : current;
+      writeSqlHistory(next);
+      return next;
+    });
+  }, [lastAnalyzedSql]);
 
   return (
     <div className="app-shell">
@@ -301,14 +349,14 @@ export function App() {
           ) : null}
           <button className="share-button" type="button" onClick={() => void copyShareUrl(sql, setShareStatus)}>
             <Share2 size={16} />
-            Share
+            <span>Share</span>
           </button>
           <a className="github-link" href="https://github.com/mk3008/rawsql-lineage-viewer" target="_blank" rel="noreferrer">
             <GitHubMark />
-            GitHub
+            <span>GitHub</span>
           </a>
           <button
-            className="icon-button"
+            className="icon-button legend-toggle-button"
             type="button"
             onClick={() => setIsLegendPanelOpen((value) => !value)}
             aria-label={isLegendPanelOpen ? 'Hide legend panel' : 'Show legend panel'}
@@ -422,6 +470,7 @@ export function App() {
                 lineage={adapterResult.lineage}
                 onClearCaseRule={() => setCaseRuleSelection(null)}
                 onClearInspectorCard={clearInspectorCard}
+                onDeleteOutputTitle={deleteOutputTitle}
                 onRenameOutputTitle={renameOutputTitle}
                 onSelectInspectorCard={selectInspectorCard}
                 onToggleExpressionBreakdown={toggleExpressionBreakdown}
@@ -464,6 +513,7 @@ export function App() {
                 caseRuleSelection={caseRuleSelection}
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
                 flowDirection={flowDirection}
+                activeInspectorFocusNodeId={activeInspectorFocusNodeId}
                 focusTarget={graphFocusTarget}
                 highlightTargetRequest={graphHighlightTarget}
                 lineage={adapterResult.lineage}
@@ -480,6 +530,51 @@ export function App() {
                 <span>Params <strong>{graphStats?.parameters}</strong></span>
                 <span>Output <strong>{graphStats?.outputs}</strong></span>
                 <span>DataFlow <strong>{graphStats?.dataFlows}</strong></span>
+                <GraphInfoWarningCount
+                  label="Unresolved columns"
+                  title="Column references that are syntactically valid but cannot be traced without schema facts or explicit qualification."
+                  value={graphStats?.warnings.unresolvedColumns ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Undefined aliases"
+                  title="Qualified references whose table alias or source name is not defined in this SELECT scope."
+                  value={graphStats?.warnings.undefinedSources ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Unused CTEs"
+                  title="CTEs defined in the SQL but not reached from the output graph."
+                  value={graphStats?.warnings.unusedCtes ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Wildcards"
+                  title="Wildcard output columns whose concrete column list could not be inferred."
+                  value={graphStats?.warnings.wildcards ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="DDL parse"
+                  title="Warnings while parsing optional DDL/schema facts, for example unsupported CREATE/ALTER syntax."
+                  value={graphStats?.warnings.ddl ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Unsupported SQL"
+                  title="SQL statements or source shapes that the lineage model cannot analyze yet."
+                  value={graphStats?.warnings.unsupported ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Wildcard duplicates"
+                  title="Duplicate column names detected while expanding wildcard outputs from schema facts."
+                  value={graphStats?.warnings.duplicates ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="SQL extract"
+                  title="Warnings while extracting executable standalone SQL for CTEs, derived queries, or subqueries."
+                  value={graphStats?.warnings.cteSql ?? 0}
+                />
+                <GraphInfoWarningCount
+                  label="Other warnings"
+                  title="Warnings that do not fit the named categories."
+                  value={graphStats?.warnings.other ?? 0}
+                />
               </div>
             </>
           ) : (
@@ -496,13 +591,67 @@ export function App() {
   );
 }
 
+function GraphInfoWarningCount({ label, title, value }: { label: string; title: string; value: number }) {
+  if (value === 0) {
+    return null;
+  }
+
+  return (
+    <span className="graph-info-warning" title={title}>
+      {label} <strong>{value}</strong>
+    </span>
+  );
+}
+
+function summarizeAnalysisWarnings(warnings: AnalysisWarning[], unreachableCteCount: number): WarningCounters {
+  const counters: WarningCounters = {
+    cteSql: 0,
+    undefinedSources: 0,
+    duplicates: 0,
+    ddl: 0,
+    unresolvedColumns: 0,
+    other: 0,
+    unsupported: 0,
+    unusedCtes: unreachableCteCount,
+    wildcards: 0,
+  };
+
+  for (const warning of warnings) {
+    const code = warning.code;
+    if (code === 'unused_cte') {
+      continue;
+    }
+    if (code === 'deadlink_unknown_unqualified_column') {
+      counters.unresolvedColumns += 1;
+    } else if (code === 'deadlink_unknown_qualified_source') {
+      counters.undefinedSources += 1;
+    } else if (code.startsWith('deadlink_')) {
+      counters.unresolvedColumns += 1;
+    } else if (code.startsWith('wildcard_')) {
+      counters.wildcards += 1;
+    } else if (code.startsWith('ddl_')) {
+      counters.ddl += 1;
+    } else if (code.startsWith('cte-executable-sql-')) {
+      counters.cteSql += 1;
+    } else if (code.startsWith('unsupported-')) {
+      counters.unsupported += 1;
+    } else if (code.startsWith('rawsql_duplicate_')) {
+      counters.duplicates += 1;
+    } else {
+      counters.other += 1;
+    }
+  }
+
+  return counters;
+}
+
 function LegendPanel() {
   return (
     <aside className="legend-panel" aria-label="Legend panel">
       <div className="legend-panel-heading">
         <div>
           <h2>Legend</h2>
-          <p>How to read graph symbols and population risk badges.</p>
+          <p>How to read graph symbols and row lineage risk badges.</p>
         </div>
       </div>
       <section className="legend-panel-section">
@@ -511,6 +660,7 @@ function LegendPanel() {
           <span><i className="legend-dot table" />Table</span>
           <span><i className="legend-dot cte" />CTE</span>
           <span><i className="legend-dot derived" />Derived</span>
+          <span><i className="legend-dot union" />Union</span>
           <span><i className="legend-dot scalar-subquery" />Scalar Subquery</span>
           <span><i className="legend-dot parameter-table" />Parameter Table</span>
           <span><i className="legend-dot output" />Output</span>
@@ -524,7 +674,7 @@ function LegendPanel() {
         </div>
       </section>
       <section className="legend-panel-section">
-        <h3>Population badges</h3>
+        <h3>Row Lineage badges</h3>
         <dl className="legend-impact-list">
           <div><dt><i className="legend-badge">Where</i></dt><dd>WHERE / EXISTS may filter rows</dd></div>
           <div><dt><i className="legend-badge">Having</i></dt><dd>HAVING may filter groups</dd></div>
@@ -551,7 +701,7 @@ function SqlHistoryPanel({
   onOpen: (item: SqlHistoryItem) => void;
   onRemove: (id: string) => void;
 }) {
-  const [sortMode, setSortMode] = useState<'recent' | 'name'>('recent');
+  const [sortMode, setSortMode] = useState<SqlHistorySortMode>(readSqlHistorySortMode);
   const visibleHistory = useMemo(() => {
     if (sortMode === 'recent') {
       return history;
@@ -576,7 +726,14 @@ function SqlHistoryPanel({
         <div className="sql-history-heading-actions">
           <label className="sql-history-sort">
             <span>Sort</span>
-            <select value={sortMode} onChange={(event) => setSortMode(event.target.value === 'name' ? 'name' : 'recent')}>
+            <select
+              value={sortMode}
+              onChange={(event) => {
+                const nextSortMode = event.target.value === 'name' ? 'name' : 'recent';
+                setSortMode(nextSortMode);
+                writeSqlHistorySortMode(nextSortMode);
+              }}
+            >
               <option value="recent">Recent</option>
               <option value="name">Name</option>
             </select>
@@ -590,18 +747,17 @@ function SqlHistoryPanel({
       {history.length > 0 ? (
         <div className="sql-history-list">
           {visibleHistory.map((item) => (
-              <article className="sql-history-item" key={item.id}>
-                  <button className="sql-history-main" type="button" onClick={() => onOpen(item)}>
-                  <span className="sql-history-title">{getSqlHistoryDisplayTitle(item)}</span>
-                  <span className="sql-history-time">{formatHistoryTime(item.openedAt)}</span>
-                  <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
+            <article className="sql-history-item" key={item.id}>
+              <button className="sql-history-main" type="button" onClick={() => onOpen(item)}>
+                <span className="sql-history-title">{getSqlHistoryDisplayTitle(item)}</span>
+                <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
+              </button>
+              <div className="sql-history-actions">
+                <button className="sql-history-action sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
+                  <Trash2 size={13} />
                 </button>
-                <div className="sql-history-actions">
-                  <button className="sql-history-action sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              </article>
+              </div>
+            </article>
           ))}
         </div>
       ) : (
@@ -623,6 +779,16 @@ function readInitialSqlFromUrl() {
   const hashSql = new URLSearchParams(window.location.hash.replace(/^#/, '')).get('sql');
   const sharedSql = hashSql ?? new URLSearchParams(window.location.search).get('sql');
   return sharedSql?.trim() ? sharedSql : salesSummarySql;
+}
+
+function readInitialSqlHistoryEnabledFromUrl() {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const searchParams = new URLSearchParams(window.location.search);
+  return (hashParams.get('history') ?? searchParams.get('history')) !== '0';
 }
 
 async function copyShareUrl(sql: string, setShareStatus: (status: 'idle' | 'copied' | 'too-long' | 'failed') => void) {
@@ -676,8 +842,8 @@ async function copyText(text: string) {
   }
 }
 
-function readSqlHistory(initialSql: string): SqlHistoryItem[] {
-  const initialHistory = isSqlHistoryAnalyzable(initialSql) ? [createSqlHistoryItem(initialSql)] : [];
+function readSqlHistory(initialSql: string, shouldRecordInitialSql = true): SqlHistoryItem[] {
+  const initialHistory = shouldRecordInitialSql && isSqlHistoryAnalyzable(initialSql) ? [createSqlHistoryItem(initialSql)] : [];
   if (typeof window === 'undefined') {
     return initialHistory;
   }
@@ -752,6 +918,31 @@ function writeSqlHistory(history: SqlHistoryItem[]) {
 
   try {
     window.localStorage.setItem(sqlHistoryStorageKey, JSON.stringify(history));
+  } catch {
+    // Ignore storage quota or privacy mode failures.
+  }
+}
+
+function readSqlHistorySortMode(): SqlHistorySortMode {
+  if (typeof window === 'undefined') {
+    return 'recent';
+  }
+
+  try {
+    return window.localStorage.getItem(sqlHistorySortStorageKey) === 'name' ? 'name' : 'recent';
+  } catch {
+    // Ignore storage failures and use the default sort mode.
+    return 'recent';
+  }
+}
+
+function writeSqlHistorySortMode(sortMode: SqlHistorySortMode) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(sqlHistorySortStorageKey, sortMode);
   } catch {
     // Ignore storage quota or privacy mode failures.
   }
@@ -835,20 +1026,6 @@ function findSqlHistoryOutputTitle(sql: string, history: SqlHistoryItem[]) {
 function compactSql(sql: string) {
   const compact = sql.replace(/\s+/g, ' ').trim();
   return compact.length > 120 ? `${compact.slice(0, 117)}...` : compact;
-}
-
-function formatHistoryTime(value: string) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    month: '2-digit',
-  }).format(date);
 }
 
 function hashText(text: string) {

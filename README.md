@@ -77,7 +77,7 @@ Without DDL, diagnostics stay SQL-only. For example, `SELECT *` may produce a `w
 
 ### DDL adapter note
 
-rawsql-ts is the source of truth for SQL parsing, SELECT item structure, wildcard expansion, table aliases, schema-qualified names, quoted identifiers, CTEs, derived tables, subqueries, and expression ASTs. rawsql-lineage enriches that analysis with lineage-specific metadata: `scopeId`, `nodeId`, `upstream`, value origin, population origin, candidate concerns, diagnostics, and confidence adjustments.
+rawsql-ts is the source of truth for SQL parsing, SELECT item structure, wildcard expansion, table aliases, schema-qualified names, quoted identifiers, CTEs, derived tables, subqueries, and expression ASTs. rawsql-lineage enriches that analysis with lineage-specific metadata: `scopeId`, `nodeId`, `upstream`, column lineage, row lineage, candidate concerns, diagnostics, and confidence adjustments.
 
 `SchemaFacts` creates a rawsql-ts-compatible `TableColumnResolver`. Wildcard SELECT items are expanded through rawsql-ts `SelectValueCollector`; the lineage adapter then converts those expanded values into `LineageColumn` objects.
 
@@ -85,7 +85,7 @@ When wildcard expansion contains duplicate output column names, rawsql-lineage k
 
 The adapter still performs the final rawsql-ts-result-to-`LineageModel` conversion because diagnostic JSON needs information that rawsql-ts collectors do not expose as output metadata: `nodeId`, `scopeId`, `upstream` references, `usageKind`, and lineage diagnostics such as unresolved wildcard warnings. This keeps rawsql-ts responsible for parser/schema primitives while this app owns diagnostic semantics.
 
-日本語メモ: SQL解析の正は rawsql-ts です。rawsql-lineage は、その解析結果に `scopeId`、`upstream`、値由来、母集団由来、diagnostics を付加する層です。
+日本語メモ: SQL解析の正は rawsql-ts です。rawsql-lineage は、その解析結果に `scopeId`、`upstream`、列リネージュ、行リネージュ、diagnostics を付加する層です。
 
 ## Deployment
 

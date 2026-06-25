@@ -62,7 +62,7 @@ describe('problem intent view model', () => {
       scopeId: 'scope_recent_orders',
       signals: [],
     });
-    packet.valueOrigin.sourceLeaves = [
+    packet.columnLineage.sourceLeaves = [
       {
         columnName: 'quantity',
         nodeId: 'table_order_items',
@@ -95,9 +95,9 @@ describe('problem intent view model', () => {
     const packet = createPacket();
     const before = JSON.stringify(packet);
 
-    expect(filterPopulationInfluencesForIntent(packet.populationOrigin.influences, 'all_signals').map((item) => item.id)).toEqual(['join-nx', 'where-filter']);
-    expect(filterPopulationInfluencesForIntent(packet.populationOrigin.influences, 'logic_review')).toEqual([]);
-    expect(filterPopulationInfluencesForIntent(packet.populationOrigin.influences, 'duplicate_rows').map((item) => item.id)).toEqual(['join-nx']);
+    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'all_signals').map((item) => item.id)).toEqual(['join-nx', 'where-filter']);
+    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'logic_review')).toEqual([]);
+    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'duplicate_rows').map((item) => item.id)).toEqual(['join-nx']);
     expect(rankCandidateConcernsForIntent(packet.candidateConcerns, 'value_missing').map((item) => item.kind)).toEqual(['coalesce']);
     expect(JSON.stringify(packet)).toBe(before);
   });
@@ -141,7 +141,7 @@ function createPacket(): ColumnDiagnosticPacket {
       omittedInfluenceCount: 0,
       omittedNodeCount: 0,
     },
-    populationOrigin: {
+    rowLineage: {
       influences: [
         {
           effects: ['row_multiplication'],
@@ -211,7 +211,7 @@ function createPacket(): ColumnDiagnosticPacket {
       nodeType: 'output',
       scopeId: 'scope_main',
     },
-    valueOrigin: {
+    columnLineage: {
       caseRules: [],
       expressionChain: [],
       expressions: [],
@@ -228,8 +228,8 @@ function createPacket(): ColumnDiagnosticPacket {
     },
     version: 1,
     views: {
-      valueOriginTree: {
-        derivedFrom: 'valueOrigin',
+      columnLineageTree: {
+        derivedFrom: 'columnLineage',
         tree: [],
       },
     },

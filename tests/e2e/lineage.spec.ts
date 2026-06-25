@@ -68,7 +68,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(legendPanel).toBeVisible();
   await expect(legendPanel).toContainText('Node types');
   await expect(legendPanel).toContainText('Data flow');
-  await expect(legendPanel).toContainText('Population badges');
+  await expect(legendPanel).toContainText('Row Lineage badges');
   await expect(legendPanel).toContainText('WHERE / EXISTS may filter rows');
   await expect(legendPanel).toContainText('JOIN may drop or multiply rows');
   await expect(legendPanel).toContainText('GROUP BY may change grain/counts');
@@ -96,6 +96,8 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-cte_recent_orders').getByRole('button', { name: 'Show columns for recent_orders' })).toHaveCount(0);
   await expect(page.getByTestId('graph-info')).toContainText('DataFlow');
   await expect(page.getByTestId('graph-info')).toContainText('Derived');
+  await expect(page.getByTestId('graph-info')).toContainText('Unresolved columns');
+  await expect(page.getByTestId('graph-info')).toContainText('Wildcards');
   await expect(page.getByTestId('graph-info')).not.toContainText('JOIN');
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
@@ -402,7 +404,7 @@ test('renders scalar subquery table sources and condition columns', async ({ pag
   await expect(ordersNode.getByRole('button', { name: 'status', exact: true })).toHaveClass(/lineage-column-highlighted/);
 });
 
-test('renders WHERE EXISTS subquery sources as population origin', async ({ page }) => {
+test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
 
@@ -448,7 +450,7 @@ test('renders WHERE EXISTS subquery sources as population origin', async ({ page
   await page.locator('#problem-intent-select').selectOption('all_signals');
   await inspector.getByRole('tab', { name: 'Diagnostics' }).click();
   const diagnosticSection = inspector.locator('.lineage-diagnostic-section');
-  await diagnosticSection.getByRole('tab', { name: 'Population origin' }).click();
+  await diagnosticSection.getByRole('tab', { name: 'Row Lineage' }).click();
   await expect(diagnosticSection).toContainText('not exists');
   await expect(diagnosticSection).toContainText('orders');
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-selected/);
@@ -800,12 +802,12 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await inspector.getByRole('tab', { name: 'Diagnostics' }).click();
   const diagnosticSection = inspector.locator('.lineage-diagnostic-section');
   await expect(diagnosticSection).toContainText('Diagnostic result');
-  await expect(diagnosticSection).toContainText('Value origin');
+  await expect(diagnosticSection).toContainText('Column Lineage');
   await expect(diagnosticSection).toContainText('Upstream');
   await expect(diagnosticSection.locator('.lineage-inspector-root-card')).toContainText('total_amount');
-  await diagnosticSection.getByRole('tab', { name: 'Population origin' }).click();
-  await expect(diagnosticSection).toContainText('Population origin');
-  await expect(diagnosticSection).toContainText('Population risk badges are hidden in Logic review.');
+  await diagnosticSection.getByRole('tab', { name: 'Row Lineage' }).click();
+  await expect(diagnosticSection).toContainText('Row Lineage');
+  await expect(diagnosticSection).toContainText('Row lineage risk badges are hidden in Logic review.');
   await expect(diagnosticSection.locator('.lineage-diagnostic-influence')).toHaveCount(0);
   await problemFocus.selectOption('missing_rows');
   await expect(diagnosticSection.locator('.lineage-diagnostic-influence').first()).toBeVisible();
@@ -821,7 +823,7 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(diagnosticSection).toContainText('JSON output');
   const diagnosticJson = diagnosticSection.locator('.lineage-diagnostic-output-json');
   await expect(diagnosticJson).toContainText('"kind": "column-diagnostic-packet"');
-  await expect(diagnosticJson).toContainText('"populationOrigin"');
+  await expect(diagnosticJson).toContainText('"rowLineage"');
   await inspector.getByRole('tab', { name: /Upstream/ }).click();
   const orderItemsSourceCard = sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
   await expect(orderItemsSourceCard.getByRole('button', { name: /unit_price/ })).toHaveCount(0);
@@ -1246,7 +1248,7 @@ test('can collapse upstream helper CTEs into a CTE group and expand them again',
   await expect(page.getByTestId('rf__node-cte_support_pressure')).toBeVisible();
 });
 
-test('keeps population badges stable when expanding a CTE group', async ({ page }) => {
+test('keeps row lineage badges stable when expanding a CTE group', async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   await page.goto('/');
 

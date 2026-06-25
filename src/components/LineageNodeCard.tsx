@@ -5,6 +5,7 @@ import { Check, Copy, ExternalLink, Maximize2, Minimize2, X } from 'lucide-react
 import type { GraphNode } from '../domain/graph';
 import type { LineageColumnUsageReason } from '../domain/lineage';
 import { hasColumnCalloutContent, isPassthroughColumn, isSimpleColumnReference, isVisibleGraphColumn } from '../lineage/columnDisplay';
+import { isUnionNode } from '../lineage/nodeKind';
 import { SqlCodeMirror } from './SqlCodeMirror';
 
 export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
@@ -19,11 +20,12 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
     shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
   const populationImpactLabels = data.highlightedNodeImpactLabels?.get(node.id) ?? [];
   const sourceDataLabels = data.highlightedSourceDataLabels?.get(node.id) ?? [];
+  const isUnion = isUnionNode(node);
 
   return (
     <div
       ref={nodeRef}
-      className={`lineage-node lineage-node-${node.type} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
+      className={`lineage-node lineage-node-${node.type} ${isUnion ? 'lineage-node-union' : ''} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.dimmed ? 'lineage-node-dimmed' : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
       data-testid={`lineage-node-${node.type}`}
     >
       {sourceDataLabels.length > 0 || data.collapsedGroup || populationImpactLabels.length > 0 ? (
@@ -50,7 +52,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
         </button>
         <div className="lineage-node-actions">
           <div className="lineage-node-action-buttons">
-            {data.collapsedGroup ? (
+            {data.showGroupControls && data.collapsedGroup ? (
               <button
                 aria-label={`Expand ${data.collapsedGroup.label}`}
                 className="node-icon-button nodrag"
@@ -63,7 +65,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
               >
                 <Maximize2 size={13} />
               </button>
-            ) : data.canCollapseUpstream ? (
+            ) : data.showGroupControls && data.canCollapseUpstream ? (
               <button
                 aria-label={`Collapse inner query for ${node.label}`}
                 className="node-icon-button nodrag"
@@ -79,7 +81,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
             ) : null}
           </div>
           <span className={`lineage-node-kind ${node.recursive && !data.collapsedGroup ? 'lineage-node-kind-recursive' : ''}`}>
-            {data.collapsedGroup ? 'Group' : node.recursive ? 'Recursive' : formatNodeKind(node.type)}
+            {data.collapsedGroup ? 'Group' : node.recursive ? 'Recursive' : isUnion ? 'Union' : formatNodeKind(node.type)}
           </span>
         </div>
       </div>
@@ -96,7 +98,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
         />
       ) : null}
       {shouldRenderColumns ? (
-        <div className="lineage-node-body">
+        <div className="lineage-node-body nowheel nodrag" onWheelCapture={(event) => event.stopPropagation()}>
           {data.collapsedGroup ? (
             <CollapsedGroupBody data={data} nodeId={node.id} />
           ) : node.columns.length > 0 ? (
@@ -267,6 +269,7 @@ function LineageColumnRow({
   const columnRef = useRef<HTMLButtonElement>(null);
   const isSelected = data.selectedColumnId === column.id;
   const isActiveRoot = data.activeLineageRootColumnIds?.has(column.id) ?? false;
+  const hasSelectedMarker = isSelected || isActiveRoot;
   const isCommentSelected = data.selectedCommentTargetIds?.has(columnCommentTargetId(column.id)) ?? false;
   const isSource = data.sourceColumnIds?.has(column.id) ?? false;
   const isHighlighted = data.highlightedColumnIds?.has(column.id) ?? false;
@@ -279,14 +282,15 @@ function LineageColumnRow({
     <div className="lineage-column-group">
       <button
         ref={columnRef}
-        className={`lineage-column ${isSelected || isActiveRoot ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
+        className={`lineage-column ${hasSelectedMarker ? 'lineage-column-selected' : ''} ${isSource ? 'lineage-column-source' : ''} ${isHighlighted ? 'lineage-column-highlighted' : ''} ${isCommentSelected ? 'lineage-comment-selected' : ''} nodrag`}
         onClick={(event) => {
           event.stopPropagation();
           data.onColumnSelect?.(nodeId, column);
         }}
         type="button"
       >
-        {column.name}
+        {hasSelectedMarker ? <Check className="lineage-column-selected-icon" size={12} strokeWidth={3} aria-hidden="true" /> : null}
+        <span className="lineage-column-label">{column.name}</span>
       </button>
       {isCommentSelected && (isSelected || hasColumnCalloutContent(column) || selectedRuleExpressionSql) ? (
         <CommentBubble
@@ -514,7 +518,7 @@ function rectContains(container: RectLike, rect: RectLike) {
 function buildViewerSqlUrl(sql: string) {
   const url = new URL(window.location.href);
   url.search = '';
-  url.hash = new URLSearchParams({ sql }).toString();
+  url.hash = new URLSearchParams({ sql, history: '0' }).toString();
   return url.toString();
 }
 

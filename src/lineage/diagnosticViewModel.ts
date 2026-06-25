@@ -7,13 +7,13 @@ import type {
   PopulationInfluence,
   PopulationMechanism,
   PopulationSignal,
-  ValueOriginTreeNode,
+  ColumnLineageTreeNode,
 } from './diagnostics';
 
 export interface DiagnosticTreeViewModel {
   candidateConcerns: DiagnosticConcernViewModel[];
   json: string;
-  populationOrigin: {
+  rowLineage: {
     influences: DiagnosticInfluenceViewModel[];
     nodeImpacts: DiagnosticNodeImpactViewModel[];
     summary: string;
@@ -23,13 +23,13 @@ export interface DiagnosticTreeViewModel {
     nodeLabel: string;
     nodeType: string;
   };
-  valueOrigin: {
+  columnLineage: {
     caseRules: DiagnosticCaseRuleViewModel[];
     expressions: DiagnosticExpressionViewModel[];
     sourceColumns: DiagnosticReferenceViewModel[];
     sourceLeaves: DiagnosticValueColumn[];
     summary: string;
-    tree: ValueOriginTreeNode[];
+    tree: ColumnLineageTreeNode[];
   };
 }
 
@@ -104,22 +104,22 @@ export interface DiagnosticNodeImpactViewModel {
 }
 
 export function buildDiagnosticTreeViewModel(packet: ColumnDiagnosticPacket): DiagnosticTreeViewModel {
-  const referencesById = new Map(packet.valueOrigin.references.map((reference) => [reference.id ?? `${reference.nodeId}.${reference.columnName}`, reference]));
+  const referencesById = new Map(packet.columnLineage.references.map((reference) => [reference.id ?? `${reference.nodeId}.${reference.columnName}`, reference]));
   return {
     candidateConcerns: packet.candidateConcerns.map(toConcernViewModel),
     json: JSON.stringify(packet, null, 2),
-    populationOrigin: {
-      influences: packet.populationOrigin.influences.map(toInfluenceViewModel),
-      nodeImpacts: packet.populationOrigin.nodeImpacts.map((nodeImpact) => ({ ...nodeImpact })),
-      summary: packet.populationOrigin.summary,
+    rowLineage: {
+      influences: packet.rowLineage.influences.map(toInfluenceViewModel),
+      nodeImpacts: packet.rowLineage.nodeImpacts.map((nodeImpact) => ({ ...nodeImpact })),
+      summary: packet.rowLineage.summary,
     },
     target: {
       columnName: packet.target.columnName,
       nodeLabel: packet.target.nodeLabel,
       nodeType: packet.target.nodeType,
     },
-    valueOrigin: {
-      caseRules: packet.valueOrigin.caseRules.map((rule) => ({
+    columnLineage: {
+      caseRules: packet.columnLineage.caseRules.map((rule) => ({
         conditionReferences: rule.conditionRefIds.flatMap((id) => {
           const reference = referencesById.get(id);
           return reference ? [toReferenceViewModel(reference)] : [];
@@ -133,11 +133,11 @@ export function buildDiagnosticTreeViewModel(packet: ColumnDiagnosticPacket): Di
         }),
         resultSql: rule.resultSql,
       })),
-      expressions: packet.valueOrigin.expressionChain.map((expression) => ({ ...expression })),
-      sourceColumns: packet.valueOrigin.references.map(toReferenceViewModel),
-      sourceLeaves: packet.valueOrigin.sourceLeaves.map((source) => ({ ...source })),
-      summary: formatValueOriginSummary(packet.valueOrigin.summary),
-      tree: packet.views.valueOriginTree.tree,
+      expressions: packet.columnLineage.expressionChain.map((expression) => ({ ...expression })),
+      sourceColumns: packet.columnLineage.references.map(toReferenceViewModel),
+      sourceLeaves: packet.columnLineage.sourceLeaves.map((source) => ({ ...source })),
+      summary: formatColumnLineageSummary(packet.columnLineage.summary),
+      tree: packet.views.columnLineageTree.tree,
     },
   };
 }
@@ -152,7 +152,7 @@ export function buildDiagnosticGraphViewModel(packet: ColumnDiagnosticPacket): D
   });
 
   const edges: DiagnosticGraphViewModel['edges'] = [];
-  for (const reference of packet.valueOrigin.references) {
+  for (const reference of packet.columnLineage.references) {
     const sourceId = referenceId(reference);
     nodes.set(sourceId, {
       id: sourceId,
@@ -161,13 +161,13 @@ export function buildDiagnosticGraphViewModel(packet: ColumnDiagnosticPacket): D
     });
     edges.push({
       effects: [],
-      kind: 'value_origin',
+      kind: 'column_lineage',
       sourceIds: [sourceId],
       targetId,
     });
   }
 
-  for (const influence of packet.populationOrigin.influences) {
+  for (const influence of packet.rowLineage.influences) {
     const influenceId = `influence:${influence.id}`;
     nodes.set(influenceId, {
       id: influenceId,
@@ -191,7 +191,7 @@ export function buildDiagnosticGraphViewModel(packet: ColumnDiagnosticPacket): D
     });
     edges.push({
       effects: influence.effects,
-      kind: 'population_origin',
+      kind: 'row_lineage',
       sourceIds: [influenceId],
       targetId,
     });
@@ -203,9 +203,9 @@ export function buildDiagnosticGraphViewModel(packet: ColumnDiagnosticPacket): D
   };
 }
 
-function formatValueOriginSummary(summary: ColumnDiagnosticPacket['valueOrigin']['summary']): string {
+function formatColumnLineageSummary(summary: ColumnDiagnosticPacket['columnLineage']['summary']): string {
   if (summary.sourceLeafCount === 0) {
-    return 'No upstream value-origin source leaves were found for this target.';
+    return 'No upstream column lineage source leaves were found for this target.';
   }
   return [
     `${summary.sourceLeafCount} source leaf column(s)`,
