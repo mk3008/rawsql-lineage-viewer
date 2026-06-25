@@ -17,7 +17,7 @@ import type { CSSProperties, KeyboardEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, collectUnreachableCteNodeIds, type GraphFlowDirection } from '../graph/buildGraphModel';
-import { collectCollapsibleUpstreamGroups, collapseLineageGroups, type CollapsedLineageGroup } from '../graph/collapseGroups';
+import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
 import { buildColumnDiagnosticPacket, type ColumnDiagnosticPacket } from '../lineage/diagnostics';
 import { buildDiagnosticTreeViewModel } from '../lineage/diagnosticViewModel';
@@ -73,6 +73,7 @@ type GraphOriginSelection =
 
 type InspectorCommentMode = 'all' | 'none' | 'smart';
 const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
+type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse';
 
 interface GraphDisplaySnapshot {
   highlightTarget: GraphHighlightTarget;
@@ -175,6 +176,7 @@ export function LineageGraph({
   const previousFlowDirectionRef = useRef(flowDirection);
   const graphShellRef = useRef<HTMLDivElement | null>(null);
   const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
+  const lastHandledFocusExpansionNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
   const lastCommittedSelectionRef = useRef<GraphOriginSelection>({ kind: 'none' });
   const outputViewportCorrectionPendingRef = useRef(true);
@@ -183,7 +185,10 @@ export function LineageGraph({
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const previousGraphStructureKeyRef = useRef<string | null>(null);
   const previousNodeStructureKeyRef = useRef<string | null>(null);
+  const previousAutoLayoutRequestIdRef = useRef(0);
   const previousAutoLayoutEnabledRef = useRef(true);
+  const pendingAutoLayoutFrameRef = useRef<number | null>(null);
+  const pendingAutoLayoutReasonRef = useRef<AutoLayoutReason | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
@@ -234,6 +239,27 @@ export function LineageGraph({
   const [viewportZoom, setViewportZoom] = useState(1);
   const [showEdgeAliases, setShowEdgeAliases] = useState(false);
   const [autoLayoutEnabled, setAutoLayoutEnabled] = useState(true);
+  const [autoLayoutRequestId, setAutoLayoutRequestId] = useState(0);
+  const scheduleAutoLayout = useCallback((reason: AutoLayoutReason) => {
+    if (!autoLayoutEnabled || typeof window === 'undefined') {
+      return;
+    }
+    pendingAutoLayoutReasonRef.current = reason;
+    if (pendingAutoLayoutFrameRef.current !== null) {
+      return;
+    }
+    pendingAutoLayoutFrameRef.current = window.requestAnimationFrame(() => {
+      pendingAutoLayoutFrameRef.current = null;
+      setAutoLayoutRequestId((current) => current + 1);
+    });
+  }, [autoLayoutEnabled]);
+  useEffect(() => {
+    return () => {
+      if (pendingAutoLayoutFrameRef.current !== null) {
+        window.cancelAnimationFrame(pendingAutoLayoutFrameRef.current);
+      }
+    };
+  }, []);
   const resetZoom = useCallback(() => {
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
@@ -273,6 +299,7 @@ export function LineageGraph({
     });
   }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
+    const shouldRelayout = !collapsedGroupRootIds.has(nodeId);
     for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
       const renderedPosition = readRenderedNodePosition(graphShellRef.current, helperNodeId);
       if (renderedPosition) {
@@ -281,8 +308,12 @@ export function LineageGraph({
       }
     }
     setCollapsedGroupRootIds((current) => new Set(current).add(nodeId));
-  }, [collapsibleGroups]);
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-collapse');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroup = useCallback((nodeId: string) => {
+    const shouldRelayout = collapsedGroupRootIds.has(nodeId);
     setCollapsedGroupRootIds((current) => {
       if (!current.has(nodeId)) {
         return current;
@@ -294,8 +325,14 @@ export function LineageGraph({
       }
       return next;
     });
-  }, [collapsibleGroups]);
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-expand');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroupForNode = useCallback((nodeId: string) => {
+    const shouldRelayout = [...collapsibleGroups].some(
+      ([rootNodeId, group]) => collapsedGroupRootIds.has(rootNodeId) && (rootNodeId === nodeId || group.helperNodeIds.includes(nodeId)),
+    );
     setCollapsedGroupRootIds((current) => {
       const next = new Set(current);
       let changed = false;
@@ -307,10 +344,17 @@ export function LineageGraph({
       }
       return changed ? next : current;
     });
-  }, [collapsibleGroups]);
+    if (shouldRelayout) {
+      scheduleAutoLayout('group-expand');
+    }
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const resetCollapsedGroups = useCallback(() => {
-    setCollapsedGroupRootIds(createInitialCollapsedGroupRootIds(collapsibleGroups));
-  }, [collapsibleGroups]);
+    const nextCollapsedGroupRootIds = createInitialCollapsedGroupRootIds(collapsibleGroups);
+    if (!areStringSetsEqual(collapsedGroupRootIds, nextCollapsedGroupRootIds)) {
+      scheduleAutoLayout('group-collapse');
+    }
+    setCollapsedGroupRootIds(nextCollapsedGroupRootIds);
+  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const commitSelectionHistory = useCallback((selection: GraphOriginSelection, mode: 'push' | 'replace' = 'push') => {
     if (typeof window === 'undefined') {
       return;
@@ -391,18 +435,26 @@ export function LineageGraph({
       expandGroup(nodeId);
     }
     const nextSelection: GraphOriginSelection = { kind: 'node', nodeId };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const inspectNode = useCallback((nodeId: string) => {
     suppressInitialOutputSelectionRef.current = false;
     if (collapsedLineage.groups.has(nodeId)) {
       expandGroup(nodeId);
     }
     const nextSelection: GraphOriginSelection = { kind: 'node', nodeId };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     suppressInitialOutputSelectionRef.current = false;
     const nextSelection: GraphOriginSelection = {
@@ -411,9 +463,13 @@ export function LineageGraph({
       kind: 'column',
       nodeId,
     };
+    const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
-  }, [applySelectionSnapshot, commitSelectionHistory]);
+    if (selectionChanged) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [applySelectionSnapshot, commitSelectionHistory, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const closeComment = useCallback((targetId: string) => {
     setDismissedCommentTargetIds((current) => new Set(current).add(targetId));
     setActiveCommentTargetId((current) => (current === targetId ? null : current));
@@ -546,21 +602,13 @@ export function LineageGraph({
 
     return graphDisplaySnapshot.visibleNodeIdsForAutoLayout;
   }, [autoLayoutEnabled, graphDisplaySnapshot.visibleNodeIdsForAutoLayout]);
-  const autoLayoutLayoutVisibleNodeIds = useMemo(() => {
-    if (!autoLayoutVisibleNodeIds) {
-      return undefined;
-    }
-
-    return expandCollapsedVisibleNodeIdsForLayout(autoLayoutVisibleNodeIds, collapsedLineage.groups);
-  }, [autoLayoutVisibleNodeIds, collapsedLineage.groups]);
   const graph = useMemo(
     () =>
-      buildGraphModel(graphDisplayLineage, flowDirection, graphLayoutLineage, {
-        layoutVisibleNodeIds: autoLayoutLayoutVisibleNodeIds,
+      buildGraphModel(graphDisplayLineage, flowDirection, autoLayoutVisibleNodeIds ? graphDisplayLineage : graphLayoutLineage, {
         showUnreachableCtes,
         visibleNodeIds: autoLayoutVisibleNodeIds,
       }),
-    [autoLayoutLayoutVisibleNodeIds, autoLayoutVisibleNodeIds, flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
+    [autoLayoutVisibleNodeIds, flowDirection, graphDisplayLineage, graphLayoutLineage, showUnreachableCtes],
   );
   const inspectorSelection = useMemo<InspectorSelection>(() => {
     if (selectedColumn) {
@@ -839,6 +887,7 @@ export function LineageGraph({
       previousLineageRef.current = lineage;
       previousFlowDirectionRef.current = flowDirection;
       previousNodeStructureKeyRef.current = graphStructureKey;
+      previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
       previousAutoLayoutEnabledRef.current = autoLayoutEnabled;
       outputViewportCorrectionPendingRef.current = lineageChanged;
       nodePositionsRef.current = new Map(graphNodes.map((node) => [node.id, node.position]));
@@ -849,7 +898,9 @@ export function LineageGraph({
     const graphStructureChanged =
       previousNodeStructureKeyRef.current !== null && previousNodeStructureKeyRef.current !== graphStructureKey;
     const autoLayoutJustEnabled = autoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
+    const autoLayoutRequested = autoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
     previousNodeStructureKeyRef.current = graphStructureKey;
+    previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
     previousAutoLayoutEnabledRef.current = autoLayoutEnabled;
 
     setNodes((currentNodes) => {
@@ -859,7 +910,7 @@ export function LineageGraph({
       const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
       const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
       const autoLayoutOffset =
-        autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled) && currentOriginNode && nextOriginNode
+        autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested) && currentOriginNode && nextOriginNode
           ? {
               x: currentOriginNode.position.x - nextOriginNode.position.x,
               y: currentOriginNode.position.y - nextOriginNode.position.y,
@@ -867,7 +918,7 @@ export function LineageGraph({
           : null;
       return graphNodes.map((node) => {
         const current = currentById.get(node.id);
-        if (autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled)) {
+        if (autoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested)) {
           const savedPosition = nodePositionsRef.current.get(node.id);
           const shouldKeepDraggedPosition = draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
           return {
@@ -904,7 +955,7 @@ export function LineageGraph({
         };
       });
     });
-  }, [autoLayoutEnabled, flowDirection, graphDisplaySnapshot.originSelection, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
+  }, [autoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -933,6 +984,10 @@ export function LineageGraph({
     if (!focusTarget) {
       return;
     }
+    if (lastHandledFocusExpansionNonceRef.current === focusTarget.nonce) {
+      return;
+    }
+    lastHandledFocusExpansionNonceRef.current = focusTarget.nonce;
     expandGroupForNode(focusTarget.nodeId);
   }, [expandGroupForNode, focusTarget?.nodeId, focusTarget?.nonce]);
 
@@ -1162,33 +1217,6 @@ function createVisibleNodeIdBySourceNodeId(groups: Map<string, { helperNodeIds: 
     }
   }
   return visibleNodeIdBySourceNodeId;
-}
-
-function expandCollapsedVisibleNodeIdsForLayout(
-  visibleNodeIds: Set<string>,
-  groups: Map<string, CollapsedLineageGroup>,
-) {
-  if (groups.size === 0) {
-    return visibleNodeIds;
-  }
-
-  const expandedNodeIds = new Set(visibleNodeIds);
-  for (const nodeId of visibleNodeIds) {
-    const group = groups.get(nodeId);
-    if (!group) {
-      continue;
-    }
-
-    expandedNodeIds.add(group.rootNodeId);
-    for (const helperNodeId of group.helperNodeIds) {
-      expandedNodeIds.add(helperNodeId);
-    }
-    for (const sourceNodeId of group.sourceNodeIds) {
-      expandedNodeIds.add(sourceNodeId);
-    }
-  }
-
-  return expandedNodeIds;
 }
 
 function isGraphNodeFullyInView(

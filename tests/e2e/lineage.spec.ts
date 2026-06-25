@@ -1,4 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
+
+const longSqlReadingCase = readFileSync('docs/long-sql-reading-cases/postgres_customer_health_report_commented.sql', 'utf8');
 
 async function showAllColumns(page: import('@playwright/test').Page) {
   const button = page.getByRole('button', { name: 'Always show columns' });
@@ -1396,6 +1399,45 @@ test('keeps downstream nodes visible when auto layout focuses an intermediate CT
   await expect(orderTotalsNode).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).toBeAttached();
+});
+
+test('keeps auto layout compact for collapsed groups in the long SQL reading case', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(longSqlReadingCase);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_id', exact: true }).click();
+
+  const finalReportNode = page.getByTestId('rf__node-cte_final_report');
+  const customersNode = page.getByTestId('rf__node-table_crm_customers');
+  await expect(finalReportNode).toBeVisible();
+  await expect(finalReportNode).toContainText('Group');
+  await expect(customersNode).toBeVisible();
+
+  const outputBox = await outputNode.boundingBox();
+  const finalReportBox = await finalReportNode.boundingBox();
+  const customersBox = await customersNode.boundingBox();
+  expect(outputBox).not.toBeNull();
+  expect(finalReportBox).not.toBeNull();
+  expect(customersBox).not.toBeNull();
+
+  expect((finalReportBox!.x - outputBox!.x)).toBeLessThan(520);
+  expect((customersBox!.x - finalReportBox!.x)).toBeLessThan(720);
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const healthBaseCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'health_base' })
+    .filter({ hasText: 'customer_id' })
+    .first();
+  await healthBaseCard.click();
+  await expect(healthBaseCard).toHaveClass(/lineage-inspector-column-card-active/);
+  await expect(page.getByTestId('rf__node-cte_health_base')).toBeVisible();
 });
 
 test('keeps row lineage badges stable when expanding a CTE group', async ({ page }) => {
