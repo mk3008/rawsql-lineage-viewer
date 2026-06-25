@@ -40,6 +40,7 @@ import { attachNodeDependencyProfiles } from './nodeDependencyProfile';
 import type { SchemaFacts } from './schemaFacts';
 import { createTableColumnResolver } from './schemaFacts';
 import { mergeColumnRefs } from './source-references/mergeColumnRefs';
+import type { SourceReferenceTarget } from './source-references/sourceReferences.types';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -311,6 +312,15 @@ interface ResolvedSource {
     node: LineageNode;
     sourceAlias?: string;
   };
+}
+
+function toSourceReferenceTargets(sources: ResolvedSource[]): SourceReferenceTarget[] {
+  return sources.map((source) => ({
+    aliases: source.aliases,
+    columnNames: source.node.columns.map((column) => column.name),
+    nodeId: source.node.id,
+    nodeType: source.node.type,
+  }));
 }
 
 function collectQueryEdges(options: CollectQueryEdgesOptions): void {
@@ -931,7 +941,7 @@ function collectConditionInfluences(
   return conditions.flatMap((item, index) => {
     const expressionSql = formatExpressionSql(item);
     const references = toSourceReferences(
-      mergeColumnRefs(resolveColumnReferences(item, sources), options ? collectNestedQueryReferences(item, options) : []),
+      mergeColumnRefs(resolveColumnReferences(item, toSourceReferenceTargets(sources)), options ? collectNestedQueryReferences(item, options) : []),
       scopeId,
       'row_lineage',
     );
@@ -961,7 +971,7 @@ function collectOrderByInfluences(
     const expression = orderItem && typeof orderItem === 'object' && 'value' in orderItem ? (orderItem as { value?: unknown }).value : orderItem;
     const expressionSql = formatExpressionSql(orderItem) ?? formatExpressionSql(expression);
     const outputRefs = resolveOutputColumnReferences(expression, targetId, outputColumns);
-    const sourceRefs = outputRefs.length > 0 ? [] : resolveColumnReferences(expression, sources);
+    const sourceRefs = outputRefs.length > 0 ? [] : resolveColumnReferences(expression, toSourceReferenceTargets(sources));
     const references = toSourceReferences(mergeColumnRefs(sourceRefs, outputRefs), scopeId, 'row_lineage');
     if (!expressionSql && references.length === 0) {
       return [];
@@ -1058,7 +1068,7 @@ function collectQueryLocalReferences(query: SimpleSelectQuery, options: CollectQ
       options.schemaFacts,
     ));
   }
-  return resolveColumnReferences(query, sources);
+  return resolveColumnReferences(query, toSourceReferenceTargets(sources));
 }
 
 function collectExpressionInfluences(
@@ -1070,7 +1080,7 @@ function collectExpressionInfluences(
 ): LineageExpressionInfluence[] {
   return expressions.flatMap((expression, index) => {
     const expressionSql = formatExpressionSql(expression);
-    const references = toSourceReferences(resolveColumnReferences(expression, sources), scopeId, 'row_lineage');
+    const references = toSourceReferences(resolveColumnReferences(expression, toSourceReferenceTargets(sources)), scopeId, 'row_lineage');
     if (!expressionSql && references.length === 0) {
       return [];
     }
@@ -1187,7 +1197,7 @@ function collectSelectItemOutputColumn(
   const expressionTree = collectExpressionTree(item.value, sources);
   const name = getSelectItemOutputName(item, outputIndex);
   const scalarSubqueryRefs = collectScalarSubqueryLineage(item.value, name, sources, options, scopeId);
-  const resolvedReferences = resolveColumnReferencesWithIssues(item.value, sources, { skipInlineQueries: true });
+  const resolvedReferences = resolveColumnReferencesWithIssues(item.value, toSourceReferenceTargets(sources), { skipInlineQueries: true });
   const unresolvedUpstream = resolvedReferences.unresolved;
   recordUnresolvedColumnWarnings(options.warnings, unresolvedUpstream, scopeId, name);
   const nestedExpressionRefs = scalarSubqueryRefs.length > 0 ? [] : collectNestedExpressionLineage(item.value, options);
@@ -1414,9 +1424,9 @@ function collectCorrelationReferences(
     return [];
   }
 
-  const localRefs = resolveColumnReferences(query, innerSources);
+  const localRefs = resolveColumnReferences(query, toSourceReferenceTargets(innerSources));
   const localKeys = new Set(localRefs.map((ref) => `${ref.nodeId}.${ref.columnName}`));
-  return resolveColumnReferences(query, outerSources)
+  return resolveColumnReferences(query, toSourceReferenceTargets(outerSources))
     .filter((ref) => !localKeys.has(`${ref.nodeId}.${ref.columnName}`));
 }
 
@@ -1432,11 +1442,11 @@ function collectCorrelationConditions(
   }
 
   return splitAndConditions(query.whereClause?.condition).flatMap((condition) => {
-    const outerRefs = resolveColumnReferences(condition, outerSources);
+    const outerRefs = resolveColumnReferences(condition, toSourceReferenceTargets(outerSources));
     if (outerRefs.length === 0) {
       return [];
     }
-    const innerRefs = resolveColumnReferences(condition, innerSources);
+    const innerRefs = resolveColumnReferences(condition, toSourceReferenceTargets(innerSources));
     return [{
       expressionSql: formatExpressionSql(condition) ?? 'unknown correlation condition',
       references: toSourceReferences(mergeColumnRefs(innerRefs, outerRefs), scopeId, 'row_lineage'),
@@ -1504,6 +1514,7 @@ function collectRawsqlExpandedSelectColumns(
   options: CollectQueryEdgesOptions,
   scopeId: string,
 ): LineageColumn[] {
+  const sourceTargets = toSourceReferenceTargets(sources);
   const rawsqlValues = new SelectValueCollector(
     options.schemaFacts ? createTableColumnResolver(options.schemaFacts) : null,
   ).collect(query);
@@ -1518,7 +1529,7 @@ function collectRawsqlExpandedSelectColumns(
   }
 
   return rawsqlValues.map((value, index) => {
-    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sources), collectNestedExpressionLineage(value.value, options));
+    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sourceTargets), collectNestedExpressionLineage(value.value, options));
     const matchingItem = findSelectItemForRawsqlValue(query, value.value);
     const comments = matchingItem ? extractSelectItemComments(query.selectClause.items, query.selectClause.items.indexOf(matchingItem)) : undefined;
     return {
@@ -1647,7 +1658,7 @@ function collectCaseRules(value: unknown, sources: ResolvedSource[]): LineageCas
 }
 
 function collectExpressionTree(value: unknown, sources: ResolvedSource[]): LineageExpressionTree | undefined {
-  const upstream = resolveColumnReferences(value, sources);
+  const upstream = resolveColumnReferences(value, toSourceReferenceTargets(sources));
   if (upstream.length < 2) {
     return undefined;
   }
@@ -1662,7 +1673,7 @@ function collectExpressionTree(value: unknown, sources: ResolvedSource[]): Linea
 
 function collectExpressionTreeNode(value: unknown, sources: ResolvedSource[]): LineageExpressionTree | undefined {
   if (value instanceof ColumnReference) {
-    const refs = resolveColumnReferences(value, sources);
+    const refs = resolveColumnReferences(value, toSourceReferenceTargets(sources));
     const sql = formatExpressionSql(value);
     if (refs.length !== 1 || !sql) {
       return undefined;
@@ -1675,7 +1686,7 @@ function collectExpressionTreeNode(value: unknown, sources: ResolvedSource[]): L
     const operator = value.operator.value;
     const left = collectExpressionTreeNode(value.left, sources);
     const right = collectExpressionTreeNode(value.right, sources);
-    const upstream = resolveColumnReferences(value, sources);
+    const upstream = resolveColumnReferences(value, toSourceReferenceTargets(sources));
     if (!sql || !operator || !left || !right || upstream.length < 2) {
       return undefined;
     }
@@ -1735,10 +1746,11 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
     return [];
   }
 
+  const sourceTargets = toSourceReferenceTargets(sources);
   const condition = caseExpression.condition;
   const switchCase = caseExpression.switchCase;
   const branches = Array.isArray(switchCase?.cases) ? switchCase.cases : [];
-  const conditionRefs = condition ? resolveColumnReferences(condition, sources) : [];
+  const conditionRefs = condition ? resolveColumnReferences(condition, sourceTargets) : [];
   const rules: LineageCaseRule[] = [];
 
   branches.forEach((branch, branchIndex) => {
@@ -1757,8 +1769,8 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
       conditionSql,
       expressionSql: formatCaseRuleDisplaySql(conditionSql, resultSql),
       resultSql,
-      conditionUpstream: mergeColumnRefs(conditionRefs, resolveColumnReferences(key, sources)),
-      resultUpstream: resolveColumnReferences(result, sources),
+      conditionUpstream: mergeColumnRefs(conditionRefs, resolveColumnReferences(key, sourceTargets)),
+      resultUpstream: resolveColumnReferences(result, sourceTargets),
     });
   });
 
@@ -1770,7 +1782,7 @@ function collectCaseExpressionRules(caseExpression: unknown, caseIndex: number, 
       expressionSql: formatCaseRuleDisplaySql(undefined, formatExpressionSql(switchCase.elseValue)),
       resultSql: formatExpressionSql(switchCase.elseValue),
       conditionUpstream: [],
-      resultUpstream: resolveColumnReferences(switchCase.elseValue, sources),
+      resultUpstream: resolveColumnReferences(switchCase.elseValue, sourceTargets),
     });
   }
 
@@ -1824,9 +1836,10 @@ function setReferencedSourceColumns(
   warnings: AnalysisWarning[],
   scopeId: string,
 ): void {
+  const sourceTargets = toSourceReferenceTargets(sources);
   const references = collectQueryConditionReferences(query);
   for (const { reason, refs } of references) {
-    const resolvedReferences = resolveColumnReferencesWithIssues(refs, sources);
+    const resolvedReferences = resolveColumnReferencesWithIssues(refs, sourceTargets);
     recordUnresolvedColumnWarnings(warnings, resolvedReferences.unresolved, scopeId, `${reason} condition`);
   }
 }
@@ -1857,16 +1870,16 @@ function setValueSourceColumns(columns: LineageColumn[], nodes: Map<string, Line
   }
 }
 
-function resolveColumnReferences(value: unknown, sources: ResolvedSource[]): LineageColumnRef[] {
+function resolveColumnReferences(value: unknown, sources: SourceReferenceTarget[]): LineageColumnRef[] {
   return resolveColumnReferencesWithIssues(value, sources).resolved;
 }
 
 function resolveColumnReferencesWithIssues(
   value: unknown,
-  sources: ResolvedSource[],
+  sources: SourceReferenceTarget[],
   options: { skipInlineQueries?: boolean } = {},
 ): { resolved: LineageColumnRef[]; unresolved: LineageUnresolvedColumnReference[] } {
-  const sourceByAlias = new Map<string, ResolvedSource>();
+  const sourceByAlias = new Map<string, SourceReferenceTarget>();
   for (const source of sources) {
     for (const alias of source.aliases) {
       sourceByAlias.set(alias, source);
@@ -1900,11 +1913,11 @@ function resolveColumnReferencesWithIssues(
       continue;
     }
 
-    const key = `${source.node.id}.${columnName}`;
+    const key = `${source.nodeId}.${columnName}`;
     if (!seen.has(key)) {
       seen.add(key);
       resolved.push({
-        nodeId: source.node.id,
+        nodeId: source.nodeId,
         columnName,
       });
     }
@@ -1915,13 +1928,13 @@ function resolveColumnReferencesWithIssues(
 function resolveUnqualifiedColumnSourceWithIssue(
   columnName: string,
   reference: ColumnReference | undefined,
-  sources: ResolvedSource[],
-): { source: ResolvedSource | null; unresolved?: LineageUnresolvedColumnReference } {
+  sources: SourceReferenceTarget[],
+): { source: SourceReferenceTarget | null; unresolved?: LineageUnresolvedColumnReference } {
   if (sources.length === 1) {
     return { source: sources[0] };
   }
 
-  const candidates = sources.filter((source) => source.node.columns.some((column) => column.name === columnName));
+  const candidates = sources.filter((source) => source.columnNames.includes(columnName));
   if (candidates.length === 1) {
     return { source: candidates[0] };
   }
@@ -1930,7 +1943,7 @@ function resolveUnqualifiedColumnSourceWithIssue(
     return {
       source: null,
       unresolved: {
-        candidateNodeIds: candidates.map((source) => source.node.id),
+        candidateNodeIds: candidates.map((source) => source.nodeId),
         columnName,
         reason: 'ambiguous_unqualified_column',
         sql: reference ? (formatExpressionSql(reference) ?? columnName) : columnName,
@@ -1942,21 +1955,21 @@ function resolveUnqualifiedColumnSourceWithIssue(
   return {
     source: null,
     unresolved: {
-      candidateNodeIds: sources.map((source) => source.node.id),
+      candidateNodeIds: sources.map((source) => source.nodeId),
       columnName,
       reason: 'unknown_unqualified_column',
       sql: reference ? (formatExpressionSql(reference) ?? columnName) : columnName,
-      suggestion: sources.some((source) => source.node.type === 'table' && source.node.columns.length === 0)
+      suggestion: sources.some((source) => source.nodeType === 'table' && source.columnNames.length === 0)
         ? 'Provide DDL/schema facts, or qualify the column with a table alias if the source is known.'
         : 'Check the column name or qualify it with a table alias.',
     },
   };
 }
 
-function createUnknownQualifiedSource(reference: ColumnReference, sources: ResolvedSource[]): LineageUnresolvedColumnReference {
+function createUnknownQualifiedSource(reference: ColumnReference, sources: SourceReferenceTarget[]): LineageUnresolvedColumnReference {
   const qualifier = reference.getNamespace();
   return {
-    candidateNodeIds: sources.map((source) => source.node.id),
+    candidateNodeIds: sources.map((source) => source.nodeId),
     columnName: reference.column.name,
     qualifier: qualifier ?? undefined,
     reason: 'unknown_qualified_source',
@@ -2048,8 +2061,10 @@ function collectNestedQueryLineage(
   }
 
   setReferencedSourceColumns(query, sources, warnings, `scope_${sanitizeId(targetId)}_nested`);
+  const sourceTargets = toSourceReferenceTargets(sources);
+  const selectedRefs = resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sourceTargets);
   for (const source of sources) {
-    for (const reference of resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sources)) {
+    for (const reference of selectedRefs) {
       if (reference.nodeId === source.node.id) {
         setNodeColumns(nodes, reference.nodeId, [reference.columnName]);
       }
@@ -2057,7 +2072,6 @@ function collectNestedQueryLineage(
   }
 
   const nestedRefs = query.selectClause.items.flatMap((item) => collectNestedExpressionLineage(item.value, options));
-  const selectedRefs = resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sources);
   for (const ref of selectedRefs) {
     setNodeColumns(nodes, ref.nodeId, [
       usageReason === 'subquery'
@@ -2070,7 +2084,7 @@ function collectNestedQueryLineage(
     ]);
   }
 
-  return mergeColumnRefs(resolveColumnReferences(collectColumnReferences(query), sources), nestedRefs);
+  return mergeColumnRefs(resolveColumnReferences(collectColumnReferences(query), sourceTargets), nestedRefs);
 }
 
 function collectNestedSimpleSelectQueries(value: unknown): SimpleSelectQuery[] {
