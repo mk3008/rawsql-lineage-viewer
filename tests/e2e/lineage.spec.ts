@@ -1736,6 +1736,47 @@ test('caps expanded CTE columns to an internal mouse-wheel scroller', async ({ p
   await expect.poll(() => body.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 });
 
+test('keeps inspector card selection from expanding all graph node columns', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    WITH health_base AS (
+      SELECT
+        u.customer_id,
+        u.account_code,
+        u.legal_name,
+        u.display_name,
+        u.customer_status,
+        u.account_owner_email,
+        u.account_owner_name
+      FROM crm.customers u
+    ),
+    scored AS (
+      SELECT
+        h.customer_id,
+        h.account_owner_email,
+        h.account_owner_name
+      FROM health_base h
+    )
+    SELECT account_owner_email
+    FROM scored
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'account_owner_email', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const healthBaseCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'health_base' })
+    .filter({ hasText: 'account_owner_email' })
+    .first();
+  await healthBaseCard.click();
+
+  const healthBaseNode = page.getByTestId('rf__node-cte_health_base');
+  await expect(healthBaseNode.getByRole('button', { name: 'account_owner_email', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(healthBaseNode.locator('.lineage-column')).toHaveCount(1);
+});
+
 test('highlights upstream lineage when an output column is selected', async ({ page }) => {
   await page.setViewportSize({ width: 1800, height: 1000 });
   await page.goto('/');
