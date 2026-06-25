@@ -800,6 +800,10 @@ test('compresses passthrough columns by default without per-node passthrough con
   await page.setViewportSize({ width: 1400, height: 900 });
   await page.goto('/');
   await showAllColumns(page);
+  const orderTotalsExpand = page.getByRole('button', { name: 'Expand order_totals' });
+  if ((await orderTotalsExpand.count()) > 0) {
+    await orderTotalsExpand.click();
+  }
 
   const recentOrdersNode = page.getByTestId('rf__node-cte_recent_orders');
   const outputNode = page.getByTestId('rf__node-main_output');
@@ -1438,6 +1442,38 @@ test('keeps auto layout compact for collapsed groups in the long SQL reading cas
   await healthBaseCard.click();
   await expect(healthBaseCard).toHaveClass(/lineage-inspector-column-card-active/);
   await expect(page.getByTestId('rf__node-cte_health_base')).toBeVisible();
+});
+
+test('shows all display columns when selecting a long SQL CTE header', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 900 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(longSqlReadingCase);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+
+  await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'nearest_contract_end_date', exact: true }).click();
+  const inspector = page.getByTestId('lineage-inspector');
+  await inspector.getByRole('tab', { name: /Upstream/ }).click();
+  const contractRollupCard = inspector
+    .locator('.lineage-inspector-column-card, .lineage-inspector-column-group-card')
+    .filter({ hasText: 'contract_rollup' })
+    .filter({ hasText: 'nearest_contract_end_date' })
+    .first();
+  await contractRollupCard.click();
+
+  const contractRollupNode = page.getByTestId('rf__node-cte_contract_rollup');
+  await expect(contractRollupNode).toBeVisible();
+  await contractRollupNode.getByRole('button', { name: 'contract_rollup', exact: true }).click();
+
+  await expect(contractRollupNode.getByRole('button', { name: 'customer_id', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'renewal_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'expansion_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'contraction_event_count', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'expansion_amount', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'contraction_amount', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'nearest_contract_end_date', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByRole('button', { name: 'latest_commercial_event_at', exact: true })).toBeVisible();
+  await expect(contractRollupNode.getByText('Passthrough')).toHaveCount(0);
 });
 
 test('keeps row lineage badges stable when expanding a CTE group', async ({ page }) => {

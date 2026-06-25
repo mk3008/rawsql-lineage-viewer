@@ -12,9 +12,11 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const node = data.lineageNode;
   const graphNodeId = id;
   const columnsVisible = data.columnsVisible ?? true;
+  const selectedNodeExpanded = data.selectedNodeId === node.id;
+  const columnsExpanded = selectedNodeExpanded;
   const forcedVisibleColumnIds = data.forcedVisibleColumnIds ?? new Set<string>();
   const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
-  const shouldRenderColumns = columnsVisible || hasForcedVisibleColumns;
+  const shouldRenderColumns = columnsVisible || columnsExpanded || hasForcedVisibleColumns;
   const nodeRef = useRef<HTMLDivElement>(null);
   const isPassthroughOnly =
     shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
@@ -102,7 +104,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
           {data.collapsedGroup ? (
             <CollapsedGroupBody data={data} nodeId={node.id} />
           ) : node.columns.length > 0 ? (
-            <LineageColumnList columns={node.columns} data={data} forceOnly={!columnsVisible} nodeId={node.id} />
+            <LineageColumnList columns={node.columns} data={data} forceOnly={!columnsVisible && !columnsExpanded} nodeId={node.id} />
           ) : (
             <div className="lineage-column lineage-column-muted">columns unresolved</div>
           )}
@@ -201,7 +203,12 @@ function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId:
   return (
     <div className="lineage-group-summary">
       {data.lineageNode.columns.length > 0 ? (
-        <LineageColumnList columns={data.lineageNode.columns} data={data} forceOnly={data.columnsVisible === false} nodeId={nodeId} />
+        <LineageColumnList
+          columns={data.lineageNode.columns}
+          data={data}
+          forceOnly={data.columnsVisible === false && data.selectedNodeId !== nodeId}
+          nodeId={nodeId}
+        />
       ) : (
         <div className="lineage-column lineage-column-muted">columns unresolved</div>
       )}
@@ -221,9 +228,10 @@ function LineageColumnList({
   nodeId: string;
 }) {
   const isOutputNode = data.lineageNode.type === 'output';
-  const shouldCompress = !isOutputNode && (data.passthroughColumnsCompressed ?? false);
+  const nodeExpanded = data.selectedNodeId === nodeId;
+  const shouldCompress = !isOutputNode && !nodeExpanded && (data.passthroughColumnsCompressed ?? false);
   const baseColumns = !isOutputNode && forceOnly ? columns.filter((column) => data.forcedVisibleColumnIds?.has(column.id)) : columns;
-  const displayColumns = baseColumns.filter(isVisibleGraphColumn);
+  const displayColumns = nodeExpanded ? baseColumns : baseColumns.filter(isVisibleGraphColumn);
   const visibleColumns = shouldCompress ? displayColumns.filter((column) => !isCompressedPassthroughColumn(column, data)) : displayColumns;
   const compressedCount = shouldCompress ? displayColumns.length - visibleColumns.length : 0;
 

@@ -773,7 +773,8 @@ export function LineageGraph({
           highlightedSourceDataLabels: columnHighlights.highlightedSourceDataLabels,
           highlightedSourceDataNodeIds: columnHighlights.highlightedSourceDataNodeIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
-          passthroughColumnsCompressed: node.data.lineageNode.type !== 'output' && !expandedPassthroughNodeIds.has(node.id),
+          passthroughColumnsCompressed:
+            node.data.lineageNode.type !== 'output' && graphSelectedNodeId !== node.id && !expandedPassthroughNodeIds.has(node.id),
           sourceColumnIds: columnHighlights.sourceColumnIds,
           onCommentClose: closeComment,
           onCommentFocus: focusComment,
