@@ -375,7 +375,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     scopes.push(createLineageScope(query, sources, joins, outputColumns, targetId, targetLabel, scopeId, options, parentScopeId));
     setNodeColumns(nodes, targetId, outputColumns);
     setValueSourceColumns(outputColumns, nodes);
-    setReferencedSourceColumns(query, sources, nodes, warnings, scopeId);
+    setReferencedSourceColumns(query, sources, warnings, scopeId);
     collectNestedConditionLineage(query, options);
 
     return;
@@ -1118,13 +1118,13 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
     if (options.schemaFacts) {
       const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
       if (rawsqlColumns.length > 0) {
-        return [...rawsqlColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+        return rawsqlColumns;
       }
     }
 
     const sourceExpandedColumns = collectSourceExpandedSelectColumns(query, sources, options, scopeId);
     if (sourceExpandedColumns.unresolvedWildcardCount === 0) {
-      return [...sourceExpandedColumns.columns, ...collectFilterColumns(query, sources, options, scopeId)];
+      return sourceExpandedColumns.columns;
     }
 
     const rawsqlColumns = options.schemaFacts
@@ -1132,7 +1132,6 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
       : collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
     return [
       ...(rawsqlColumns.length > 0 ? rawsqlColumns : sourceExpandedColumns.columns),
-      ...collectFilterColumns(query, sources, options, scopeId),
     ];
   }
 
@@ -1140,7 +1139,7 @@ function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[
     collectSelectItemOutputColumn(query, item, index, index, sources, options, scopeId),
   );
   backfillWildcardPassthroughColumns(selectedColumns, sources, options.nodes);
-  return [...selectedColumns, ...collectFilterColumns(query, sources, options, scopeId)];
+  return selectedColumns;
 }
 
 function backfillWildcardPassthroughColumns(columns: LineageColumn[], sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
@@ -1184,12 +1183,9 @@ function collectSelectItemOutputColumn(
   const unresolvedUpstream = resolvedReferences.unresolved;
   recordUnresolvedColumnWarnings(options.warnings, unresolvedUpstream, scopeId, name);
   const nestedExpressionRefs = scalarSubqueryRefs.length > 0 ? [] : collectNestedExpressionLineage(item.value, options);
-  const scalarTargetRefs = isScalarSubqueryTarget(options)
-    ? collectScalarTargetPopulationRefs(query, sources)
-    : [];
   const upstream = mergeColumnRefs(
     mergeColumnRefs(scalarSubqueryRefs, resolvedReferences.resolved),
-    mergeColumnRefs(nestedExpressionRefs, scalarTargetRefs),
+    nestedExpressionRefs,
   );
   return {
     id: '',
@@ -1205,17 +1201,6 @@ function collectSelectItemOutputColumn(
     unresolvedUpstream: unresolvedUpstream.length > 0 ? unresolvedUpstream : undefined,
     usage: isGroupedSelectItem(item.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
   };
-}
-
-function isScalarSubqueryTarget(options: CollectQueryEdgesOptions): boolean {
-  return options.nodes.get(options.targetId)?.type === 'scalar_subquery';
-}
-
-function collectScalarTargetPopulationRefs(query: SimpleSelectQuery, sources: ResolvedSource[]): LineageColumnRef[] {
-  return collectQueryConditionReferences(query).reduce<LineageColumnRef[]>(
-    (refs, item) => mergeColumnRefs(refs, resolveColumnReferences(item.refs, sources)),
-    [],
-  );
 }
 
 function collectSourceExpandedSelectColumns(
@@ -1611,31 +1596,6 @@ function findSelectItemForRawsqlValue(
   );
 }
 
-function collectFilterColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
-  const whereCondition = query.whereClause?.condition;
-  if (!whereCondition) {
-    return [];
-  }
-
-  return splitAndConditions(whereCondition).flatMap((condition, index) => {
-    const upstream = mergeColumnRefs(resolveColumnReferences(condition, sources), collectNestedExpressionLineage(condition, options, 'where'));
-    if (upstream.length === 0) {
-      return [];
-    }
-
-    return [
-      {
-        id: '',
-        name: `condition ${index + 1}`,
-        expressionSql: formatExpressionSql(condition),
-        scopeId,
-        upstream,
-        usage: { role: 'filter', reasons: ['where'] },
-      },
-    ];
-  });
-}
-
 function splitAndConditions(condition: unknown): unknown[] {
   if (isBinaryExpressionLike(condition) && condition.operator.value.toLowerCase() === 'and') {
     return [...splitAndConditions(condition.left), ...splitAndConditions(condition.right)];
@@ -1853,7 +1813,6 @@ function isGroupedSelectItem(value: unknown, query: SimpleSelectQuery): boolean 
 function setReferencedSourceColumns(
   query: SimpleSelectQuery,
   sources: ResolvedSource[],
-  nodes: Map<string, LineageNode>,
   warnings: AnalysisWarning[],
   scopeId: string,
 ): void {
@@ -1861,15 +1820,6 @@ function setReferencedSourceColumns(
   for (const { reason, refs } of references) {
     const resolvedReferences = resolveColumnReferencesWithIssues(refs, sources);
     recordUnresolvedColumnWarnings(warnings, resolvedReferences.unresolved, scopeId, `${reason} condition`);
-    for (const reference of resolvedReferences.resolved) {
-      setNodeColumns(nodes, reference.nodeId, [
-        {
-          id: '',
-          name: reference.columnName,
-          usage: { role: 'condition', reasons: [reason] },
-        },
-      ]);
-    }
   }
 }
 
@@ -2089,7 +2039,7 @@ function collectNestedQueryLineage(
     });
   }
 
-  setReferencedSourceColumns(query, sources, nodes, warnings, `scope_${sanitizeId(targetId)}_nested`);
+  setReferencedSourceColumns(query, sources, warnings, `scope_${sanitizeId(targetId)}_nested`);
   for (const source of sources) {
     for (const reference of resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sources)) {
       if (reference.nodeId === source.node.id) {
@@ -2099,8 +2049,8 @@ function collectNestedQueryLineage(
   }
 
   const nestedRefs = query.selectClause.items.flatMap((item) => collectNestedExpressionLineage(item.value, options));
-  const localRefs = resolveColumnReferences(collectColumnReferences(query), sources);
-  for (const ref of localRefs) {
+  const selectedRefs = resolveColumnReferences(collectColumnReferences(query.selectClause.items.map((item) => item.value)), sources);
+  for (const ref of selectedRefs) {
     setNodeColumns(nodes, ref.nodeId, [
       usageReason === 'subquery'
         ? {
@@ -2112,7 +2062,7 @@ function collectNestedQueryLineage(
     ]);
   }
 
-  return mergeColumnRefs(localRefs, nestedRefs);
+  return mergeColumnRefs(resolveColumnReferences(collectColumnReferences(query), sources), nestedRefs);
 }
 
 function collectNestedSimpleSelectQueries(value: unknown): SimpleSelectQuery[] {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2 } from 'lucide-react';
-import { LineageGraph, LineageInspector, type CaseRuleSelection, type GraphHighlightTarget, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
+import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/buildGraphModel';
@@ -48,12 +48,11 @@ export function App() {
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
-  const [activeInspectorFocusNodeId, setActiveInspectorFocusNodeId] = useState<string | null>(null);
+  const [activeInspectorCardColumnId, setActiveInspectorCardColumnId] = useState<string | null>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
   const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
-  const [graphHighlightTarget, setGraphHighlightTarget] = useState<{ nonce: number; target: GraphHighlightTarget } | null>(null);
   const [problemIntent, setProblemIntent] = useState<ProblemIntent>('logic_review');
   const [lastAnalyzedSql, setLastAnalyzedSql] = useState(initialSql);
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
@@ -148,7 +147,7 @@ export function App() {
       if (!isSameInspectorSelection(current, selection)) {
         setCaseRuleSelection(null);
         setActiveInspectorCardId(null);
-        setActiveInspectorFocusNodeId(null);
+        setActiveInspectorCardColumnId(null);
         lastCommittedInspectorCardRef.current = null;
       }
       return selection;
@@ -160,15 +159,12 @@ export function App() {
   }, []);
   const applyInspectorCardSelection = useCallback((selection: InspectorCardSelection | null) => {
     setActiveInspectorCardId(selection?.cardId ?? null);
-    setActiveInspectorFocusNodeId(selection?.focusNodeId ?? null);
+    setActiveInspectorCardColumnId(selection?.columnId ?? null);
     if (!selection) {
       return;
     }
     if (selection.focusNodeId) {
       setGraphFocusTarget({ nodeId: selection.focusNodeId, nonce: Date.now() });
-    }
-    if (selection.highlightTarget !== undefined) {
-      setGraphHighlightTarget({ target: selection.highlightTarget, nonce: Date.now() });
     }
   }, []);
   const commitInspectorCardHistory = useCallback((selection: InspectorCardSelection | null, mode: 'push' | 'replace' = 'push') => {
@@ -255,11 +251,10 @@ export function App() {
     setLastAnalyzedSql(nextSql);
     setCaseRuleSelection(null);
     setActiveInspectorCardId(null);
-    setActiveInspectorFocusNodeId(null);
+    setActiveInspectorCardColumnId(null);
     lastCommittedInspectorCardRef.current = null;
     setExpandedExpressionColumnIds(new Set());
     setGraphFocusTarget(null);
-    setGraphHighlightTarget(null);
     setForcedInspectorSelection(nextInspectorSelection);
     setInspectorSelection(nextInspectorSelection);
     setShareStatus('idle');
@@ -307,11 +302,10 @@ export function App() {
     setIsPanelOpen(true);
     setCaseRuleSelection(null);
     setActiveInspectorCardId(null);
-    setActiveInspectorFocusNodeId(null);
+    setActiveInspectorCardColumnId(null);
     lastCommittedInspectorCardRef.current = null;
     setExpandedExpressionColumnIds(new Set());
     setGraphFocusTarget(null);
-    setGraphHighlightTarget(null);
     setForcedInspectorSelection(null);
     setInspectorSelection(null);
     setShareStatus('idle');
@@ -477,9 +471,6 @@ export function App() {
                 onFocusNode={(nodeId) => {
                   setGraphFocusTarget({ nodeId, nonce: Date.now() });
                 }}
-                onHighlightTarget={(target) => {
-                  setGraphHighlightTarget({ target, nonce: Date.now() });
-                }}
                 problemIntent={problemIntent}
                 selection={forcedInspectorSelection ?? inspectorSelection}
               />
@@ -511,11 +502,10 @@ export function App() {
               <LineageGraph
                 autoInspectOutputNonce={autoInspectOutputNonce}
                 caseRuleSelection={caseRuleSelection}
+                activeInspectorCardColumnId={activeInspectorCardColumnId}
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
                 flowDirection={flowDirection}
-                activeInspectorFocusNodeId={activeInspectorFocusNodeId}
                 focusTarget={graphFocusTarget}
-                highlightTargetRequest={graphHighlightTarget}
                 lineage={adapterResult.lineage}
                 onInspectorSelectionChange={handleInspectorSelectionChange}
                 onProblemIntentChange={setProblemIntent}
@@ -1056,11 +1046,7 @@ function isSameInspectorCardSelection(left: InspectorCardSelection | null, right
   if (!left || !right) {
     return left === right;
   }
-  return (
-    left.cardId === right.cardId &&
-    left.focusNodeId === right.focusNodeId &&
-    JSON.stringify(left.highlightTarget ?? null) === JSON.stringify(right.highlightTarget ?? null)
-  );
+  return left.cardId === right.cardId && left.columnId === right.columnId && left.focusNodeId === right.focusNodeId;
 }
 
 function readInspectorCardHistoryState(state: unknown): InspectorCardSelection | null {
@@ -1075,8 +1061,8 @@ function readInspectorCardHistoryState(state: unknown): InspectorCardSelection |
 
   return {
     cardId: value.cardId,
+    columnId: typeof value.columnId === 'string' ? value.columnId : undefined,
     focusNodeId: typeof value.focusNodeId === 'string' ? value.focusNodeId : undefined,
-    highlightTarget: 'highlightTarget' in value ? (value.highlightTarget as GraphHighlightTarget) : undefined,
   };
 }
 

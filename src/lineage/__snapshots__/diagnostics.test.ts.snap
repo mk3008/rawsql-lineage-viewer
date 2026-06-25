@@ -837,7 +837,7 @@ end",
   "kind": "column-diagnostic-packet",
   "omittedContext": {
     "message": "Unrelated nodes and expressions were omitted.",
-    "omittedColumnCount": 19,
+    "omittedColumnCount": 16,
     "omittedInfluenceCount": 5,
     "omittedNodeCount": 4
   },
@@ -2330,7 +2330,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 27,
+      "omittedColumnCount": 22,
       "omittedInfluenceCount": 8,
       "omittedNodeCount": 6,
     },
@@ -2899,7 +2899,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 15,
+      "omittedColumnCount": 12,
       "omittedInfluenceCount": 6,
       "omittedNodeCount": 4,
     },
@@ -3679,7 +3679,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 19,
+      "omittedColumnCount": 16,
       "omittedInfluenceCount": 5,
       "omittedNodeCount": 4,
     },
@@ -4630,7 +4630,7 @@ end",
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 19,
+      "omittedColumnCount": 16,
       "omittedInfluenceCount": 5,
       "omittedNodeCount": 4,
     },
@@ -5807,7 +5807,7 @@ end",
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 8,
+      "omittedColumnCount": 6,
       "omittedInfluenceCount": 3,
       "omittedNodeCount": 2,
     },
