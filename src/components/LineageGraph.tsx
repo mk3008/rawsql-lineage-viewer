@@ -71,6 +71,9 @@ type GraphOriginSelection =
   | { kind: 'node'; nodeId: string }
   | { columnId: string; columnName: string; kind: 'column'; nodeId: string };
 
+type InspectorCommentMode = 'all' | 'none' | 'smart';
+const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
+
 interface GraphDisplaySnapshot {
   highlightTarget: GraphHighlightTarget;
   originSelection: GraphOriginSelection;
@@ -1291,6 +1294,7 @@ export function LineageInspector({
   const [editingOutputTitle, setEditingOutputTitle] = useState(false);
   const [confirmDeleteOutputTitle, setConfirmDeleteOutputTitle] = useState(false);
   const [draftOutputTitle, setDraftOutputTitle] = useState('');
+  const [commentMode, setCommentMode] = useState<InspectorCommentMode>(readInspectorCommentMode);
   const selectedNode = selection?.kind === 'node' ? selection.node : undefined;
   const canRenameOutput = selectedNode?.type === 'output' && Boolean(onRenameOutputTitle);
   const canDeleteOutput = selectedNode?.type === 'output' && Boolean(onDeleteOutputTitle);
@@ -1304,6 +1308,9 @@ export function LineageInspector({
   useEffect(() => {
     setConfirmDeleteOutputTitle(false);
   }, [selectedNode?.id, selectedNode?.label]);
+  useEffect(() => {
+    writeInspectorCommentMode(commentMode);
+  }, [commentMode]);
 
   const startEditingOutputTitle = () => {
     setDraftOutputTitle(selectedNode?.label ?? '');
@@ -1392,24 +1399,27 @@ export function LineageInspector({
             </h2>
           )}
         </div>
-        {canRenameOutput && !editingOutputTitle ? (
-          <div className="lineage-output-title-actions">
-            <button className="lineage-copy-button lineage-output-title-edit-button" type="button" onClick={startEditingOutputTitle}>
-              <Pencil size={12} aria-hidden="true" />
-              Edit
-            </button>
-            {canDeleteOutput ? (
-              <button
-                className={`lineage-copy-button lineage-output-title-delete-button ${confirmDeleteOutputTitle ? 'lineage-output-title-delete-confirm' : ''}`}
-                type="button"
-                onClick={requestDeleteOutputTitle}
-              >
-                <Trash2 size={12} aria-hidden="true" />
-                {confirmDeleteOutputTitle ? 'Confirm' : 'Delete'}
+        <div className="lineage-inspector-header-actions">
+          <InspectorCommentModeControl mode={commentMode} onChange={setCommentMode} />
+          {canRenameOutput && !editingOutputTitle ? (
+            <div className="lineage-output-title-actions">
+              <button className="lineage-copy-button lineage-output-title-edit-button" type="button" onClick={startEditingOutputTitle}>
+                <Pencil size={12} aria-hidden="true" />
+                Edit
               </button>
-            ) : null}
-          </div>
-        ) : null}
+              {canDeleteOutput ? (
+                <button
+                  className={`lineage-copy-button lineage-output-title-delete-button ${confirmDeleteOutputTitle ? 'lineage-output-title-delete-confirm' : ''}`}
+                  type="button"
+                  onClick={requestDeleteOutputTitle}
+                >
+                  <Trash2 size={12} aria-hidden="true" />
+                  {confirmDeleteOutputTitle ? 'Confirm' : 'Delete'}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
       {selection ? (
         selection.kind === 'column' ? (
@@ -1425,9 +1435,10 @@ export function LineageInspector({
             onToggleExpressionBreakdown={onToggleExpressionBreakdown}
             problemIntent={problemIntent}
             selection={selection}
+            commentMode={commentMode}
           />
         ) : (
-          <NodeInspector copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
+          <NodeInspector commentMode={commentMode} copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
         )
       ) : (
         <div className="lineage-inspector-empty">Select a column or node title to inspect lineage details.</div>
@@ -1438,6 +1449,7 @@ export function LineageInspector({
 
 function ColumnInspector({
   activeCaseRule,
+  commentMode,
   expandedExpressionColumnIds,
   lineage,
   onClearCaseRule,
@@ -1451,6 +1463,7 @@ function ColumnInspector({
 }: {
   activeInspectorCardId?: string | null;
   activeCaseRule?: CaseRuleSelection | null;
+  commentMode: InspectorCommentMode;
   expandedExpressionColumnIds?: Set<string>;
   lineage: LineageModel;
   onClearCaseRule?: () => void;
@@ -1510,6 +1523,7 @@ function ColumnInspector({
     <div className="lineage-inspector-body">
       <InspectorSourceGroups
         activeInspectorCardId={activeInspectorCardId}
+        commentMode={commentMode}
         items={selection.sources}
         onFocusNode={onFocusNode}
         onSelectInspectorCard={selectInspectorCard}
@@ -1550,6 +1564,7 @@ function ColumnInspector({
           ) : activeTab === 'upstream' ? (
             <InspectorUpstreamTree
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
               onFocusNode={onFocusNode}
               onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
@@ -1757,11 +1772,73 @@ function ProblemIntentSelector({
   );
 }
 
+function InspectorCommentModeControl({
+  mode,
+  onChange,
+}: {
+  mode: InspectorCommentMode;
+  onChange: (mode: InspectorCommentMode) => void;
+}) {
+  return (
+    <div className="lineage-inspector-comment-mode" aria-label="Comment display">
+      <span>Comment</span>
+      <div className="lineage-inspector-comment-mode-buttons">
+        {(['none', 'smart', 'all'] as const).map((option) => (
+          <button
+            aria-pressed={mode === option}
+            className={mode === option ? 'lineage-inspector-comment-mode-active' : ''}
+            key={option}
+            type="button"
+            onClick={() => onChange(option)}
+          >
+            {formatInspectorCommentMode(option)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatInspectorCommentMode(mode: InspectorCommentMode) {
+  if (mode === 'none') return 'None';
+  if (mode === 'smart') return 'Smart';
+  return 'All';
+}
+
+function isInspectorCommentMode(value: string | null): value is InspectorCommentMode {
+  return value === 'all' || value === 'none' || value === 'smart';
+}
+
+function readInspectorCommentMode(): InspectorCommentMode {
+  if (typeof window === 'undefined') {
+    return 'all';
+  }
+  try {
+    const stored = window.localStorage.getItem(inspectorCommentModeStorageKey);
+    return isInspectorCommentMode(stored) ? stored : 'all';
+  } catch {
+    return 'all';
+  }
+}
+
+function writeInspectorCommentMode(mode: InspectorCommentMode) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(inspectorCommentModeStorageKey, mode);
+  } catch {
+    // Ignore storage quota or privacy mode failures.
+  }
+}
+
 function NodeInspector({
+  commentMode,
   copyState,
   node,
   onCopySql,
 }: {
+  commentMode: InspectorCommentMode;
   copyState: 'idle' | 'copied' | 'failed';
   node: LineageNode;
   onCopySql: () => void;
@@ -1775,7 +1852,7 @@ function NodeInspector({
           <span>columns</span>
         </div>
       </section>
-      {node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
+      {commentMode !== 'none' && node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
       {getNodeSql(node) ? (
         <section className="lineage-inspector-section lineage-inspector-sql-section">
           <div className="lineage-inspector-actions">
@@ -1797,11 +1874,13 @@ function NodeInspector({
 
 function InspectorSourceGroups({
   activeInspectorCardId,
+  commentMode,
   items,
   onFocusNode,
   onSelectInspectorCard,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -1815,6 +1894,7 @@ function InspectorSourceGroups({
           {groups.map((group) => (
             <InspectorSourceGroup
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               group={group}
               key={group.items[0]?.node.id ?? 'source'}
               onFocusNode={onFocusNode}
@@ -1831,10 +1911,12 @@ function InspectorSourceGroups({
 
 function InspectorSourceGroup({
   activeInspectorCardId,
+  commentMode,
   group,
   onSelectInspectorCard,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   group: InspectorColumnGroup;
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -1862,7 +1944,7 @@ function InspectorSourceGroup({
       <div className="lineage-inspector-source-heading">
         <InspectorNodeMeta node={node} />
       </div>
-      <InspectorNodeComments node={node} />
+      <InspectorNodeComments node={node} visible={shouldShowNodeCommentsForItems(group.items, commentMode)} />
       <div className="lineage-inspector-source-columns">
         {group.items.map((item, index) => {
           const expressionSql =
@@ -1873,7 +1955,7 @@ function InspectorSourceGroup({
               key={`${item.column.id}:${index}`}
             >
               <span className="lineage-inspector-column-name">{item.column.name}</span>
-              <InspectorColumnComments column={item.column} />
+              <InspectorColumnComments column={item.column} mode={commentMode} />
               {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
             </div>
           );
@@ -1885,6 +1967,7 @@ function InspectorSourceGroup({
 
 function InspectorUpstreamTree({
   activeInspectorCardId,
+  commentMode,
   expandedExpressionColumnIds,
   expressionExpanded,
   hasExpressionBreakdown,
@@ -1898,6 +1981,7 @@ function InspectorUpstreamTree({
   tree,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   expandedExpressionColumnIds?: Set<string>;
   expressionExpanded?: boolean;
   hasExpressionBreakdown?: boolean;
@@ -1917,6 +2001,7 @@ function InspectorUpstreamTree({
         <div className="lineage-inspector-tree-node">
           <InspectorColumnCard
             active={rootActive}
+            commentMode={commentMode}
             item={rootItem}
             onClearCaseRule={onSelectRoot}
             onFocusNode={onFocusNode}
@@ -1931,6 +2016,7 @@ function InspectorUpstreamTree({
           {tree.length > 0 ? (
             <InspectorColumnTreeNodes
               activeInspectorCardId={activeInspectorCardId}
+              commentMode={commentMode}
               depth={1}
               expandedExpressionColumnIds={expandedExpressionColumnIds}
               nodes={tree}
@@ -1951,6 +2037,7 @@ function InspectorUpstreamTree({
 
 function InspectorColumnTreeNodes({
   activeInspectorCardId,
+  commentMode,
   depth = 0,
   expandedExpressionColumnIds,
   nodes,
@@ -1961,6 +2048,7 @@ function InspectorColumnTreeNodes({
   rootItem,
 }: {
   activeInspectorCardId?: string | null;
+  commentMode: InspectorCommentMode;
   depth?: number;
   expandedExpressionColumnIds?: Set<string>;
   nodes: InspectorColumnTreeNode[];
@@ -1981,6 +2069,7 @@ function InspectorColumnTreeNodes({
               <InspectorColumnGroupCard
                 active={activeInspectorCardId === cardId}
                 cardId={cardId}
+                commentMode={commentMode}
                 items={entry.items}
                 onFocusNode={onFocusNode}
                 onSelectInspectorCard={onSelectInspectorCard}
@@ -2002,6 +2091,7 @@ function InspectorColumnTreeNodes({
               {entry.node.children.length > 0 ? (
                 <InspectorColumnTreeNodes
                   activeInspectorCardId={activeInspectorCardId}
+                  commentMode={commentMode}
                   depth={depth + 1}
                   expandedExpressionColumnIds={expandedExpressionColumnIds}
                   nodes={entry.node.children}
@@ -2023,6 +2113,7 @@ function InspectorColumnTreeNodes({
               {entry.node.children.length > 0 ? (
                 <InspectorColumnTreeNodes
                   activeInspectorCardId={activeInspectorCardId}
+                  commentMode={commentMode}
                   depth={depth + 1}
                   expandedExpressionColumnIds={expandedExpressionColumnIds}
                   nodes={entry.node.children}
@@ -2043,6 +2134,7 @@ function InspectorColumnTreeNodes({
             <InspectorColumnCard
               active={activeInspectorCardId === cardId}
               cardId={cardId}
+              commentMode={commentMode}
               expressionExpanded={expandedExpressionColumnIds?.has(treeNode.item.column.id)}
               hasExpressionBreakdown={Boolean(onToggleExpressionBreakdown && (treeNode.item.column.caseRules?.length || treeNode.item.column.expressionTree))}
               item={treeNode.item}
@@ -2054,6 +2146,7 @@ function InspectorColumnTreeNodes({
             {treeNode.children.length > 0 ? (
               <InspectorColumnTreeNodes
                 activeInspectorCardId={activeInspectorCardId}
+                commentMode={commentMode}
                 depth={depth + 1}
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
                 nodes={treeNode.children}
@@ -2123,11 +2216,13 @@ function inspectorTreeNodeKey(node: InspectorColumnTreeNode) {
 function InspectorColumnGroupCard({
   active,
   cardId,
+  commentMode,
   items,
   onSelectInspectorCard,
 }: {
   active?: boolean;
   cardId: string;
+  commentMode: InspectorCommentMode;
   items: InspectorColumnItem[];
   onFocusNode?: (nodeId: string) => void;
   onSelectInspectorCard?: SelectInspectorCard;
@@ -2157,12 +2252,12 @@ function InspectorColumnGroupCard({
       <div className="lineage-inspector-column-meta">
         <InspectorNodeMeta node={node} />
       </div>
-      <InspectorNodeComments node={node} />
+      <InspectorNodeComments node={node} visible={shouldShowNodeCommentsForItems(items, commentMode)} />
       <div className="lineage-inspector-group-columns">
         {items.map((item) => (
           <div className="lineage-inspector-group-column" key={item.column.id}>
             <span className="lineage-inspector-column-name">{item.column.name}</span>
-            <InspectorColumnComments column={item.column} />
+            <InspectorColumnComments column={item.column} mode={commentMode} />
           </div>
         ))}
       </div>
@@ -2254,6 +2349,7 @@ function InspectorExpressionTreeCard({ expression }: { expression: LineageExpres
 function InspectorColumnCard({
   active,
   cardId,
+  commentMode,
   expressionExpanded,
   hasExpressionBreakdown,
   hideExpression,
@@ -2268,6 +2364,7 @@ function InspectorColumnCard({
 }: {
   active?: boolean;
   cardId?: string;
+  commentMode: InspectorCommentMode;
   expressionExpanded?: boolean;
   hasExpressionBreakdown?: boolean;
   hideExpression?: boolean;
@@ -2316,9 +2413,9 @@ function InspectorColumnCard({
       <div className="lineage-inspector-column-meta">
         <InspectorNodeMeta node={item.node} />
       </div>
-      <InspectorNodeComments node={item.node} />
+      <InspectorNodeComments node={item.node} visible={shouldShowCommentsForColumn(item.column, commentMode)} />
       <span className="lineage-inspector-column-name">{item.column.name}</span>
-      <InspectorColumnComments column={item.column} />
+      <InspectorColumnComments column={item.column} mode={commentMode} />
       {showUsage && item.column.usage ? <div className="lineage-inspector-card-note">{formatInspectorUsage(item.column)}</div> : null}
       {expressionSql ? <SqlCodeMirror className="lineage-inspector-inline-code" value={expressionSql} /> : null}
       {item.column.unresolvedUpstream?.length ? <UnresolvedUpstreamNotice column={item.column} lineage={item.lineage} /> : null}
@@ -2548,12 +2645,37 @@ function InspectorNodeMeta({ node }: { node: LineageNode }) {
   );
 }
 
-function InspectorNodeComments({ node }: { node: LineageNode }) {
-  return <InspectorCommentBlock label={formatInspectorNodeCommentLabel(node)} values={node.comments} variant="node" />;
+function InspectorNodeComments({
+  node,
+  visible,
+}: {
+  node: LineageNode;
+  visible: boolean;
+}) {
+  return visible ? <InspectorCommentBlock label={formatInspectorNodeCommentLabel(node)} values={node.comments} variant="node" /> : null;
 }
 
-function InspectorColumnComments({ column }: { column: LineageColumn }) {
-  return <InspectorCommentBlock label="Column comment" values={column.comments} variant="column" />;
+function InspectorColumnComments({ column, mode }: { column: LineageColumn; mode: InspectorCommentMode }) {
+  return shouldShowCommentsForColumn(column, mode) ? <InspectorCommentBlock label="Column comment" values={column.comments} variant="column" /> : null;
+}
+
+function shouldShowNodeCommentsForItems(items: InspectorColumnItem[], mode: InspectorCommentMode) {
+  if (mode === 'none') return false;
+  if (mode === 'all') return true;
+  return items.some((item) => isProcessedInspectorColumn(item.column));
+}
+
+function shouldShowCommentsForColumn(column: LineageColumn, mode: InspectorCommentMode) {
+  if (mode === 'none') return false;
+  if (mode === 'all') return true;
+  return isProcessedInspectorColumn(column);
+}
+
+function isProcessedInspectorColumn(column: LineageColumn) {
+  if (column.caseRules?.length || column.expressionTree) {
+    return true;
+  }
+  return Boolean(column.expressionSql && !isSimpleColumnReference(column.expressionSql));
 }
 
 function InspectorCommentBlock({

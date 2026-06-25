@@ -616,6 +616,60 @@ test('shows title comments for output and derived nodes', async ({ page }) => {
   await expect(derivedOpenLink).toHaveAttribute('href', /select/);
 });
 
+test('controls inspector comment visibility by shared mode', async ({ page }) => {
+  await page.setViewportSize({ width: 1800, height: 1200 });
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    -- Output level comment.
+    SELECT
+      src.id AS user_id, -- Passthrough id comment.
+      src.price * src.amount AS total_value -- Total value comment.
+    FROM (
+      SELECT id, price, amount
+      FROM invoice_lines
+    ) src
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await showAllColumns(page);
+
+  const inspector = page.getByTestId('lineage-inspector');
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const commentMode = inspector.locator('.lineage-inspector-comment-mode');
+  await expect(commentMode.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
+
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  const rootCard = inspector.locator('.lineage-inspector-root-card');
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(rootCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output level comment.');
+  await expect(rootCard.locator('.lineage-inspector-comment-block-column')).toContainText('Passthrough id comment.');
+
+  await commentMode.getByRole('button', { name: 'Smart' }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(0);
+
+  await outputNode.getByRole('button', { name: 'total_value', exact: true }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+  await expect(rootCard.locator('.lineage-inspector-comment-block-node')).toContainText('Output level comment.');
+  await expect(rootCard.locator('.lineage-inspector-comment-block-column')).toContainText('Total value comment.');
+
+  await commentMode.getByRole('button', { name: 'None' }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(0);
+
+  await commentMode.getByRole('button', { name: 'All' }).click();
+  await outputNode.getByRole('button', { name: 'user_id', exact: true }).click();
+  await expect(rootCard.locator('.lineage-inspector-comment-block')).toHaveCount(2);
+
+  await commentMode.getByRole('button', { name: 'Smart' }).click();
+  await page.reload();
+  await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
+  await page.getByTestId('rf__node-main_output').locator('.lineage-node-title-button').click();
+  await page.getByRole('tab', { name: 'Inspector' }).click();
+  await expect(page.getByTestId('lineage-inspector').locator('.lineage-inspector-comment-mode').getByRole('button', { name: 'Smart' })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+});
+
 test('keeps CTE comments in inspector SQL', async ({ page }) => {
   await page.goto('/');
 

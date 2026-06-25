@@ -684,6 +684,61 @@ textarea {
   flex: 1 1 auto;
 }
 
+.lineage-inspector-header-actions {
+  display: flex;
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lineage-inspector-comment-mode {
+  display: grid;
+  gap: 4px;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.lineage-inspector-comment-mode-buttons {
+  display: inline-flex;
+  overflow: hidden;
+  border: 1px solid #d8e3f2;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.lineage-inspector-comment-mode-buttons button {
+  min-height: 24px;
+  border: 0;
+  border-right: 1px solid #d8e3f2;
+  padding: 3px 7px;
+  background: transparent;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.lineage-inspector-comment-mode-buttons button:last-child {
+  border-right: 0;
+}
+
+.lineage-inspector-comment-mode-buttons button:hover,
+.lineage-inspector-comment-mode-buttons button:focus-visible {
+  background: #eff6ff;
+  color: #1d4ed8;
+  outline: none;
+}
+
+.lineage-inspector-comment-mode-buttons .lineage-inspector-comment-mode-active {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
 .lineage-inspector-kicker {
   margin-bottom: 4px;
   color: #64748b;
