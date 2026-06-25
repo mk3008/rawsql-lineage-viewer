@@ -39,6 +39,7 @@ import { isSimpleColumnReference } from './columnDisplay';
 import { attachNodeDependencyProfiles } from './nodeDependencyProfile';
 import type { SchemaFacts } from './schemaFacts';
 import { createTableColumnResolver } from './schemaFacts';
+import { mergeColumnRefs } from './source-references/mergeColumnRefs';
 
 export interface ParserAdapterResult {
   lineage: LineageModel;
@@ -2387,19 +2388,6 @@ function normalizeComments(comments: unknown[]): string[] {
 
 function dedupeComments(comments: string[]): string[] {
   return [...new Set(comments)];
-}
-
-function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): LineageColumnRef[] {
-  const merged: LineageColumnRef[] = [];
-  const seen = new Set<string>();
-  for (const ref of [...left, ...right]) {
-    const key = `${ref.nodeId}.${ref.columnName}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(ref);
-    }
-  }
-  return merged;
 }
 
 function mergeUnresolvedColumnReferences(
