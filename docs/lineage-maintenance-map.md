@@ -504,6 +504,26 @@ src/lineage/output-columns/collectOutputColumns.ts
 Move only after dependencies are clearer. This area currently touches wildcard
 expansion, scalar subqueries, expression trees, comments, and node column finalization.
 
+Phase 7 extraction seam:
+
+`collectOutputColumns` should not move while it still needs broad adapter state.
+Keep a small local `OutputColumnDeps` seam until these responsibilities can be
+split:
+
+| Dependency | Classification | Notes |
+| --- | --- | --- |
+| `collectOutputColumns`, SELECT alias naming, source wildcard expansion, rawsql wildcard fallback | `output-columns` | Move together once dependency callbacks are stable. |
+| `resolveColumnReferences`, `resolveColumnReferencesWithIssues`, `mergeColumnRefs`, `collectColumnReferences` | `source-references` | Import from `source-references`; do not duplicate. |
+| `collectScalarSubqueryLineage`, `collectNestedExpressionLineage`, expression tree, CASE rules | later `value-origin` | These create value lineage, not only display columns. Keep behind callbacks for now. |
+| `wildcardPassthroughSource` backfill and `setNodeColumns` | adapter boundary for now | It mutates upstream node columns and depends on adapter-owned nodes. |
+| `SelectValueCollector` / schema facts wildcard fallback | output-columns candidate | Can move later if warnings and schema resolver are passed through small callbacks. |
+| `ResolvedSource` | keep adapter-local | Do not export it; introduce a narrower output source type before file extraction. |
+| `CollectQueryEdgesOptions` | keep adapter-local | Do not pass it into `output-columns`. |
+
+The next output-columns step should either introduce a narrow output source type
+or split value-origin callbacks first. Avoid moving scalar subquery/value lineage
+just to make `collectOutputColumns.ts` compile.
+
 ### Phase 2.5: Establish source reference boundary
 
 Before moving `collectPopulationScope` out of `rawsqlAdapter.ts`, reduce the source-reference coupling that currently blocks a small extraction.

@@ -314,6 +314,19 @@ interface ResolvedSource {
   };
 }
 
+interface OutputColumnDeps {
+  addWarning: (warning: AnalysisWarning) => void;
+  collectExpressionBreakdownRules: (value: unknown, sources: ResolvedSource[]) => LineageCaseRule[] | undefined;
+  collectExpressionTree: (value: unknown, sources: ResolvedSource[]) => LineageExpressionTree | undefined;
+  collectNestedExpressionLineage: (value: unknown) => LineageColumnRef[];
+  collectScalarSubqueryLineage: (value: unknown, ownerOutputColumnName: string, outerSources: ResolvedSource[], parentScopeId: string) => LineageColumnRef[];
+  extractSelectItemComments: (items: SimpleSelectQuery['selectClause']['items'], index: number) => string[] | undefined;
+  formatExpressionSql: (value: unknown) => string | undefined;
+  recordUnresolvedColumnWarnings: (unresolved: LineageUnresolvedColumnReference[], scopeId: string, outputColumnName: string) => void;
+  schemaFacts?: SchemaFacts;
+  setNodeColumns: (nodeId: string, columns: Array<string | LineageColumn>) => void;
+}
+
 function toSourceReferenceTargets(sources: ResolvedSource[]): SourceReferenceTarget[] {
   return sources.map((source) => ({
     aliases: source.aliases,
@@ -330,7 +343,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
     const fromClause = query.fromClause;
     const scopeId = nextScopeId(options, targetId);
     if (!fromClause) {
-      const outputColumns = collectOutputColumns(query, [], options, scopeId);
+      const outputColumns = collectOutputColumns(query, [], createOutputColumnDeps(options), scopeId);
       scopes.push(collectPopulationScope({
         deps: createPopulationOriginDeps(options),
         joins: [],
@@ -392,7 +405,7 @@ function collectQueryEdges(options: CollectQueryEdgesOptions): void {
       });
     }
 
-    const outputColumns = collectOutputColumns(query, sources, options, scopeId);
+    const outputColumns = collectOutputColumns(query, sources, createOutputColumnDeps(options), scopeId);
     scopes.push(collectPopulationScope({
       deps: createPopulationOriginDeps(options),
       joins,
@@ -894,6 +907,23 @@ function createPopulationOriginDeps(options: CollectQueryEdgesOptions): Populati
   };
 }
 
+function createOutputColumnDeps(options: CollectQueryEdgesOptions): OutputColumnDeps {
+  return {
+    addWarning: (warning) => options.warnings.push(warning),
+    collectExpressionBreakdownRules,
+    collectExpressionTree,
+    collectNestedExpressionLineage: (value) => collectNestedExpressionLineage(value, options),
+    collectScalarSubqueryLineage: (value, ownerOutputColumnName, outerSources, parentScopeId) =>
+      collectScalarSubqueryLineage(value, ownerOutputColumnName, outerSources, options, parentScopeId),
+    extractSelectItemComments,
+    formatExpressionSql,
+    recordUnresolvedColumnWarnings: (unresolved, scopeId, outputColumnName) =>
+      recordUnresolvedColumnWarnings(options.warnings, unresolved, scopeId, outputColumnName),
+    schemaFacts: options.schemaFacts,
+    setNodeColumns: (nodeId, columns) => setNodeColumns(options.nodes, nodeId, columns),
+  };
+}
+
 function collectNestedQueryReferences(value: unknown, options: CollectQueryEdgesOptions): LineageColumnRef[] {
   const refs: LineageColumnRef[] = [];
   for (const query of collectNestedSimpleSelectQueries(value)) {
@@ -944,36 +974,36 @@ function collectQueryLocalReferences(query: SimpleSelectQuery, options: CollectQ
 // output-columns slice boundary:
 // Returns SELECT-derived display columns only. Population-origin references are
 // collected by collectPopulationScope and must not be appended here.
-function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], options: CollectQueryEdgesOptions, scopeId: string): LineageColumn[] {
+function collectOutputColumns(query: SimpleSelectQuery, sources: ResolvedSource[], deps: OutputColumnDeps, scopeId: string): LineageColumn[] {
   if (hasWildcardSelectItem(query)) {
-    if (options.schemaFacts) {
-      const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
+    if (deps.schemaFacts) {
+      const rawsqlColumns = collectRawsqlExpandedSelectColumns(query, sources, deps, scopeId);
       if (rawsqlColumns.length > 0) {
         return rawsqlColumns;
       }
     }
 
-    const sourceExpandedColumns = collectSourceExpandedSelectColumns(query, sources, options, scopeId);
+    const sourceExpandedColumns = collectSourceExpandedSelectColumns(query, sources, deps, scopeId);
     if (sourceExpandedColumns.unresolvedWildcardCount === 0) {
       return sourceExpandedColumns.columns;
     }
 
-    const rawsqlColumns = options.schemaFacts
+    const rawsqlColumns = deps.schemaFacts
       ? []
-      : collectRawsqlExpandedSelectColumns(query, sources, options, scopeId);
+      : collectRawsqlExpandedSelectColumns(query, sources, deps, scopeId);
     return [
       ...(rawsqlColumns.length > 0 ? rawsqlColumns : sourceExpandedColumns.columns),
     ];
   }
 
   const selectedColumns: LineageColumn[] = query.selectClause.items.map((item, index) =>
-    collectSelectItemOutputColumn(query, item, index, index, sources, options, scopeId),
+    collectSelectItemOutputColumn(query, item, index, index, sources, deps, scopeId),
   );
-  backfillWildcardPassthroughColumns(selectedColumns, sources, options.nodes);
+  backfillWildcardPassthroughColumns(selectedColumns, sources, deps);
   return selectedColumns;
 }
 
-function backfillWildcardPassthroughColumns(columns: LineageColumn[], sources: ResolvedSource[], nodes: Map<string, LineageNode>): void {
+function backfillWildcardPassthroughColumns(columns: LineageColumn[], sources: ResolvedSource[], deps: OutputColumnDeps): void {
   const sourceByNodeId = new Map(sources.map((source) => [source.node.id, source]));
   for (const column of columns) {
     for (const upstream of column.upstream ?? []) {
@@ -990,8 +1020,8 @@ function backfillWildcardPassthroughColumns(columns: LineageColumn[], sources: R
           columnName: upstream.columnName,
         }],
       };
-      setNodeColumns(nodes, source.node.id, [sourceColumn]);
-      setNodeColumns(nodes, source.wildcardPassthroughSource.node.id, [upstream.columnName]);
+      deps.setNodeColumns(source.node.id, [sourceColumn]);
+      deps.setNodeColumns(source.wildcardPassthroughSource.node.id, [upstream.columnName]);
     }
   }
 }
@@ -1002,18 +1032,18 @@ function collectSelectItemOutputColumn(
   itemIndex: number,
   outputIndex: number,
   sources: ResolvedSource[],
-  options: CollectQueryEdgesOptions,
+  deps: OutputColumnDeps,
   scopeId: string,
 ): LineageColumn {
-  const comments = extractSelectItemComments(query.selectClause.items, itemIndex);
-  const caseRules = collectExpressionBreakdownRules(item.value, sources);
-  const expressionTree = collectExpressionTree(item.value, sources);
+  const comments = deps.extractSelectItemComments(query.selectClause.items, itemIndex);
+  const caseRules = deps.collectExpressionBreakdownRules(item.value, sources);
+  const expressionTree = deps.collectExpressionTree(item.value, sources);
   const name = getSelectItemOutputName(item, outputIndex);
-  const scalarSubqueryRefs = collectScalarSubqueryLineage(item.value, name, sources, options, scopeId);
-  const resolvedReferences = resolveColumnReferencesWithIssues(item.value, toSourceReferenceTargets(sources), { formatExpressionSql, skipInlineQueries: true });
+  const scalarSubqueryRefs = deps.collectScalarSubqueryLineage(item.value, name, sources, scopeId);
+  const resolvedReferences = resolveColumnReferencesWithIssues(item.value, toSourceReferenceTargets(sources), { formatExpressionSql: deps.formatExpressionSql, skipInlineQueries: true });
   const unresolvedUpstream = resolvedReferences.unresolved;
-  recordUnresolvedColumnWarnings(options.warnings, unresolvedUpstream, scopeId, name);
-  const nestedExpressionRefs = scalarSubqueryRefs.length > 0 ? [] : collectNestedExpressionLineage(item.value, options);
+  deps.recordUnresolvedColumnWarnings(unresolvedUpstream, scopeId, name);
+  const nestedExpressionRefs = scalarSubqueryRefs.length > 0 ? [] : deps.collectNestedExpressionLineage(item.value);
   const upstream = mergeColumnRefs(
     mergeColumnRefs(scalarSubqueryRefs, resolvedReferences.resolved),
     nestedExpressionRefs,
@@ -1024,7 +1054,7 @@ function collectSelectItemOutputColumn(
     comments,
     caseRules,
     expressionTree,
-    expressionSql: formatExpressionSql(item.value),
+    expressionSql: deps.formatExpressionSql(item.value),
     outputIndex,
     selectItemId: createSelectItemId(scopeId, outputIndex),
     scopeId,
@@ -1037,7 +1067,7 @@ function collectSelectItemOutputColumn(
 function collectSourceExpandedSelectColumns(
   query: SimpleSelectQuery,
   sources: ResolvedSource[],
-  options: CollectQueryEdgesOptions,
+  deps: OutputColumnDeps,
   scopeId: string,
 ): { columns: LineageColumn[]; unresolvedWildcardCount: number } {
   const columns: LineageColumn[] = [];
@@ -1056,7 +1086,7 @@ function collectSourceExpandedSelectColumns(
       return;
     }
 
-    columns.push(collectSelectItemOutputColumn(query, item, itemIndex, outputIndex, sources, options, scopeId));
+    columns.push(collectSelectItemOutputColumn(query, item, itemIndex, outputIndex, sources, deps, scopeId));
     outputIndex += 1;
   });
 
@@ -1337,17 +1367,17 @@ function hasWildcardSelectItem(query: SimpleSelectQuery): boolean {
 function collectRawsqlExpandedSelectColumns(
   query: SimpleSelectQuery,
   sources: ResolvedSource[],
-  options: CollectQueryEdgesOptions,
+  deps: OutputColumnDeps,
   scopeId: string,
 ): LineageColumn[] {
   const sourceTargets = toSourceReferenceTargets(sources);
   const rawsqlValues = new SelectValueCollector(
-    options.schemaFacts ? createTableColumnResolver(options.schemaFacts) : null,
+    deps.schemaFacts ? createTableColumnResolver(deps.schemaFacts) : null,
   ).collect(query);
-  warnIfRawsqlDedupedWildcardColumns(query, sources, rawsqlValues.map((value) => value.name), options);
+  warnIfRawsqlDedupedWildcardColumns(query, sources, rawsqlValues.map((value) => value.name), deps);
 
   if (rawsqlValues.length === 0) {
-    options.warnings.push({
+    deps.addWarning({
       code: 'wildcard_unresolved_without_schema',
       message: 'Wildcard columns could not be expanded because schema facts were not provided or the source columns are unknown.',
     });
@@ -1355,16 +1385,16 @@ function collectRawsqlExpandedSelectColumns(
   }
 
   return rawsqlValues.map((value, index) => {
-    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sourceTargets), collectNestedExpressionLineage(value.value, options));
+    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sourceTargets), deps.collectNestedExpressionLineage(value.value));
     const matchingItem = findSelectItemForRawsqlValue(query, value.value);
-    const comments = matchingItem ? extractSelectItemComments(query.selectClause.items, query.selectClause.items.indexOf(matchingItem)) : undefined;
+    const comments = matchingItem ? deps.extractSelectItemComments(query.selectClause.items, query.selectClause.items.indexOf(matchingItem)) : undefined;
     return {
       id: '',
       name: value.name,
       comments,
-      caseRules: collectExpressionBreakdownRules(value.value, sources),
-      expressionTree: collectExpressionTree(value.value, sources),
-      expressionSql: formatExpressionSql(value.value),
+      caseRules: deps.collectExpressionBreakdownRules(value.value, sources),
+      expressionTree: deps.collectExpressionTree(value.value, sources),
+      expressionSql: deps.formatExpressionSql(value.value),
       outputIndex: index,
       selectItemId: createSelectItemId(scopeId, index),
       scopeId,
@@ -1382,9 +1412,9 @@ function warnIfRawsqlDedupedWildcardColumns(
   query: SimpleSelectQuery,
   sources: ResolvedSource[],
   rawsqlColumnNames: string[],
-  options: CollectQueryEdgesOptions,
+  deps: OutputColumnDeps,
 ): void {
-  if (!options.schemaFacts) {
+  if (!deps.schemaFacts) {
     return;
   }
 
@@ -1398,7 +1428,7 @@ function warnIfRawsqlDedupedWildcardColumns(
     return;
   }
 
-  options.warnings.push({
+  deps.addWarning({
     code: 'rawsql_duplicate_output_columns_deduped',
     message: `rawsql-ts returned ${rawsqlColumnNames.length} wildcard output column(s), while schema facts indicate ${expectedColumns.length} source column(s). Duplicate output column name(s) appear to have been deduplicated by rawsql-ts: ${duplicateNames.join(', ')}.`,
   });
