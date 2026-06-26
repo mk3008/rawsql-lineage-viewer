@@ -197,6 +197,27 @@ textarea {
   min-width: 0;
 }
 
+.panel-close-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid #d8e2ef;
+  border-radius: 8px;
+  background: #fff;
+  color: #475569;
+  cursor: pointer;
+}
+
+.panel-close-button:hover,
+.panel-close-button:focus-visible {
+  border-color: #bfdbfe;
+  background: #eff6ff;
+  color: #1d4ed8;
+  outline: none;
+}
+
 .panel-tabs {
   display: inline-flex;
   flex: 0 0 auto;
@@ -2800,24 +2821,54 @@ textarea {
   .workspace-legend-collapsed,
   .workspace-panel-collapsed.workspace-legend-collapsed {
     grid-template-columns: 1fr;
-    grid-template-rows: minmax(260px, 38vh) 1fr;
+    grid-template-rows: 0 minmax(0, 1fr);
   }
 
-  .workspace-panel-collapsed {
-    grid-template-rows: 0 1fr;
+  .workspace-mobile-panel-active {
+    grid-template-rows: minmax(0, 1fr) 0;
   }
 
-  .workspace-legend-collapsed {
-    grid-template-rows: minmax(260px, 38vh) 1fr;
+  .workspace-mobile-inspector-active,
+  .workspace-mobile-inspector-active.workspace-legend-collapsed {
+    grid-template-rows: minmax(0, 1fr) 0;
   }
 
+  .workspace-panel-collapsed,
   .workspace-panel-collapsed.workspace-legend-collapsed {
-    grid-template-rows: 0 1fr;
+    grid-template-rows: 0 minmax(0, 1fr);
   }
 
   .sql-panel {
     border-right: 0;
     border-bottom: 1px solid #dfe6f1;
+  }
+
+  .workspace-mobile-inspector-active .sql-panel {
+    border-bottom: 0;
+  }
+
+  .workspace-mobile-panel-active .canvas-area,
+  .workspace-mobile-inspector-active .canvas-area {
+    display: none;
+  }
+
+  .workspace-mobile-panel-active .sql-tab-panel {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .workspace-mobile-panel-active .panel-actions {
+    grid-row: 1;
+    border-top: 0;
+    border-bottom: 1px solid #e8edf5;
+    padding: 12px 16px;
+  }
+
+  .workspace-mobile-panel-active .sql-editor-frame {
+    grid-row: 2;
+  }
+
+  .workspace-mobile-panel-active .analysis-status {
+    grid-row: 3;
   }
 
   .canvas-area {

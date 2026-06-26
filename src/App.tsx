@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -13,6 +13,7 @@ const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
 const sqlHistorySortStorageKey = 'rawsql-lineage-viewer:sql-history-sort';
 const legendPanelStorageKey = 'rawsql-lineage-viewer:legend-panel-open';
 const inspectorCardHistoryStateKey = 'rawsqlLineageViewerInspectorCard';
+const mobileLineageViewportQuery = '(max-width: 860px)';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
 type SqlHistorySortMode = 'recent' | 'name';
@@ -41,8 +42,9 @@ export function App() {
   const initialSql = useMemo(readInitialSqlFromUrl, []);
   const shouldRecordInitialSql = useMemo(readInitialSqlHistoryEnabledFromUrl, []);
   const initialHistory = useMemo(() => readSqlHistory(initialSql, shouldRecordInitialSql), [initialSql, shouldRecordInitialSql]);
+  const isMobileLineageViewport = useMobileLineageViewport();
   const [sql, setSql] = useState(initialSql);
-  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [isPanelOpen, setIsPanelOpen] = useState(() => !readIsMobileLineageViewport());
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
   const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
@@ -82,6 +84,11 @@ export function App() {
   const error = analysis.error;
   const adapterResult = analysis.result;
   useEffect(() => {
+    if (isMobileLineageViewport) {
+      setIsPanelOpen(false);
+    }
+  }, [isMobileLineageViewport]);
+  useEffect(() => {
     if (lastHandledAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
       return;
     }
@@ -106,9 +113,11 @@ export function App() {
     pendingAutoInspectOutputNonceRef.current = null;
     setForcedInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
     setInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
-    setIsPanelOpen(true);
-    setPanelTab('inspector');
-  }, [adapterResult, autoInspectOutputNonce, outputTitle]);
+    if (!isMobileLineageViewport) {
+      setIsPanelOpen(true);
+      setPanelTab('inspector');
+    }
+  }, [adapterResult, autoInspectOutputNonce, isMobileLineageViewport, outputTitle]);
   const shareMessage =
     shareStatus === 'copied'
       ? 'Share URL copied'
@@ -152,11 +161,11 @@ export function App() {
       }
       return selection;
     });
-    if (selection) {
+    if (selection && (!isMobileLineageViewport || selection.kind !== 'node' || selection.node.type !== 'output')) {
       setIsPanelOpen(true);
       setPanelTab('inspector');
     }
-  }, []);
+  }, [isMobileLineageViewport]);
   const applyInspectorCardSelection = useCallback((selection: InspectorCardSelection | null) => {
     setActiveInspectorCardId(selection?.cardId ?? null);
     setActiveInspectorCardColumnId(selection?.columnId ?? null);
@@ -266,11 +275,13 @@ export function App() {
     });
     setOutputTitle(resolvedOutputTitle);
     setSqlHistory((current) => saveSqlHistory(nextSql, current));
-    if (nextInspectorSelection) {
+    if (isMobileLineageViewport) {
+      setIsPanelOpen(false);
+    } else if (nextInspectorSelection) {
       setIsPanelOpen(true);
       setPanelTab('inspector');
     }
-  }, [sqlHistory]);
+  }, [isMobileLineageViewport, sqlHistory]);
   const openHistoryItem = useCallback((item: SqlHistoryItem) => {
     openSql(item.sql, item.outputTitle ?? defaultOutputTitle);
   }, [openSql]);
@@ -317,6 +328,9 @@ export function App() {
     });
   }, [lastAnalyzedSql]);
 
+  const isMobileInspectorActive = isMobileLineageViewport && isPanelOpen && panelTab === 'inspector';
+  const isMobilePanelActive = isMobileLineageViewport && isPanelOpen && panelTab !== 'inspector';
+
   return (
     <div className="app-shell">
       <header className="app-header">
@@ -361,7 +375,9 @@ export function App() {
         </div>
       </header>
 
-      <main className={`workspace ${isPanelOpen ? '' : 'workspace-panel-collapsed'} ${isLegendPanelOpen ? '' : 'workspace-legend-collapsed'}`}>
+      <main
+        className={`workspace ${isPanelOpen ? '' : 'workspace-panel-collapsed'} ${isLegendPanelOpen ? '' : 'workspace-legend-collapsed'} ${isMobileInspectorActive ? 'workspace-mobile-inspector-active' : ''} ${isMobilePanelActive ? 'workspace-mobile-panel-active' : ''}`}
+      >
         <aside className="sql-panel" aria-label="SQL and inspector panel">
           <div className="panel-heading">
             <div className="panel-tabs" role="tablist" aria-label="Side panel">
@@ -419,6 +435,18 @@ export function App() {
                 >
                   <Eraser size={13} />
                   Clear
+                </button>
+              </div>
+            ) : isMobileInspectorActive ? (
+              <div className="panel-heading-actions">
+                <button
+                  aria-label="Close inspector"
+                  className="panel-close-button"
+                  title="Close inspector"
+                  type="button"
+                  onClick={() => setIsPanelOpen(false)}
+                >
+                  <X size={18} />
                 </button>
               </div>
             ) : null}
@@ -506,6 +534,8 @@ export function App() {
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
                 flowDirection={flowDirection}
                 focusTarget={graphFocusTarget}
+                isGraphViewportVisible={!isMobileInspectorActive && !isMobilePanelActive}
+                isMobileGraphDisplayMode={isMobileLineageViewport}
                 lineage={adapterResult.lineage}
                 onInspectorSelectionChange={handleInspectorSelectionChange}
                 onProblemIntentChange={setProblemIntent}
@@ -591,6 +621,28 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
       {label} <strong>{value}</strong>
     </span>
   );
+}
+
+function useMobileLineageViewport() {
+  const [isMobileLineageViewport, setIsMobileLineageViewport] = useState(readIsMobileLineageViewport);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const query = window.matchMedia(mobileLineageViewportQuery);
+    const updateMobileLineageViewport = () => setIsMobileLineageViewport(query.matches);
+    updateMobileLineageViewport();
+    query.addEventListener('change', updateMobileLineageViewport);
+    return () => query.removeEventListener('change', updateMobileLineageViewport);
+  }, []);
+
+  return isMobileLineageViewport;
+}
+
+function readIsMobileLineageViewport() {
+  return typeof window !== 'undefined' && window.matchMedia(mobileLineageViewportQuery).matches;
 }
 
 function summarizeAnalysisWarnings(warnings: AnalysisWarning[], unreachableCteCount: number): WarningCounters {

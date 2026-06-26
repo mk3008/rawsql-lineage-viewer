@@ -223,12 +223,22 @@ test('can clear the SQL editor on mobile before entering another query', async (
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/');
 
-  await page.getByRole('button', { name: 'Hide SQL panel' }).click();
   await expect(page.getByRole('textbox', { name: 'SQL editor' })).not.toBeVisible();
   await page.getByRole('button', { name: 'Show SQL panel' }).click();
 
   const editor = page.getByRole('textbox', { name: 'SQL editor' });
+  const analyzeButton = page.getByRole('button', { name: 'Analyze SQL' });
   await expect(editor).toContainText(/recent_orders AS/);
+  await expect(page.getByTestId('lineage-graph')).not.toBeVisible();
+  const analyzeBox = await analyzeButton.boundingBox();
+  const editorBox = await editor.boundingBox();
+  expect(analyzeBox).not.toBeNull();
+  expect(editorBox).not.toBeNull();
+  expect(analyzeBox!.y).toBeLessThan(editorBox!.y);
+
+  await page.getByRole('tab', { name: 'History' }).click();
+  await expect(page.getByTestId('lineage-graph')).not.toBeVisible();
+  await page.getByRole('tab', { name: 'SQL' }).click();
 
   await page.getByRole('button', { name: 'Clear SQL editor' }).click();
 
@@ -237,6 +247,55 @@ test('can clear the SQL editor on mobile before entering another query', async (
 
   await editor.fill('select id from users');
   await expect(page.getByRole('button', { name: 'Clear SQL editor' })).toBeEnabled();
+  await analyzeButton.click();
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).not.toBeVisible();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+});
+
+test('uses graph-only mobile view before opening the full-width inspector', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+  await expect(page.getByRole('textbox', { name: 'SQL editor' })).not.toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Always show columns' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'Show aliases' })).toHaveCount(0);
+  await expect(page.getByRole('checkbox', { name: 'Auto layout' })).toHaveCount(0);
+  await expect(page.locator('.react-flow__minimap')).toHaveCount(0);
+
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  await ordersNode.getByRole('button', { name: 'orders', exact: true }).click();
+
+  const inspector = page.getByTestId('lineage-inspector');
+  await expect(inspector.getByRole('heading', { name: 'orders' })).toBeVisible();
+  await expect(page.getByTestId('lineage-graph')).not.toBeVisible();
+  const inspectorBox = await inspector.boundingBox();
+  expect(inspectorBox).not.toBeNull();
+  expect(inspectorBox!.width).toBeGreaterThan(360);
+
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
+  await expect(inspector.getByRole('heading', { name: 'customer_name' })).toBeVisible();
+  await inspector.locator('.lineage-inspector-source-group-selectable').first().click();
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+  await expect
+    .poll(async () => {
+      const graphBox = await page.getByTestId('lineage-graph').boundingBox();
+      const customerBox = await page.getByTestId('rf__node-table_customers').boundingBox();
+      if (!graphBox || !customerBox) {
+        return 0;
+      }
+      const overlapWidth = Math.max(0, Math.min(customerBox.x + customerBox.width, graphBox.x + graphBox.width) - Math.max(customerBox.x, graphBox.x));
+      const overlapHeight = Math.max(0, Math.min(customerBox.y + customerBox.height, graphBox.y + graphBox.height) - Math.max(customerBox.y, graphBox.y));
+      return overlapWidth * overlapHeight;
+    })
+    .toBeGreaterThan(1000);
 });
 
 test('renders outer join nullability context on data flows without separate join edges', async ({ page }) => {
