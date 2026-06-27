@@ -46,7 +46,8 @@ export function App() {
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(() => !readIsMobileLineageViewport());
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
-  const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
+  const [panelTab, setPanelTab] = useState<'sql' | 'inspector'>('sql');
+  const [sqlPanelTab, setSqlPanelTab] = useState<'open' | 'history'>('open');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
@@ -404,43 +405,8 @@ export function App() {
                 <Info size={15} />
                 Inspector
               </button>
-              <button
-                aria-selected={panelTab === 'history'}
-                className={panelTab === 'history' ? 'active' : ''}
-                role="tab"
-                type="button"
-                onClick={() => setPanelTab('history')}
-              >
-                <Clock3 size={15} />
-                History
-              </button>
             </div>
-            {panelTab === 'sql' ? (
-              <div className="panel-heading-actions">
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() => {
-                    openSql(salesSummarySql);
-                  }}
-                >
-                  Demo
-                </button>
-                <button
-                  aria-label="Clear SQL editor"
-                  className="text-button"
-                  type="button"
-                  disabled={sql.length === 0}
-                  onClick={() => {
-                    setSql('');
-                    setShareStatus('idle');
-                  }}
-                >
-                  <Eraser size={13} />
-                  Clear
-                </button>
-              </div>
-            ) : isMobileInspectorActive ? (
+            {isMobileInspectorActive ? (
               <div className="panel-heading-actions">
                 <button
                   aria-label="Close inspector"
@@ -455,36 +421,102 @@ export function App() {
             ) : null}
           </div>
           {panelTab === 'sql' ? (
-            <div className="sql-tab-panel">
-              <div className="sql-editor-frame">
-                <SqlCodeMirror
-                  ariaLabel="SQL editor"
-                  className="sql-editor"
-                  editable
-                  minHeight="340px"
-                  value={sql}
-                  onChange={(value) => {
-                    setSql(value);
-                    setShareStatus('idle');
-                  }}
-                />
-              </div>
-              <div className="panel-actions">
+            <div className="sql-panel-tabs-layout">
+              <div className="panel-subtabs" role="tablist" aria-label="SQL tools">
                 <button
-                  className="primary-button"
+                  aria-selected={sqlPanelTab === 'open'}
+                  className={sqlPanelTab === 'open' ? 'active' : ''}
+                  role="tab"
                   type="button"
-                  onClick={() => {
-                    openSql(sql);
-                  }}
+                  onClick={() => setSqlPanelTab('open')}
                 >
-                  <Play size={15} fill="currentColor" />
-                  Analyze SQL
+                  <Code2 size={15} />
+                  Open
+                </button>
+                <button
+                  aria-selected={sqlPanelTab === 'history'}
+                  className={sqlPanelTab === 'history' ? 'active' : ''}
+                  role="tab"
+                  type="button"
+                  onClick={() => setSqlPanelTab('history')}
+                >
+                  <Clock3 size={15} />
+                  History
                 </button>
               </div>
-              <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
-                {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                <span>{error ? error : 'Parsed successfully'}</span>
-              </div>
+              {sqlPanelTab === 'open' ? (
+                <div className="sql-tab-panel">
+                  <div className="sql-editor-actions">
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() => {
+                        openSql(salesSummarySql);
+                      }}
+                    >
+                      Demo
+                    </button>
+                    <button
+                      aria-label="Clear SQL editor"
+                      className="text-button"
+                      type="button"
+                      disabled={sql.length === 0}
+                      onClick={() => {
+                        setSql('');
+                        setShareStatus('idle');
+                      }}
+                    >
+                      <Eraser size={13} />
+                      Clear
+                    </button>
+                  </div>
+                  <div className="sql-editor-frame">
+                    <SqlCodeMirror
+                      ariaLabel="SQL editor"
+                      className="sql-editor"
+                      editable
+                      minHeight="340px"
+                      value={sql}
+                      onChange={(value) => {
+                        setSql(value);
+                        setShareStatus('idle');
+                      }}
+                    />
+                  </div>
+                  <div className="panel-actions">
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => {
+                        openSql(sql);
+                      }}
+                    >
+                      <Play size={15} fill="currentColor" />
+                      Analyze SQL
+                    </button>
+                  </div>
+                  <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
+                    {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                    <span>{error ? error : 'Parsed successfully'}</span>
+                  </div>
+                </div>
+              ) : (
+                <SqlHistoryPanel
+                  history={sqlHistory}
+                  onClear={() => {
+                    setSqlHistory([]);
+                    writeSqlHistory([]);
+                  }}
+                  onOpen={openHistoryItem}
+                  onRemove={(id) => {
+                    setSqlHistory((current) => {
+                      const next = current.filter((item) => item.id !== id);
+                      writeSqlHistory(next);
+                      return next;
+                    });
+                  }}
+                />
+              )}
             </div>
           ) : panelTab === 'inspector' ? (
             adapterResult ? (
@@ -508,23 +540,7 @@ export function App() {
             ) : (
               <div className="lineage-inspector-empty">Analyze SQL to inspect lineage details.</div>
             )
-          ) : (
-            <SqlHistoryPanel
-              history={sqlHistory}
-              onClear={() => {
-                setSqlHistory([]);
-                writeSqlHistory([]);
-              }}
-              onOpen={openHistoryItem}
-              onRemove={(id) => {
-                setSqlHistory((current) => {
-                  const next = current.filter((item) => item.id !== id);
-                  writeSqlHistory(next);
-                  return next;
-                });
-              }}
-            />
-          )}
+          ) : null}
         </aside>
 
         <section className="canvas-area">
