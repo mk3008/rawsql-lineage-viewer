@@ -1862,7 +1862,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     if (!seen.has(key)) {
       seen.add(key);
       nextColumns.push({
-        id: duplicateOutputNames.has(name) && outputIndex !== undefined ? `${nodeId}.${sanitizeId(name)}.${outputIndex + 1}` : `${nodeId}.${sanitizeId(name)}`,
+        id: createColumnId(nodeId, name, outputIndex),
         name,
         comments,
         caseRules,
@@ -1910,6 +1910,11 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     }
   }
   node.columns = nextColumns;
+}
+
+function createColumnId(nodeId: string, name: string, outputIndex?: number): string {
+  const baseId = `${nodeId}.${sanitizeId(name)}`;
+  return outputIndex === undefined ? baseId : `${baseId}.${outputIndex + 1}`;
 }
 
 function collectDuplicateOutputColumnNames(columns: Array<string | LineageColumn>): Set<string> {

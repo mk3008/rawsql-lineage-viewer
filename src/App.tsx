@@ -163,7 +163,11 @@ export function App() {
       }
       return selection;
     });
-    const shouldOpenInspector = selection && (!isMobileLineageViewport || reason === 'graph-column-selection');
+    const shouldOpenInspector = selection && (
+      !isMobileLineageViewport ||
+      reason === 'graph-column-selection' ||
+      reason === 'graph-node-inspection'
+    );
     if (shouldOpenInspector) {
       setIsPanelOpen(true);
       setPanelTab('inspector');

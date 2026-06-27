@@ -51,4 +51,27 @@ describe('output-columns boundary', () => {
     expect(orders?.columns.map((column) => column.name)).toEqual(['status']);
     expect(orders?.columns.some((column) => column.name === 'created_at')).toBe(false);
   });
+
+  it('output-columns assigns unique ids to non-Latin SELECT aliases', () => {
+    const { lineage } = analyzeSql(`
+      SELECT
+        c.id AS "顧客ID",
+        c.account_code AS "顧客コード",
+        c.legal_name AS "法人名",
+        c.display_name AS "表示名"
+      FROM customers c
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const outputColumns = output?.columns ?? [];
+
+    expect(outputColumns.map((column) => column.name)).toEqual(['顧客ID', '顧客コード', '法人名', '表示名']);
+    expect(new Set(outputColumns.map((column) => column.id)).size).toBe(outputColumns.length);
+    expect(outputColumns.map((column) => column.selectItemId)).toEqual([
+      'scope_main_output_output_1',
+      'scope_main_output_output_2',
+      'scope_main_output_output_3',
+      'scope_main_output_output_4',
+    ]);
+  });
 });

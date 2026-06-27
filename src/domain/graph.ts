@@ -13,6 +13,7 @@ export type GraphNodeData = {
   onToggleColumns?: (nodeId: string) => void;
   onCollapseUpstream?: (nodeId: string) => void;
   onExpandGroup?: (nodeId: string) => void;
+  onNodeInspect?: (nodeId: string) => void;
   onNodeSelect?: (nodeId: string) => void;
   selectedNodeId?: string | null;
   selectedColumnId?: string | null;

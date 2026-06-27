@@ -2632,23 +2632,25 @@ textarea {
 }
 
 .lineage-copy-button.lineage-output-title-delete-button {
-  border-color: #f87171;
-  background: #dc2626;
-  color: #fff;
+  border-color: transparent;
+  background: transparent;
+  color: #b91c1c;
 }
 
 .lineage-copy-button.lineage-output-title-delete-button:hover {
-  background: #b91c1c;
+  border-color: #fecaca;
+  background: #fff1f2;
 }
 
 .lineage-copy-button.lineage-output-title-delete-button.lineage-output-title-delete-confirm {
-  border-color: #991b1b;
-  background: #991b1b;
-  color: #fff;
+  border-color: #fca5a5;
+  background: #fee2e2;
+  color: #991b1b;
 }
 
 .lineage-copy-button.lineage-output-title-delete-button.lineage-output-title-delete-confirm:hover {
-  background: #7f1d1d;
+  border-color: #ef4444;
+  background: #fecaca;
 }
 
 .lineage-copy-button:disabled,
