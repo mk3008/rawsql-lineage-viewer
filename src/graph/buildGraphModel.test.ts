@@ -183,6 +183,37 @@ describe('buildGraphModel', () => {
     });
   });
 
+  it('renders predicate subquery edges as orange dashed lines', () => {
+    const { lineage } = analyzeSql(`
+      SELECT c.id, c.name
+      FROM customers c
+      WHERE EXISTS (
+        SELECT 1
+        FROM orders o
+        WHERE o.customer_id = c.id
+      )
+    `);
+    const graph = buildGraphModel(lineage);
+    const customersEdge = graph.edges.find((edge) => edge.id === 'table_customers-main_output');
+    const predicateSubqueryEdge = graph.edges.find((edge) => edge.id === 'table_orders-main_output');
+
+    expect(customersEdge?.style).toMatchObject({
+      stroke: '#059669',
+      strokeWidth: 1.5,
+    });
+    expect(customersEdge?.style?.strokeDasharray).toBeUndefined();
+    expect(predicateSubqueryEdge).toMatchObject({
+      data: {
+        lineageEdge: expect.objectContaining({ kind: 'predicate_subquery' }),
+      },
+      style: {
+        stroke: '#d97706',
+        strokeWidth: 1.5,
+        strokeDasharray: '6 5',
+      },
+    });
+  });
+
   it('renders parameter table sources for SELECT statements without FROM', () => {
     const { lineage } = analyzeSql('select :batch_id as batch_id');
     const graph = buildGraphModel(lineage, 'upstream');

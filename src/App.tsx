@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2, X } from 'lucide-react';
-import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection } from './components/LineageGraph';
+import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/buildGraphModel';
@@ -46,13 +46,15 @@ export function App() {
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(() => !readIsMobileLineageViewport());
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
-  const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
+  const [panelTab, setPanelTab] = useState<'sql' | 'inspector'>('sql');
+  const [sqlPanelTab, setSqlPanelTab] = useState<'open' | 'history'>('open');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
   const [activeInspectorCardColumnId, setActiveInspectorCardColumnId] = useState<string | null>(null);
   const [caseRuleSelection, setCaseRuleSelection] = useState<CaseRuleSelection | null>(null);
   const [autoInspectOutputNonce, setAutoInspectOutputNonce] = useState(0);
+  const [graphLoadNonce, setGraphLoadNonce] = useState(0);
   const [expandedExpressionColumnIds, setExpandedExpressionColumnIds] = useState<Set<string>>(() => new Set());
   const [graphFocusTarget, setGraphFocusTarget] = useState<{ nonce: number; nodeId: string } | null>(null);
   const [problemIntent, setProblemIntent] = useState<ProblemIntent>('logic_review');
@@ -142,7 +144,7 @@ export function App() {
   useEffect(() => {
     writeLegendPanelOpen(isLegendPanelOpen);
   }, [isLegendPanelOpen]);
-  const handleInspectorSelectionChange = useCallback((selection: InspectorSelection) => {
+  const handleInspectorSelectionChange = useCallback((selection: InspectorSelection, reason: InspectorSelectionChangeReason = 'sync') => {
     if (selection && !(selection.kind === 'node' && selection.node.type === 'output')) {
       setForcedInspectorSelection(null);
     }
@@ -161,7 +163,8 @@ export function App() {
       }
       return selection;
     });
-    if (selection && (!isMobileLineageViewport || selection.kind !== 'node' || selection.node.type !== 'output')) {
+    const shouldOpenInspector = selection && (!isMobileLineageViewport || reason === 'graph-column-selection');
+    if (shouldOpenInspector) {
       setIsPanelOpen(true);
       setPanelTab('inspector');
     }
@@ -258,6 +261,7 @@ export function App() {
 
     setSql(nextSql);
     setLastAnalyzedSql(nextSql);
+    setGraphLoadNonce((current) => current + 1);
     setCaseRuleSelection(null);
     setActiveInspectorCardId(null);
     setActiveInspectorCardColumnId(null);
@@ -401,43 +405,8 @@ export function App() {
                 <Info size={15} />
                 Inspector
               </button>
-              <button
-                aria-selected={panelTab === 'history'}
-                className={panelTab === 'history' ? 'active' : ''}
-                role="tab"
-                type="button"
-                onClick={() => setPanelTab('history')}
-              >
-                <Clock3 size={15} />
-                History
-              </button>
             </div>
-            {panelTab === 'sql' ? (
-              <div className="panel-heading-actions">
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() => {
-                    openSql(salesSummarySql);
-                  }}
-                >
-                  Demo
-                </button>
-                <button
-                  aria-label="Clear SQL editor"
-                  className="text-button"
-                  type="button"
-                  disabled={sql.length === 0}
-                  onClick={() => {
-                    setSql('');
-                    setShareStatus('idle');
-                  }}
-                >
-                  <Eraser size={13} />
-                  Clear
-                </button>
-              </div>
-            ) : isMobileInspectorActive ? (
+            {isMobileInspectorActive ? (
               <div className="panel-heading-actions">
                 <button
                   aria-label="Close inspector"
@@ -452,36 +421,102 @@ export function App() {
             ) : null}
           </div>
           {panelTab === 'sql' ? (
-            <div className="sql-tab-panel">
-              <div className="sql-editor-frame">
-                <SqlCodeMirror
-                  ariaLabel="SQL editor"
-                  className="sql-editor"
-                  editable
-                  minHeight="340px"
-                  value={sql}
-                  onChange={(value) => {
-                    setSql(value);
-                    setShareStatus('idle');
-                  }}
-                />
-              </div>
-              <div className="panel-actions">
+            <div className="sql-panel-tabs-layout">
+              <div className="panel-subtabs" role="tablist" aria-label="SQL tools">
                 <button
-                  className="primary-button"
+                  aria-selected={sqlPanelTab === 'open'}
+                  className={sqlPanelTab === 'open' ? 'active' : ''}
+                  role="tab"
                   type="button"
-                  onClick={() => {
-                    openSql(sql);
-                  }}
+                  onClick={() => setSqlPanelTab('open')}
                 >
-                  <Play size={15} fill="currentColor" />
-                  Analyze SQL
+                  <Code2 size={15} />
+                  Open
+                </button>
+                <button
+                  aria-selected={sqlPanelTab === 'history'}
+                  className={sqlPanelTab === 'history' ? 'active' : ''}
+                  role="tab"
+                  type="button"
+                  onClick={() => setSqlPanelTab('history')}
+                >
+                  <Clock3 size={15} />
+                  History
                 </button>
               </div>
-              <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
-                {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                <span>{error ? error : 'Parsed successfully'}</span>
-              </div>
+              {sqlPanelTab === 'open' ? (
+                <div className="sql-tab-panel">
+                  <div className="sql-editor-actions">
+                    <button
+                      className="text-button"
+                      type="button"
+                      onClick={() => {
+                        openSql(salesSummarySql);
+                      }}
+                    >
+                      Demo
+                    </button>
+                    <button
+                      aria-label="Clear SQL editor"
+                      className="text-button"
+                      type="button"
+                      disabled={sql.length === 0}
+                      onClick={() => {
+                        setSql('');
+                        setShareStatus('idle');
+                      }}
+                    >
+                      <Eraser size={13} />
+                      Clear
+                    </button>
+                  </div>
+                  <div className="sql-editor-frame">
+                    <SqlCodeMirror
+                      ariaLabel="SQL editor"
+                      className="sql-editor"
+                      editable
+                      minHeight="340px"
+                      value={sql}
+                      onChange={(value) => {
+                        setSql(value);
+                        setShareStatus('idle');
+                      }}
+                    />
+                  </div>
+                  <div className="panel-actions">
+                    <button
+                      className="primary-button"
+                      type="button"
+                      onClick={() => {
+                        openSql(sql);
+                      }}
+                    >
+                      <Play size={15} fill="currentColor" />
+                      Analyze SQL
+                    </button>
+                  </div>
+                  <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
+                    {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                    <span>{error ? error : 'Parsed successfully'}</span>
+                  </div>
+                </div>
+              ) : (
+                <SqlHistoryPanel
+                  history={sqlHistory}
+                  onClear={() => {
+                    setSqlHistory([]);
+                    writeSqlHistory([]);
+                  }}
+                  onOpen={openHistoryItem}
+                  onRemove={(id) => {
+                    setSqlHistory((current) => {
+                      const next = current.filter((item) => item.id !== id);
+                      writeSqlHistory(next);
+                      return next;
+                    });
+                  }}
+                />
+              )}
             </div>
           ) : panelTab === 'inspector' ? (
             adapterResult ? (
@@ -505,29 +540,14 @@ export function App() {
             ) : (
               <div className="lineage-inspector-empty">Analyze SQL to inspect lineage details.</div>
             )
-          ) : (
-            <SqlHistoryPanel
-              history={sqlHistory}
-              onClear={() => {
-                setSqlHistory([]);
-                writeSqlHistory([]);
-              }}
-              onOpen={openHistoryItem}
-              onRemove={(id) => {
-                setSqlHistory((current) => {
-                  const next = current.filter((item) => item.id !== id);
-                  writeSqlHistory(next);
-                  return next;
-                });
-              }}
-            />
-          )}
+          ) : null}
         </aside>
 
         <section className="canvas-area">
           {adapterResult ? (
             <>
               <LineageGraph
+                key={graphLoadNonce}
                 autoInspectOutputNonce={autoInspectOutputNonce}
                 caseRuleSelection={caseRuleSelection}
                 activeInspectorCardColumnId={activeInspectorCardColumnId}
@@ -711,8 +731,9 @@ function LegendPanel() {
       <section className="legend-panel-section">
         <h3>Lines</h3>
         <div className="legend-panel-list">
-          <span><i className="legend-line data" />Data flow</span>
-          <span><i className="legend-line outer" />Nullable flow</span>
+          <span><i className="legend-line data" />Inner join / Data flow</span>
+          <span><i className="legend-line outer" />Outer join</span>
+          <span><i className="legend-line predicate-subquery" />Predicate subquery</span>
         </div>
       </section>
       <section className="legend-panel-section">
@@ -744,6 +765,8 @@ function SqlHistoryPanel({
   onRemove: (id: string) => void;
 }) {
   const [sortMode, setSortMode] = useState<SqlHistorySortMode>(readSqlHistorySortMode);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+  const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
   const visibleHistory = useMemo(() => {
     if (sortMode === 'recent') {
       return history;
@@ -758,8 +781,60 @@ function SqlHistoryPanel({
     });
   }, [history, sortMode]);
 
+  useEffect(() => {
+    if (history.length === 0) {
+      setConfirmingClear(false);
+    }
+    if (confirmingRemoveId && !history.some((item) => item.id === confirmingRemoveId)) {
+      setConfirmingRemoveId(null);
+    }
+  }, [confirmingRemoveId, history]);
+
+  const handleOpen = (item: SqlHistoryItem) => {
+    setConfirmingClear(false);
+    setConfirmingRemoveId(null);
+    onOpen(item);
+  };
+
+  const requestClear = () => {
+    setConfirmingRemoveId(null);
+    setConfirmingClear(true);
+  };
+
+  const confirmClear = () => {
+    setConfirmingClear(false);
+    onClear();
+  };
+
+  const requestRemove = (id: string) => {
+    setConfirmingClear(false);
+    setConfirmingRemoveId(id);
+  };
+
+  const confirmRemove = (id: string) => {
+    setConfirmingRemoveId(null);
+    onRemove(id);
+  };
+
+  const cancelPendingDelete = () => {
+    setConfirmingClear(false);
+    setConfirmingRemoveId(null);
+  };
+
+  const cancelPendingDeleteOnOtherClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!confirmingClear && !confirmingRemoveId) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-sql-history-confirm-delete="true"]')) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    cancelPendingDelete();
+  };
+
   return (
-    <div className="sql-history" data-testid="sql-history">
+    <div className="sql-history" data-testid="sql-history" onClickCapture={cancelPendingDeleteOnOtherClick}>
       <div className="sql-history-heading">
         <div>
           <div className="lineage-inspector-kicker">History</div>
@@ -780,24 +855,40 @@ function SqlHistoryPanel({
               <option value="name">Name</option>
             </select>
           </label>
-          <button className="text-button" type="button" disabled={history.length === 0} onClick={onClear}>
-            <Trash2 size={13} />
-            Clear
-          </button>
+          {confirmingClear ? (
+            <span className="sql-history-confirm">
+              <button className="text-button sql-history-confirm-delete" type="button" data-sql-history-confirm-delete="true" onClick={confirmClear}>
+                <Trash2 size={13} />
+                Clear
+              </button>
+            </span>
+          ) : (
+            <button className="text-button" type="button" disabled={history.length === 0} onClick={requestClear}>
+              <Trash2 size={13} />
+              Clear
+            </button>
+          )}
         </div>
       </div>
       {history.length > 0 ? (
         <div className="sql-history-list">
           {visibleHistory.map((item) => (
             <article className="sql-history-item" key={item.id}>
-              <button className="sql-history-main" type="button" onClick={() => onOpen(item)}>
+              <button className="sql-history-main" type="button" onClick={() => handleOpen(item)}>
                 <span className="sql-history-title">{getSqlHistoryDisplayTitle(item)}</span>
                 <SqlCodeMirror className="sql-history-code" value={compactSql(item.sql)} />
               </button>
               <div className="sql-history-actions">
-                <button className="sql-history-action sql-history-remove" type="button" aria-label={`Remove ${item.title} from history`} onClick={() => onRemove(item.id)}>
-                  <Trash2 size={13} />
-                </button>
+                {confirmingRemoveId === item.id ? (
+                  <button className="sql-history-action sql-history-remove sql-history-confirm-action" type="button" data-sql-history-confirm-delete="true" aria-label={`Confirm removing ${getSqlHistoryDisplayTitle(item)} from history`} onClick={() => confirmRemove(item.id)}>
+                    <Trash2 size={13} />
+                    <span>Delete</span>
+                  </button>
+                ) : (
+                  <button className="sql-history-action sql-history-remove" type="button" aria-label={`Remove ${getSqlHistoryDisplayTitle(item)} from history`} onClick={() => requestRemove(item.id)}>
+                    <Trash2 size={13} />
+                  </button>
+                )}
               </div>
             </article>
           ))}
