@@ -1275,7 +1275,7 @@ describe('rawsqlAdapter', () => {
     expect(lineage.edges).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ source: 'table_customers', target: 'main_output', sourceAlias: 'c' }),
-        expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o' }),
+        expect.objectContaining({ source: 'table_orders', target: 'main_output', sourceAlias: 'o', kind: 'predicate_subquery' }),
       ]),
     );
     expect(output?.columns.find((column) => column.name === 'id')?.upstream).toEqual([{ nodeId: 'table_customers', columnName: 'id' }]);

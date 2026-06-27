@@ -322,7 +322,7 @@ function reverseLineageEdge(edge: LineageEdge): LineageEdge {
 }
 
 function toGraphEdge(edge: LineageEdge, flowDirection: GraphFlowDirection): GraphEdge {
-  const isNullableByOuterJoin = edge.joinNullability?.reason === 'outerJoin';
+  const lineStyle = getLineageEdgeLineStyle(edge);
   const source = flowDirection === 'upstream' ? edge.target : edge.source;
   const target = flowDirection === 'upstream' ? edge.source : edge.target;
   return {
@@ -338,10 +338,28 @@ function toGraphEdge(edge: LineageEdge, flowDirection: GraphFlowDirection): Grap
       lineageEdge: edge,
     },
     style: {
-      stroke: '#059669',
+      stroke: lineStyle.stroke,
       strokeWidth: 1.5,
-      strokeDasharray: isNullableByOuterJoin ? '8 5' : undefined,
+      strokeDasharray: lineStyle.strokeDasharray,
     },
+  };
+}
+
+function getLineageEdgeLineStyle(edge: LineageEdge): { stroke: string; strokeDasharray?: string } {
+  if (edge.kind === 'predicate_subquery') {
+    return {
+      stroke: '#d97706',
+      strokeDasharray: '6 5',
+    };
+  }
+  if (edge.joinNullability?.reason === 'outerJoin') {
+    return {
+      stroke: '#059669',
+      strokeDasharray: '8 5',
+    };
+  }
+  return {
+    stroke: '#059669',
   };
 }
 

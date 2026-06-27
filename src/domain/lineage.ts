@@ -1,7 +1,7 @@
 export type LineageNodeType = 'table' | 'cte' | 'derived' | 'scalar_subquery' | 'parameter_table' | 'output';
 
 export type LineageEdgeType = 'dataFlow' | 'expression' | 'unknown';
-export type LineageEdgeKind = 'correlation' | 'join_condition' | 'row_source' | 'subquery_value' | 'value_flow' | 'where_filter';
+export type LineageEdgeKind = 'correlation' | 'join_condition' | 'predicate_subquery' | 'row_source' | 'subquery_value' | 'value_flow' | 'where_filter';
 
 export interface LineageColumnRef {
   nodeId: string;

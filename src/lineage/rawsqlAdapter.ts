@@ -1789,12 +1789,14 @@ function collectNestedQueryLineage(
   if (!fromClause) {
     return [];
   }
+  const nestedEdgeKind = getNestedQueryEdgeKind(usageReason);
 
   const sources = [resolveSourceExpression(fromClause.source, cteNames, nodes, edges, options.scopes, warnings, derivedCounter, options.scalarSubqueryCounter, options.scopeCounter, recursiveRootId, options.schemaFacts)];
   addLineageEdge(edges, {
     source: sources[0].node.id,
     target: targetId,
     type: 'dataFlow',
+    kind: nestedEdgeKind,
     sourceAlias: sources[0].sourceAlias,
     recursive: sources[0].recursive ? { reason: 'cteSelfReference' } : undefined,
     confidence: 'medium',
@@ -1807,6 +1809,7 @@ function collectNestedQueryLineage(
       source: joinedSource.node.id,
       target: targetId,
       type: 'dataFlow',
+      kind: nestedEdgeKind,
       sourceAlias: joinedSource.sourceAlias,
       joinNullability: toJoinNullability(normalizeJoinType(join)),
       recursive: joinedSource.recursive ? { reason: 'cteSelfReference' } : undefined,
@@ -1839,6 +1842,13 @@ function collectNestedQueryLineage(
   }
 
   return mergeColumnRefs(resolveColumnReferences(collectColumnReferences(query), sourceTargets), nestedRefs);
+}
+
+function getNestedQueryEdgeKind(usageReason: LineageColumnUsageReason): LineageEdge['kind'] {
+  if (usageReason === 'join' || usageReason === 'where' || usageReason === 'having') {
+    return 'predicate_subquery';
+  }
+  return undefined;
 }
 
 function collectNestedSimpleSelectQueries(value: unknown): SimpleSelectQuery[] {

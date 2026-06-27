@@ -105,6 +105,8 @@ export type InspectorSelection =
     }
   | null;
 
+export type InspectorSelectionChangeReason = 'graph-column-selection' | 'graph-node-selection' | 'sync';
+
 export interface InspectorColumnItem {
   column: LineageColumn;
   lineage?: LineageModel;
@@ -171,7 +173,7 @@ export function LineageGraph({
   isGraphViewportVisible?: boolean;
   isMobileGraphDisplayMode?: boolean;
   lineage: LineageModel;
-  onInspectorSelectionChange?: (selection: InspectorSelection) => void;
+  onInspectorSelectionChange?: (selection: InspectorSelection, reason: InspectorSelectionChangeReason) => void;
   onProblemIntentChange?: (intent: ProblemIntent) => void;
   outputTitle?: string;
   problemIntent: ProblemIntent;
@@ -182,6 +184,7 @@ export function LineageGraph({
   const lastHandledAutoInspectOutputNonceRef = useRef<number | null>(null);
   const lastHandledFocusExpansionNonceRef = useRef<number | null>(null);
   const lastHandledFocusNonceRef = useRef<number | null>(null);
+  const pendingInspectorSelectionReasonRef = useRef<InspectorSelectionChangeReason | null>(null);
   const lastCommittedSelectionRef = useRef<GraphOriginSelection>({ kind: 'none' });
   const outputViewportCorrectionPendingRef = useRef(true);
   const draggedNodeIdsRef = useRef(new Set<string>());
@@ -223,6 +226,7 @@ export function LineageGraph({
   const hideableColumnNodeIds = useMemo(() => new Set(displayLineage.nodes.filter((node) => canHideColumns(node, flowDirection)).map((node) => node.id)), [displayLineage.nodes, flowDirection]);
   const [hiddenColumnNodeIds, setHiddenColumnNodeIds] = useState<Set<string>>(() => createDefaultHiddenColumnNodeIds(displayLineage.nodes, flowDirection));
   const [selectedColumn, setSelectedColumn] = useState<SelectedColumn | null>(null);
+  const [graphSelectionCommitId, setGraphSelectionCommitId] = useState(0);
   const [highlightTarget, setHighlightTarget] = useState<GraphHighlightTarget>(null);
   const [graphDisplaySnapshot, setGraphDisplaySnapshot] = useState<GraphDisplaySnapshot>({
     highlightTarget: null,
@@ -436,6 +440,7 @@ export function LineageGraph({
   }, []);
   const selectNode = useCallback((nodeId: string) => {
     suppressInitialOutputSelectionRef.current = false;
+    pendingInspectorSelectionReasonRef.current = 'graph-node-selection';
     if (collapsedLineage.groups.has(nodeId)) {
       expandGroup(nodeId);
     }
@@ -443,6 +448,7 @@ export function LineageGraph({
     const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
+    setGraphSelectionCommitId((current) => current + 1);
     if (selectionChanged) {
       scheduleAutoLayout('focus-change');
     }
@@ -462,6 +468,7 @@ export function LineageGraph({
   }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     suppressInitialOutputSelectionRef.current = false;
+    pendingInspectorSelectionReasonRef.current = 'graph-column-selection';
     const nextSelection: GraphOriginSelection = {
       columnId: column.id,
       columnName: column.name,
@@ -471,6 +478,7 @@ export function LineageGraph({
     const selectionChanged = !isSameGraphSelectionSnapshot(graphDisplaySnapshot.originSelection, nextSelection);
     commitSelectionHistory(nextSelection);
     applySelectionSnapshot(nextSelection);
+    setGraphSelectionCommitId((current) => current + 1);
     if (selectionChanged) {
       scheduleAutoLayout('focus-change');
     }
@@ -671,8 +679,10 @@ export function LineageGraph({
       return;
     }
     suppressInitialOutputSelectionRef.current = false;
-    onInspectorSelectionChange?.(inspectorSelection);
-  }, [initialOutputNodeId, inspectorSelection, onInspectorSelectionChange]);
+    const reason = pendingInspectorSelectionReasonRef.current ?? 'sync';
+    pendingInspectorSelectionReasonRef.current = null;
+    onInspectorSelectionChange?.(inspectorSelection, reason);
+  }, [graphSelectionCommitId, initialOutputNodeId, inspectorSelection, onInspectorSelectionChange]);
   useEffect(() => {
     if (!autoInspectOutputNonce || lastHandledAutoInspectOutputNonceRef.current === autoInspectOutputNonce) {
       return;
@@ -683,7 +693,7 @@ export function LineageGraph({
     if (outputNode) {
       suppressInitialOutputSelectionRef.current = false;
       inspectNode(outputNode.id);
-      onInspectorSelectionChange?.({ kind: 'node', node: outputNode });
+      onInspectorSelectionChange?.({ kind: 'node', node: outputNode }, 'sync');
     }
   }, [autoInspectOutputNonce, displayLineage.nodes, inspectNode, onInspectorSelectionChange]);
   const selectedCommentTargetIds = useMemo(() => {

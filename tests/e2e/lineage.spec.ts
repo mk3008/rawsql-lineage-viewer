@@ -71,6 +71,9 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(legendPanel).toBeVisible();
   await expect(legendPanel).toContainText('Node types');
   await expect(legendPanel).toContainText('Data flow');
+  await expect(legendPanel).toContainText('Inner join');
+  await expect(legendPanel).toContainText('Outer join');
+  await expect(legendPanel).toContainText('Predicate subquery');
   await expect(legendPanel).toContainText('Row Lineage badges');
   await expect(legendPanel).toContainText('WHERE / EXISTS may filter rows');
   await expect(legendPanel).toContainText('JOIN may drop or multiply rows');
@@ -265,22 +268,33 @@ test('uses graph-only mobile view before opening the full-width inspector', asyn
   await expect(page.locator('.react-flow__minimap')).toHaveCount(0);
 
   const ordersNode = page.getByTestId('rf__node-table_orders');
-  await ordersNode.getByRole('button', { name: 'orders', exact: true }).click();
-
   const inspector = page.getByTestId('lineage-inspector');
-  await expect(inspector.getByRole('heading', { name: 'orders' })).toBeVisible();
-  await expect(page.getByTestId('lineage-graph')).not.toBeVisible();
-  const inspectorBox = await inspector.boundingBox();
-  expect(inspectorBox).not.toBeNull();
-  expect(inspectorBox!.width).toBeGreaterThan(360);
-
-  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(ordersNode.getByRole('button', { name: 'order_date', exact: true })).toHaveCount(0);
+  await ordersNode.getByRole('button', { name: 'orders', exact: true }).click();
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
+  await expect(ordersNode.getByRole('button', { name: 'order_date', exact: true })).toBeVisible();
 
   const outputNode = page.getByTestId('rf__node-main_output');
   await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();
   await expect(inspector.getByRole('heading', { name: 'customer_name' })).toBeVisible();
+  const inspectorBox = await inspector.boundingBox();
+  expect(inspectorBox).not.toBeNull();
+  expect(inspectorBox!.width).toBeGreaterThan(360);
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Collapse groups' }).click();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
+
+  await page.getByLabel('Focus', { exact: true }).selectOption('missing_rows');
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
+  await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
+
+  await outputNode.getByRole('button', { name: 'payment_status', exact: true }).click();
+  await expect(inspector.getByRole('heading', { name: 'payment_status' })).toBeVisible();
+
   await inspector.locator('.lineage-inspector-source-group-selectable').first().click();
   await page.getByRole('button', { name: 'Close inspector' }).click();
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
@@ -508,6 +522,9 @@ test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) =>
   await expect(ordersNode).toBeVisible();
   await expect(page.getByTestId('rf__edge-table_customers-main_output')).toBeAttached();
   await expect(page.getByTestId('rf__edge-table_orders-main_output')).toBeAttached();
+  const predicateSubqueryStyle = await page.getByTestId('rf__edge-table_orders-main_output').locator('.react-flow__edge-path').first().getAttribute('style');
+  expect(predicateSubqueryStyle).toContain('stroke: rgb(217, 119, 6)');
+  expect(predicateSubqueryStyle).toContain('stroke-dasharray');
   await page.getByRole('checkbox', { name: 'Show aliases' }).check();
   await expect(page.locator('.react-flow__edge-text').filter({ hasText: 'o' })).toBeVisible();
   await expect(outputNode.getByText('Filter')).toHaveCount(0);
@@ -1269,12 +1286,20 @@ test('records analyzed SQL in the history tab and can reopen it', async ({ page 
   await page.getByRole('textbox', { name: 'SQL editor' }).fill('SELECT a.id FROM accounts a');
   await page.getByRole('button', { name: 'Analyze SQL' }).click();
   await expect(page.getByTestId('rf__node-table_accounts')).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_accounts-main_output')).toBeAttached();
+  await expect(page.getByTestId('rf__node-table_users')).toHaveCount(0);
+  await expect(page.getByTestId('rf__edge-table_users-main_output')).toHaveCount(0);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await page.getByTestId('rf__node-main_output').getByRole('button', { name: 'Final Result', exact: true }).click();
   await expect(page.locator('.lineage-inspector h2')).toHaveText('Final Result');
 
   await page.getByRole('tab', { name: 'History' }).click();
   await history.locator('.sql-history-main').filter({ hasText: 'Users report v2' }).click();
   await expect(page.getByTestId('rf__node-table_users')).toBeVisible();
+  await expect(page.getByTestId('rf__edge-table_users-main_output')).toBeAttached();
+  await expect(page.getByTestId('rf__node-table_accounts')).toHaveCount(0);
+  await expect(page.getByTestId('rf__edge-table_accounts-main_output')).toHaveCount(0);
+  await expect(page.locator('.react-flow__edge')).toHaveCount(1);
   await expect(page.getByRole('tab', { name: 'Inspector' })).toHaveAttribute('aria-selected', 'true');
   await expect(page.locator('.lineage-inspector')).toContainText('Users report v2');
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'Users report v2', exact: true })).toBeVisible();

@@ -464,7 +464,12 @@ textarea {
 }
 
 .legend-line.outer {
-  border-color: #64748b;
+  border-color: #059669;
+  border-top-style: dashed;
+}
+
+.legend-line.predicate-subquery {
+  border-color: #d97706;
   border-top-style: dashed;
 }
 
@@ -1875,6 +1880,16 @@ textarea {
   gap: 8px;
 }
 
+.sql-history-confirm {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sql-history-confirm-delete {
+  color: #b91c1c;
+}
+
 .sql-history-sort {
   display: inline-flex;
   align-items: center;
@@ -2012,6 +2027,16 @@ textarea {
 .sql-history-remove:hover {
   background: #fee2e2;
   color: #b91c1c;
+}
+
+.sql-history-confirm-action {
+  grid-auto-flow: column;
+  gap: 4px;
+  width: 68px;
+  padding: 0 8px;
+  color: #b91c1c;
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .lineage-node {
