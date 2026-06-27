@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { SelectValueCollector, SqlParser } from 'rawsql-ts';
+import { SelectOutputCollector, SqlParser } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
 import { buildColumnDiagnosticPacket } from './diagnostics';
 import { analyzeSql } from './rawsqlAdapter';
@@ -215,7 +215,7 @@ describe('schema facts', () => {
     );
   });
 
-  it('matches rawsql-ts SelectValueCollector wildcard names for representative sources', () => {
+  it('matches rawsql-ts SelectOutputCollector wildcard names for representative sources', () => {
     const facts = parseSchemaFactsFromDdl([{
       sql: `
         create table public.customers (id int, name text);
@@ -254,7 +254,7 @@ describe('schema facts', () => {
     expect(adapterColumns).toEqual(rawsqlColumns);
   });
 
-  it('preserves rawsql-ts wildcard choices while adding LineageModel metadata', () => {
+  it('preserves rawsql-ts duplicate wildcard outputs while adding LineageModel metadata', () => {
     const facts = parseSchemaFactsFromDdl([{
       sql: `
         create table customers (id int, name text);
@@ -264,7 +264,7 @@ describe('schema facts', () => {
     const sql = 'select * from customers c join orders o on o.customer_id = c.id';
     const rawsqlColumns = collectRawsqlSelectValues(sql, facts);
     const { lineage } = analyzeSql(sql, { schemaFacts: facts });
-    const outputId = lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === 'id');
+    const outputIds = lineage.nodes.find((node) => node.id === 'main_output')?.columns.filter((column) => column.name === 'id');
     const packet = buildColumnDiagnosticPacket(lineage, {
       columnName: 'id',
       nodeId: 'main_output',
@@ -273,24 +273,34 @@ describe('schema facts', () => {
 
     expect(rawsqlColumns.filter((column) => column.name === 'id')).toEqual([
       { name: 'id', sql: 'c.id' },
+      { name: 'id', sql: 'o.id' },
     ]);
-    expect(rawsqlColumns).not.toContainEqual({ name: 'id', sql: 'o.id' });
-    expect(lineage.analysisWarnings).toEqual(expect.arrayContaining([
+    expect(lineage.analysisWarnings).not.toEqual(expect.arrayContaining([
       expect.objectContaining({
         code: 'rawsql_duplicate_output_columns_deduped',
-        message: expect.stringContaining('id'),
       }),
     ]));
-    expect(outputId).toMatchObject({
-      name: 'id',
-      outputIndex: 0,
-      selectItemId: 'scope_main_output_output_1',
-      scopeId: 'scope_main_output',
-      upstream: [
-        { columnName: 'id', nodeId: 'table_customers' },
-      ],
-    });
-    expect(outputId?.upstream).not.toEqual(expect.arrayContaining([
+    expect(outputIds).toEqual([
+      expect.objectContaining({
+        name: 'id',
+        outputIndex: 0,
+        selectItemId: 'scope_main_output_output_1',
+        scopeId: 'scope_main_output',
+        upstream: [
+          { columnName: 'id', nodeId: 'table_customers' },
+        ],
+      }),
+      expect.objectContaining({
+        name: 'id',
+        outputIndex: 2,
+        selectItemId: 'scope_main_output_output_3',
+        scopeId: 'scope_main_output',
+        upstream: [
+          { columnName: 'id', nodeId: 'table_orders' },
+        ],
+      }),
+    ]);
+    expect(outputIds?.[0]?.upstream).not.toEqual(expect.arrayContaining([
       { columnName: 'id', nodeId: 'table_orders' },
     ]));
     expect(packet.target).toMatchObject({
@@ -319,7 +329,7 @@ function collectRawsqlSelectValueNames(sql: string, facts: ReturnType<typeof par
 
 function collectRawsqlSelectValues(sql: string, facts: ReturnType<typeof parseSchemaFactsFromDdl>): Array<{ name: string; sql: string }> {
   const query = SqlParser.parse(sql);
-  return new SelectValueCollector(createTableColumnResolver(facts))
+  return new SelectOutputCollector(createTableColumnResolver(facts))
     .collect(query)
     .map((value) => ({
       name: value.name,
