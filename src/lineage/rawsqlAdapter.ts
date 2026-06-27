@@ -9,7 +9,7 @@ import {
   InlineQuery,
   ParenSource,
   SelectQueryParser,
-  SelectValueCollector,
+  SelectOutputCollector,
   SimpleSelectQuery,
   SqlParser,
   SqlFormatter,
@@ -1375,12 +1375,11 @@ function collectRawsqlExpandedSelectColumns(
   scopeId: string,
 ): LineageColumn[] {
   const sourceTargets = toSourceReferenceTargets(sources);
-  const rawsqlValues = new SelectValueCollector(
+  const rawsqlColumns = new SelectOutputCollector(
     deps.schemaFacts ? createTableColumnResolver(deps.schemaFacts) : null,
   ).collect(query);
-  warnIfRawsqlDedupedWildcardColumns(query, sources, rawsqlValues.map((value) => value.name), deps);
 
-  if (rawsqlValues.length === 0) {
+  if (rawsqlColumns.length === 0) {
     deps.addWarning({
       code: 'wildcard_unresolved_without_schema',
       message: 'Wildcard columns could not be expanded because schema facts were not provided or the source columns are unknown.',
@@ -1388,19 +1387,19 @@ function collectRawsqlExpandedSelectColumns(
     return [];
   }
 
-  return rawsqlValues.map((value, index) => {
-    const upstream = mergeColumnRefs(resolveColumnReferences(value.value, sourceTargets), deps.collectNestedExpressionLineage(value.value));
-    const matchingItem = findSelectItemForRawsqlValue(query, value.value);
+  return rawsqlColumns.map((column) => {
+    const upstream = mergeColumnRefs(resolveColumnReferences(column.value, sourceTargets), deps.collectNestedExpressionLineage(column.value));
+    const matchingItem = findSelectItemForRawsqlValue(query, column.value);
     const comments = matchingItem ? deps.extractSelectItemComments(query.selectClause.items, query.selectClause.items.indexOf(matchingItem)) : undefined;
     return {
       id: '',
-      name: value.name,
+      name: column.name,
       comments,
-      caseRules: deps.collectExpressionBreakdownRules(value.value, sources),
-      expressionTree: deps.collectExpressionTree(value.value, sources),
-      expressionSql: deps.formatExpressionSql(value.value),
-      outputIndex: index,
-      selectItemId: createSelectItemId(scopeId, index),
+      caseRules: deps.collectExpressionBreakdownRules(column.value, sources),
+      expressionTree: deps.collectExpressionTree(column.value, sources),
+      expressionSql: deps.formatExpressionSql(column.value),
+      outputIndex: column.outputIndex,
+      selectItemId: createSelectItemId(scopeId, column.outputIndex),
       scopeId,
       upstream,
       usage: matchingItem && isGroupedSelectItem(matchingItem.value, query) ? { role: 'condition', reasons: ['groupBy'] } : undefined,
@@ -1410,46 +1409,6 @@ function collectRawsqlExpandedSelectColumns(
 
 function createSelectItemId(scopeId: string, outputIndex: number): string {
   return `${scopeId}_output_${outputIndex + 1}`;
-}
-
-function warnIfRawsqlDedupedWildcardColumns(
-  query: SimpleSelectQuery,
-  sources: ResolvedSource[],
-  rawsqlColumnNames: string[],
-  deps: OutputColumnDeps,
-): void {
-  if (!deps.schemaFacts) {
-    return;
-  }
-
-  const expectedColumns = collectExpectedWildcardColumnNames(query, sources);
-  if (expectedColumns.length === 0 || rawsqlColumnNames.length >= expectedColumns.length) {
-    return;
-  }
-
-  const duplicateNames = [...new Set(expectedColumns.filter((name, index) => expectedColumns.indexOf(name) !== index))];
-  if (duplicateNames.length === 0) {
-    return;
-  }
-
-  deps.addWarning({
-    code: 'rawsql_duplicate_output_columns_deduped',
-    message: `rawsql-ts returned ${rawsqlColumnNames.length} wildcard output column(s), while schema facts indicate ${expectedColumns.length} source column(s). Duplicate output column name(s) appear to have been deduplicated by rawsql-ts: ${duplicateNames.join(', ')}.`,
-  });
-}
-
-function collectExpectedWildcardColumnNames(query: SimpleSelectQuery, sources: ResolvedSource[]): string[] {
-  return query.selectClause.items.flatMap((item) => {
-    if (!(item.value instanceof ColumnReference) || item.value.column.name !== '*') {
-      return [];
-    }
-
-    const qualifier = getWildcardQualifier(item.value);
-    const matchingSources = qualifier
-      ? sources.filter((source) => source.aliases.some((alias) => sameIdentifier(alias, qualifier)))
-      : sources;
-    return matchingSources.flatMap((source) => source.node.columns.map((column) => column.name));
-  });
 }
 
 function getWildcardQualifier(reference: ColumnReference): string | undefined {
@@ -1483,7 +1442,7 @@ function splitAndConditions(condition: unknown): unknown[] {
 }
 
 // SQL analysis is owned by rawsql-ts. Wildcard select items are expanded through
-// SelectValueCollector above; the lineage adapter only enriches those results
+// SelectOutputCollector above; the lineage adapter only enriches those results
 // with scopeId, nodeId/upstream mapping, usage metadata, and diagnostics.
 
 function getSelectItemOutputName(item: SimpleSelectQuery['selectClause']['items'][number], index: number): string {
@@ -1884,7 +1843,8 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
   if (!node) {
     return;
   }
-  const seen = new Set(node.columns.map((column) => column.name));
+  const duplicateOutputNames = collectDuplicateOutputColumnNames(columns);
+  const seen = new Set(node.columns.map((column) => columnStorageKey(column, duplicateOutputNames)));
   const nextColumns = [...node.columns];
   for (const column of columns) {
     const name = typeof column === 'string' ? column : column.name;
@@ -1898,10 +1858,11 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     const upstream = typeof column === 'string' ? undefined : column.upstream;
     const unresolvedUpstream = typeof column === 'string' ? undefined : column.unresolvedUpstream;
     const usage = typeof column === 'string' ? undefined : column.usage;
-    if (!seen.has(name)) {
-      seen.add(name);
+    const key = columnStorageKey({ name, outputIndex }, duplicateOutputNames);
+    if (!seen.has(key)) {
+      seen.add(key);
       nextColumns.push({
-        id: `${nodeId}.${sanitizeId(name)}`,
+        id: duplicateOutputNames.has(name) && outputIndex !== undefined ? `${nodeId}.${sanitizeId(name)}.${outputIndex + 1}` : `${nodeId}.${sanitizeId(name)}`,
         name,
         comments,
         caseRules,
@@ -1915,7 +1876,7 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
         usage,
       });
     } else {
-      const existing = nextColumns.find((item) => item.name === name);
+      const existing = nextColumns.find((item) => columnStorageKey(item, duplicateOutputNames) === key);
       if (existing && upstream && upstream.length > 0) {
         existing.upstream = mergeColumnRefs(existing.upstream ?? [], upstream);
       }
@@ -1949,6 +1910,21 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
     }
   }
   node.columns = nextColumns;
+}
+
+function collectDuplicateOutputColumnNames(columns: Array<string | LineageColumn>): Set<string> {
+  const counts = new Map<string, number>();
+  for (const column of columns) {
+    if (typeof column === 'string' || column.outputIndex === undefined) {
+      continue;
+    }
+    counts.set(column.name, (counts.get(column.name) ?? 0) + 1);
+  }
+  return new Set([...counts].filter(([, count]) => count > 1).map(([name]) => name));
+}
+
+function columnStorageKey(column: Pick<LineageColumn, 'name' | 'outputIndex'>, duplicateOutputNames: Set<string>): string {
+  return duplicateOutputNames.has(column.name) && column.outputIndex !== undefined ? `${column.name}:${column.outputIndex}` : column.name;
 }
 
 function classifyColumnUsage(nodes: Map<string, LineageNode>): void {
