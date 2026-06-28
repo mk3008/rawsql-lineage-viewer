@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Play, Share2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -13,6 +13,7 @@ const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
 const sqlHistorySortStorageKey = 'rawsql-lineage-viewer:sql-history-sort';
 const legendPanelStorageKey = 'rawsql-lineage-viewer:legend-panel-open';
 const inspectorCardHistoryStateKey = 'rawsqlLineageViewerInspectorCard';
+const mobileInspectorHistoryStateKey = 'rawsqlLineageViewerMobileInspector';
 const mobileLineageViewportQuery = '(max-width: 860px)';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
@@ -67,6 +68,7 @@ export function App() {
   const pendingAutoInspectOutputNonceRef = useRef<number | null>(null);
   const suppressNullInspectorSelectionRef = useRef(false);
   const lastCommittedInspectorCardRef = useRef<InspectorCardSelection | null>(null);
+  const lastCommittedMobileInspectorOpenRef = useRef(false);
 
   const analysis = useMemo(() => {
     try {
@@ -144,6 +146,41 @@ export function App() {
   useEffect(() => {
     writeLegendPanelOpen(isLegendPanelOpen);
   }, [isLegendPanelOpen]);
+  const applyMobileInspectorHistoryState = useCallback((isOpen: boolean) => {
+    lastCommittedMobileInspectorOpenRef.current = isOpen;
+    if (!isMobileLineageViewport) {
+      return;
+    }
+    if (isOpen) {
+      setIsPanelOpen(true);
+      setPanelTab('inspector');
+    } else {
+      setIsPanelOpen(false);
+    }
+  }, [isMobileLineageViewport]);
+  const commitMobileInspectorHistory = useCallback((isOpen: boolean, mode: 'push' | 'replace' = 'push') => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (mode === 'push' && lastCommittedMobileInspectorOpenRef.current === isOpen) {
+      return;
+    }
+
+    const currentState = isRecord(window.history.state) ? window.history.state : {};
+    const nextState = { ...currentState };
+    if (isOpen) {
+      nextState[mobileInspectorHistoryStateKey] = true;
+    } else {
+      delete nextState[mobileInspectorHistoryStateKey];
+    }
+
+    if (mode === 'replace') {
+      window.history.replaceState(nextState, '', window.location.href);
+    } else {
+      window.history.pushState(nextState, '', window.location.href);
+    }
+    lastCommittedMobileInspectorOpenRef.current = isOpen;
+  }, []);
   const handleInspectorSelectionChange = useCallback((selection: InspectorSelection, reason: InspectorSelectionChangeReason = 'sync') => {
     if (selection && !(selection.kind === 'node' && selection.node.type === 'output')) {
       setForcedInspectorSelection(null);
@@ -169,10 +206,13 @@ export function App() {
       reason === 'graph-node-inspection'
     );
     if (shouldOpenInspector) {
+      if (isMobileLineageViewport) {
+        commitMobileInspectorHistory(true);
+      }
       setIsPanelOpen(true);
       setPanelTab('inspector');
     }
-  }, [isMobileLineageViewport]);
+  }, [commitMobileInspectorHistory, isMobileLineageViewport]);
   const applyInspectorCardSelection = useCallback((selection: InspectorCardSelection | null) => {
     setActiveInspectorCardId(selection?.cardId ?? null);
     setActiveInspectorCardColumnId(selection?.columnId ?? null);
@@ -224,18 +264,24 @@ export function App() {
     }
 
     const currentSelection = readInspectorCardHistoryState(window.history.state);
+    const currentMobileInspectorOpen = readMobileInspectorHistoryState(window.history.state);
     lastCommittedInspectorCardRef.current = currentSelection;
+    lastCommittedMobileInspectorOpenRef.current = currentMobileInspectorOpen;
     applyInspectorCardSelection(currentSelection);
+    applyMobileInspectorHistoryState(currentMobileInspectorOpen);
 
     const handlePopState = (event: PopStateEvent) => {
       const selection = readInspectorCardHistoryState(event.state);
+      const mobileInspectorOpen = readMobileInspectorHistoryState(event.state);
       lastCommittedInspectorCardRef.current = selection;
+      lastCommittedMobileInspectorOpenRef.current = mobileInspectorOpen;
       applyInspectorCardSelection(selection);
+      applyMobileInspectorHistoryState(mobileInspectorOpen);
     };
 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
-  }, [applyInspectorCardSelection]);
+  }, [applyInspectorCardSelection, applyMobileInspectorHistoryState]);
   const toggleExpressionBreakdown = useCallback((columnId: string) => {
     setCaseRuleSelection(null);
     setExpandedExpressionColumnIds((current) => {
@@ -435,7 +481,7 @@ export function App() {
                   onClick={() => setSqlPanelTab('open')}
                 >
                   <Code2 size={15} />
-                  Open
+                  New
                 </button>
                 <button
                   aria-selected={sqlPanelTab === 'history'}
@@ -528,6 +574,7 @@ export function App() {
                 activeInspectorCardId={activeInspectorCardId}
                 activeCaseRule={caseRuleSelection}
                 expandedExpressionColumnIds={expandedExpressionColumnIds}
+                hideColumnDetailTabs={isMobileLineageViewport}
                 lineage={adapterResult.lineage}
                 onClearCaseRule={() => setCaseRuleSelection(null)}
                 onClearInspectorCard={clearInspectorCard}
@@ -550,6 +597,7 @@ export function App() {
         <section className="canvas-area">
           {adapterResult ? (
             <>
+              <CurrentSqlHeader outputTitle={outputTitle} onDelete={deleteOutputTitle} onRename={renameOutputTitle} />
               <LineageGraph
                 key={graphLoadNonce}
                 autoInspectOutputNonce={autoInspectOutputNonce}
@@ -644,6 +692,129 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
     <span className="graph-info-warning" title={title}>
       {label} <strong>{value}</strong>
     </span>
+  );
+}
+
+function CurrentSqlHeader({
+  outputTitle,
+  onDelete,
+  onRename,
+}: {
+  outputTitle: string;
+  onDelete: () => void;
+  onRename: (title: string) => void;
+}) {
+  const [isEditing, setIsEditing] = useState(false);
+  const [isConfirmingDelete, setIsConfirmingDelete] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(outputTitle);
+
+  useEffect(() => {
+    if (!isEditing) {
+      setDraftTitle(outputTitle);
+    }
+  }, [isEditing, outputTitle]);
+  useEffect(() => {
+    setIsConfirmingDelete(false);
+  }, [outputTitle]);
+
+  const saveTitle = () => {
+    onRename(draftTitle);
+    setIsEditing(false);
+  };
+  const cancelEdit = () => {
+    setDraftTitle(outputTitle);
+    setIsEditing(false);
+  };
+  const requestDelete = () => {
+    if (!isConfirmingDelete) {
+      setIsConfirmingDelete(true);
+      return;
+    }
+    onDelete();
+    setIsConfirmingDelete(false);
+  };
+  const cancelDeleteOnOtherClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!isConfirmingDelete) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-current-sql-delete-confirm="true"]')) {
+      return;
+    }
+    setIsConfirmingDelete(false);
+  };
+
+  return (
+    <div className="current-sql-header" onClickCapture={cancelDeleteOnOtherClick}>
+      <div className="current-sql-title-block">
+        {isEditing ? (
+          <form
+            className="current-sql-title-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              saveTitle();
+            }}
+          >
+            <input
+              aria-label="Opened SQL title"
+              autoFocus
+              className="lineage-output-title-input current-sql-title-input"
+              value={draftTitle}
+              onChange={(event) => setDraftTitle(event.target.value)}
+              onFocus={(event) => event.currentTarget.select()}
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  cancelEdit();
+                  return;
+                }
+                if (event.key === 'Enter' && !event.nativeEvent.isComposing) {
+                  event.preventDefault();
+                  saveTitle();
+                }
+              }}
+            />
+            <button className="lineage-copy-button" type="submit">Save</button>
+            <button className="lineage-copy-button" type="button" onClick={cancelEdit}>Cancel</button>
+          </form>
+        ) : (
+          <button
+            className="current-sql-title current-sql-title-button"
+            title="Double-click to rename"
+            type="button"
+            onDoubleClick={() => {
+              setIsConfirmingDelete(false);
+              setIsEditing(true);
+            }}
+          >
+            {outputTitle}
+          </button>
+        )}
+      </div>
+      {!isEditing ? (
+        <div className="current-sql-actions">
+          <button
+            className="lineage-copy-button"
+            type="button"
+            onClick={() => {
+              setIsConfirmingDelete(false);
+              setIsEditing(true);
+            }}
+          >
+            <Pencil size={12} aria-hidden="true" />
+            <span>Edit</span>
+          </button>
+          <button
+            className={`lineage-copy-button lineage-output-title-delete-button ${isConfirmingDelete ? 'lineage-output-title-delete-confirm' : ''}`}
+            data-current-sql-delete-confirm="true"
+            type="button"
+            onClick={requestDelete}
+          >
+            <Trash2 size={12} aria-hidden="true" />
+            <span>{isConfirmingDelete ? 'Confirm' : 'Delete'}</span>
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1211,6 +1382,10 @@ function readInspectorCardHistoryState(state: unknown): InspectorCardSelection |
     columnId: typeof value.columnId === 'string' ? value.columnId : undefined,
     focusNodeId: typeof value.focusNodeId === 'string' ? value.focusNodeId : undefined,
   };
+}
+
+function readMobileInspectorHistoryState(state: unknown) {
+  return isRecord(state) && state[mobileInspectorHistoryStateKey] === true;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
