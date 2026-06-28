@@ -19,6 +19,8 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const hasForcedVisibleColumns = node.columns.some((column) => forcedVisibleColumnIds.has(column.id));
   const shouldRenderColumns = columnsVisible || columnsExpanded || hasForcedVisibleColumns;
   const nodeRef = useRef<HTMLDivElement>(null);
+  const lastTitleTapRef = useRef<{ at: number; nodeId: string } | null>(null);
+  const lastTitleInspectAtRef = useRef(0);
   const isPassthroughOnly =
     shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
   const populationImpactLabels = data.highlightedNodeImpactLabels?.get(node.id) ?? [];
@@ -47,7 +49,29 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
           className={`lineage-node-title lineage-node-title-button ${data.selectedNodeId === node.id ? 'lineage-comment-selected' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
+            const now = Date.now();
+            const lastTap = lastTitleTapRef.current;
+            if (data.onNodeInspect && lastTap?.nodeId === node.id && now - lastTap.at <= 320) {
+              lastTitleTapRef.current = null;
+              lastTitleInspectAtRef.current = now;
+              data.onNodeInspect(node.id);
+              return;
+            }
+            lastTitleTapRef.current = { at: now, nodeId: node.id };
             data.onNodeSelect?.(node.id);
+          }}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            if (!data.onNodeInspect) {
+              return;
+            }
+            const now = Date.now();
+            if (now - lastTitleInspectAtRef.current <= 320) {
+              return;
+            }
+            lastTitleInspectAtRef.current = now;
+            lastTitleTapRef.current = null;
+            data.onNodeInspect(node.id);
           }}
           type="button"
         >

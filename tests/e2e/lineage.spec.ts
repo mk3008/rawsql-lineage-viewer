@@ -274,6 +274,10 @@ test('uses graph-only mobile view before opening the full-width inspector', asyn
   await expect(page.getByTestId('lineage-graph')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'Inspector' })).not.toBeVisible();
   await expect(ordersNode.getByRole('button', { name: 'order_date', exact: true })).toBeVisible();
+  await ordersNode.getByRole('button', { name: 'orders', exact: true }).dblclick();
+  await expect(inspector.getByRole('heading', { name: 'orders' })).toBeVisible();
+  await page.getByRole('button', { name: 'Close inspector' }).click();
+  await expect(page.getByTestId('lineage-graph')).toBeVisible();
 
   const outputNode = page.getByTestId('rf__node-main_output');
   await outputNode.getByRole('button', { name: 'customer_name', exact: true }).click();

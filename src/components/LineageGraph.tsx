@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react';
 import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, KeyboardEvent } from 'react';
+import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, collectUnreachableCteNodeIds, type GraphFlowDirection } from '../graph/buildGraphModel';
@@ -105,7 +105,7 @@ export type InspectorSelection =
     }
   | null;
 
-export type InspectorSelectionChangeReason = 'graph-column-selection' | 'graph-node-selection' | 'sync';
+export type InspectorSelectionChangeReason = 'graph-column-selection' | 'graph-node-inspection' | 'graph-node-selection' | 'sync';
 
 export interface InspectorColumnItem {
   column: LineageColumn;
@@ -466,6 +466,11 @@ export function LineageGraph({
       scheduleAutoLayout('focus-change');
     }
   }, [applySelectionSnapshot, collapsedLineage.groups, commitSelectionHistory, expandGroup, graphDisplaySnapshot.originSelection, scheduleAutoLayout]);
+  const inspectNodeFromGraph = useCallback((nodeId: string) => {
+    pendingInspectorSelectionReasonRef.current = 'graph-node-inspection';
+    inspectNode(nodeId);
+    setGraphSelectionCommitId((current) => current + 1);
+  }, [inspectNode]);
   const selectColumn = useCallback((nodeId: string, column: LineageColumn) => {
     suppressInitialOutputSelectionRef.current = false;
     pendingInspectorSelectionReasonRef.current = 'graph-column-selection';
@@ -771,6 +776,7 @@ export function LineageGraph({
           forcedVisibleColumnIds,
           onCollapseUpstream: collapseUpstream,
           onExpandGroup: expandGroup,
+          onNodeInspect: isMobileGraphDisplayMode ? inspectNodeFromGraph : undefined,
           onNodeSelect: selectNode,
           onColumnSelect: selectColumn,
           dimmed: activeGraphSelection ? !activeGraphSelection.activeNodeIds.has(node.id) : false,
@@ -814,6 +820,8 @@ export function LineageGraph({
       graph.nodes,
       hiddenColumnNodeIds,
       hideableColumnNodeIds,
+      inspectNodeFromGraph,
+      isMobileGraphDisplayMode,
       selectNode,
       selectColumn,
       closeComment,
@@ -1321,6 +1329,7 @@ function cssEscape(value: string) {
 export function LineageInspector({
   activeCaseRule,
   expandedExpressionColumnIds,
+  hideColumnDetailTabs = false,
   lineage,
   onClearCaseRule,
   onFocusNode,
@@ -1336,6 +1345,7 @@ export function LineageInspector({
   activeInspectorCardId?: string | null;
   activeCaseRule?: CaseRuleSelection | null;
   expandedExpressionColumnIds?: Set<string>;
+  hideColumnDetailTabs?: boolean;
   lineage: LineageModel;
   onClearInspectorCard?: (recordHistory?: boolean) => void;
   onClearCaseRule?: () => void;
@@ -1392,6 +1402,15 @@ export function LineageInspector({
     onDeleteOutputTitle?.();
     setConfirmDeleteOutputTitle(false);
   };
+  const cancelDeleteOutputTitleOnOtherClick = (event: MouseEvent<HTMLDivElement>) => {
+    if (!confirmDeleteOutputTitle) {
+      return;
+    }
+    if ((event.target as HTMLElement).closest('[data-output-title-delete-confirm="true"]')) {
+      return;
+    }
+    setConfirmDeleteOutputTitle(false);
+  };
 
   const copyCteSql = async () => {
     const sql = selection?.kind === 'node' ? getNodeSql(selection.node) : undefined;
@@ -1410,7 +1429,7 @@ export function LineageInspector({
   };
 
   return (
-    <div className="lineage-inspector" data-testid="lineage-inspector">
+    <div className="lineage-inspector" data-testid="lineage-inspector" onClickCapture={cancelDeleteOutputTitleOnOtherClick}>
       <div className="lineage-inspector-header">
         <div className="lineage-inspector-title-block">
           <div className="lineage-inspector-kicker">Inspector</div>
@@ -1467,6 +1486,7 @@ export function LineageInspector({
               {canDeleteOutput ? (
                 <button
                   className={`lineage-copy-button lineage-output-title-delete-button ${confirmDeleteOutputTitle ? 'lineage-output-title-delete-confirm' : ''}`}
+                  data-output-title-delete-confirm="true"
                   type="button"
                   onClick={requestDeleteOutputTitle}
                 >
@@ -1493,6 +1513,7 @@ export function LineageInspector({
             problemIntent={problemIntent}
             selection={selection}
             commentMode={commentMode}
+            hideDetailTabs={hideColumnDetailTabs}
           />
         ) : (
           <NodeInspector commentMode={commentMode} copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
@@ -1508,6 +1529,7 @@ function ColumnInspector({
   activeCaseRule,
   commentMode,
   expandedExpressionColumnIds,
+  hideDetailTabs = false,
   lineage,
   onClearCaseRule,
   onFocusNode,
@@ -1522,6 +1544,7 @@ function ColumnInspector({
   activeCaseRule?: CaseRuleSelection | null;
   commentMode: InspectorCommentMode;
   expandedExpressionColumnIds?: Set<string>;
+  hideDetailTabs?: boolean;
   lineage: LineageModel;
   onClearCaseRule?: () => void;
   onClearInspectorCard?: (recordHistory?: boolean) => void;
@@ -1575,6 +1598,23 @@ function ColumnInspector({
       window.setTimeout(() => setDiagnosticCopyState('idle'), 2200);
     }
   };
+  const upstreamPanel = (
+    <InspectorUpstreamTree
+      activeInspectorCardId={activeInspectorCardId}
+      commentMode={commentMode}
+      expandedExpressionColumnIds={expandedExpressionColumnIds}
+      onFocusNode={onFocusNode}
+      onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
+      onSelectRoot={selectWholeColumn}
+      onSelectInspectorCard={selectInspectorCard}
+      onToggleExpressionBreakdown={toggleExpressionBreakdown}
+      expressionExpanded={selection.expressionExpanded}
+      hasExpressionBreakdown={selection.hasExpressionBreakdown}
+      rootActive={!activeCaseRule && activeInspectorCardId === null}
+      rootItem={selection.selected}
+      tree={selection.upstreamTree}
+    />
+  );
 
   return (
     <div className="lineage-inspector-body">
@@ -1586,75 +1626,65 @@ function ColumnInspector({
         onSelectInspectorCard={selectInspectorCard}
       />
       <section className="lineage-inspector-section">
-        <div className="lineage-inspector-tabs lineage-inspector-tabs-three" role="tablist" aria-label="Inspector details">
-          <button
-            aria-selected={activeTab === 'sql'}
-            className={activeTab === 'sql' ? 'lineage-inspector-tab-active' : ''}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab('sql')}
-          >
-            SQL
-          </button>
-          <button
-            aria-selected={activeTab === 'upstream'}
-            className={activeTab === 'upstream' ? 'lineage-inspector-tab-active' : ''}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab('upstream')}
-          >
-            Upstream
-          </button>
-          <button
-            aria-selected={activeTab === 'diagnostics'}
-            className={activeTab === 'diagnostics' ? 'lineage-inspector-tab-active' : ''}
-            role="tab"
-            type="button"
-            onClick={() => setActiveTab('diagnostics')}
-          >
-            Diagnostics
-          </button>
-        </div>
-        <div className="lineage-inspector-tab-panel" role="tabpanel">
-          {activeTab === 'sql' ? (
-            <ColumnScopeSqlPanel executableSql={executableScopeSql} sql={scopeSql} />
-          ) : activeTab === 'upstream' ? (
-            <InspectorUpstreamTree
-              activeInspectorCardId={activeInspectorCardId}
-              commentMode={commentMode}
-              expandedExpressionColumnIds={expandedExpressionColumnIds}
-              onFocusNode={onFocusNode}
-              onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
-              onSelectRoot={selectWholeColumn}
-              onSelectInspectorCard={selectInspectorCard}
-              onToggleExpressionBreakdown={toggleExpressionBreakdown}
-              expressionExpanded={selection.expressionExpanded}
-              hasExpressionBreakdown={selection.hasExpressionBreakdown}
-              rootActive={!activeCaseRule && activeInspectorCardId === null}
-              rootItem={selection.selected}
-              tree={selection.upstreamTree}
-            />
-          ) : (
-            <ColumnDiagnosticPacketPanel
-              activeInspectorCardId={activeInspectorCardId}
-              activeRoot={!activeCaseRule && activeInspectorCardId === null}
-              copyState={diagnosticCopyState}
-              expandedExpressionColumnIds={expandedExpressionColumnIds}
-              expressionExpanded={selection.expressionExpanded}
-              hasExpressionBreakdown={selection.hasExpressionBreakdown}
-              onClearRoot={selectWholeColumn}
-              packet={diagnosticPacket}
-              problemIntent={problemIntent}
-              rootItem={selection.selected}
-              tree={selection.upstreamTree}
-              onFocusNode={onFocusNode}
-              onCopyJson={() => void copyDiagnosticJson()}
-              onSelectInspectorCard={selectInspectorCard}
-              onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
-              onToggleRootExpressionBreakdown={toggleExpressionBreakdown}
-            />
-          )}
-        </div>
+        {hideDetailTabs ? upstreamPanel : (
+          <>
+            <div className="lineage-inspector-tabs lineage-inspector-tabs-three" role="tablist" aria-label="Inspector details">
+              <button
+                aria-selected={activeTab === 'sql'}
+                className={activeTab === 'sql' ? 'lineage-inspector-tab-active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setActiveTab('sql')}
+              >
+                SQL
+              </button>
+              <button
+                aria-selected={activeTab === 'upstream'}
+                className={activeTab === 'upstream' ? 'lineage-inspector-tab-active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setActiveTab('upstream')}
+              >
+                Upstream
+              </button>
+              <button
+                aria-selected={activeTab === 'diagnostics'}
+                className={activeTab === 'diagnostics' ? 'lineage-inspector-tab-active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setActiveTab('diagnostics')}
+              >
+                Diagnostics
+              </button>
+            </div>
+            <div className="lineage-inspector-tab-panel" role="tabpanel">
+              {activeTab === 'sql' ? (
+                <ColumnScopeSqlPanel executableSql={executableScopeSql} sql={scopeSql} />
+              ) : activeTab === 'upstream' ? (
+                upstreamPanel
+              ) : (
+                <ColumnDiagnosticPacketPanel
+                  activeInspectorCardId={activeInspectorCardId}
+                  activeRoot={!activeCaseRule && activeInspectorCardId === null}
+                  copyState={diagnosticCopyState}
+                  expandedExpressionColumnIds={expandedExpressionColumnIds}
+                  expressionExpanded={selection.expressionExpanded}
+                  hasExpressionBreakdown={selection.hasExpressionBreakdown}
+                  onClearRoot={selectWholeColumn}
+                  packet={diagnosticPacket}
+                  problemIntent={problemIntent}
+                  rootItem={selection.selected}
+                  tree={selection.upstreamTree}
+                  onFocusNode={onFocusNode}
+                  onCopyJson={() => void copyDiagnosticJson()}
+                  onSelectInspectorCard={selectInspectorCard}
+                  onToggleColumnExpressionBreakdown={onToggleExpressionBreakdown}
+                  onToggleRootExpressionBreakdown={toggleExpressionBreakdown}
+                />
+              )}
+            </div>
+          </>
+        )}
       </section>
     </div>
   );
@@ -1909,7 +1939,11 @@ function NodeInspector({
           <span>columns</span>
         </div>
       </section>
-      {commentMode !== 'none' && node.comments?.length ? <InspectorTextSection title="Comments" values={node.comments} /> : null}
+      {commentMode !== 'none' && node.comments?.length ? (
+        <section className="lineage-inspector-section">
+          <InspectorCommentBlock label="Comments" toggleLabel="Show detail" values={node.comments} variant="node" />
+        </section>
+      ) : null}
       {getNodeSql(node) ? (
         <section className="lineage-inspector-section lineage-inspector-sql-section">
           <div className="lineage-inspector-actions">
@@ -2737,10 +2771,12 @@ function isProcessedInspectorColumn(column: LineageColumn) {
 
 function InspectorCommentBlock({
   label,
+  toggleLabel = 'Show full',
   values,
   variant,
 }: {
   label: string;
+  toggleLabel?: string;
   values?: string[];
   variant: 'column' | 'node';
 }) {
@@ -2791,7 +2827,7 @@ function InspectorCommentBlock({
               setExpanded((current) => !current);
             }}
           >
-            {expanded ? 'Collapse' : 'Show full'}
+            {expanded ? 'Collapse' : toggleLabel}
           </button>
         ) : null}
       </div>
@@ -2843,17 +2879,6 @@ function groupInspectorItemsByNode(items: InspectorColumnItem[]) {
     groups.push(next);
   }
   return groups;
-}
-
-function InspectorTextSection({ title, values }: { title: string; values: string[] }) {
-  return (
-    <section className="lineage-inspector-section">
-      <h3>{title}</h3>
-      {values.map((value) => (
-        <p key={value}>{value}</p>
-      ))}
-    </section>
-  );
 }
 
 function resolveInspectorColumnSelection(
