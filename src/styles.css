@@ -2295,12 +2295,14 @@ textarea {
 
 .lineage-node-badge-stack {
   position: absolute;
-  top: -30px;
+  bottom: calc(100% + 8px);
   left: 0;
   z-index: 2;
   display: flex;
-  align-items: flex-start;
+  flex-wrap: wrap;
+  align-items: flex-end;
   gap: 4px;
+  max-width: 260px;
   pointer-events: none;
 }
 
@@ -2308,8 +2310,10 @@ textarea {
 .lineage-node-reference-badges,
 .lineage-node-source-data-badges {
   display: inline-flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
+  max-width: 260px;
 }
 
 .lineage-node-impact-badges span {

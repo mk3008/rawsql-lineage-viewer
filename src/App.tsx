@@ -913,7 +913,7 @@ function LegendPanel() {
       </section>
       <section className="legend-panel-section">
         <h3>Row Lineage badges</h3>
-        <p className="legend-panel-note">Focus badges show operations to inspect for the selected symptom. Operation badges stay on the SELECT/CTE/output node that owns them.</p>
+        <p className="legend-panel-note">Badges are Focus annotations for the selected column and symptom: yellow marks signal owners, blue marks referenced inputs, and purple marks source data to review.</p>
         <dl className="legend-impact-list">
           <div><dt><i className="legend-badge">Where</i></dt><dd>WHERE / EXISTS may filter rows</dd></div>
           <div><dt><i className="legend-badge">Having</i></dt><dd>HAVING may filter groups</dd></div>
@@ -923,9 +923,9 @@ function LegendPanel() {
           <div><dt><i className="legend-badge">Distinct On</i></dt><dd>DISTINCT ON selects one row per key</dd></div>
           <div><dt><i className="legend-badge">Group By</i></dt><dd>GROUP BY may change grain/counts</dd></div>
           <div><dt><i className="legend-badge">Limit</i></dt><dd>LIMIT / OFFSET may cap rows</dd></div>
-          <div><dt><i className="legend-badge">Order By</i></dt><dd>ORDER BY may change selected rows</dd></div>
-          <div><dt><i className="legend-badge legend-badge-reference">Used by ...</i></dt><dd>Source referenced by the selected operation</dd></div>
-          <div><dt><i className="legend-badge legend-badge-source-data">Data?</i></dt><dd>Source data values may be incorrect</dd></div>
+          <div><dt><i className="legend-badge">Top-N</i></dt><dd>ORDER BY with LIMIT / OFFSET selects retained rows</dd></div>
+          <div><dt><i className="legend-badge legend-badge-reference">Ref: ...</i></dt><dd>Referenced by the selected row-lineage signal</dd></div>
+          <div><dt><i className="legend-badge legend-badge-source-data">Data</i></dt><dd>Source data used by the selected value lineage</dd></div>
         </dl>
       </section>
     </aside>

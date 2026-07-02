@@ -9,6 +9,14 @@ export interface ProblemIntentBadge {
   strength: ProblemIntentMatchStrength;
 }
 
+type GraphPopulationSignal = Exclude<PopulationSignal, 'order_by'> | 'top_n';
+
+interface GraphFocusBadge {
+  label: string;
+  signal: GraphPopulationSignal;
+  strength: ProblemIntentMatchStrength;
+}
+
 export interface ProblemIntentConcern extends CandidateConcern {
   intentMatchStrength: ProblemIntentMatchStrength;
   matchedEffectsForIntent: DiagnosticConcernEffect[];
@@ -34,6 +42,15 @@ export function populationSignalLabel(signal: PopulationSignal): string {
       return 'Limit';
     case 'order_by':
       return 'Order By';
+  }
+}
+
+function graphPopulationSignalLabel(signal: GraphPopulationSignal): string {
+  switch (signal) {
+    case 'top_n':
+      return 'Top-N';
+    default:
+      return populationSignalLabel(signal);
   }
 }
 
@@ -78,14 +95,46 @@ export function populationImpactLabelsByNodeIdForIntent(packet: ColumnDiagnostic
     return {};
   }
 
+  const influencesById = new Map(packet.rowLineage.influences.map((influence) => [influence.id, influence]));
   return Object.fromEntries(
     packet.rowLineage.nodeImpacts
-      .map((nodeImpact) => [
-        nodeImpact.nodeId,
-        uniqueLabels(problemIntentBadgesForEffects(nodeImpact.effects, intent, nodeImpact.signals).map((badge) => badge.label)),
-      ])
+      .map((nodeImpact) => {
+        const impactInfluences = nodeImpact.influenceIds
+          .map((influenceId) => influencesById.get(influenceId))
+          .filter((influence): influence is PopulationInfluence => Boolean(influence));
+        const labels = impactInfluences.length > 0
+          ? uniqueLabels(impactInfluences.flatMap((influence) => graphImpactBadgesForInfluence(influence, packet.rowLineage.influences, intent).map((badge) => badge.label)))
+          : uniqueLabels(graphFocusBadgesForEffects(nodeImpact.effects, intent, nodeImpact.signals, nodeImpactHasTopN(nodeImpact.signals)).map((badge) => badge.label));
+        return [nodeImpact.nodeId, labels] as const;
+      })
       .filter(([, labels]) => labels.length > 0),
   );
+}
+
+/**
+ * Graph focus badges are diagnostic annotations, not a SQL syntax inventory.
+ *
+ * Yellow: the node that owns a row-lineage signal worth inspecting for the selected Focus.
+ * Blue: input nodes referenced by that highlighted condition/population signal.
+ * Purple: source data used by the selected value lineage.
+ *
+ * Keep raw diagnostic influences such as `order_by`; this layer only decides which
+ * compact graph badges are visible for the selected column + Focus symptom.
+ */
+export function graphImpactBadgesForInfluence(
+  influence: PopulationInfluence,
+  allInfluences: PopulationInfluence[],
+  intent: ProblemIntent,
+): GraphFocusBadge[] {
+  return graphFocusBadgesForEffects(influence.effects, intent, influence.signals, influenceScopeHasTopN(allInfluences, influence.scopeId));
+}
+
+export function graphReferenceLabelsForInfluence(
+  influence: PopulationInfluence,
+  allInfluences: PopulationInfluence[],
+  intent: ProblemIntent,
+): string[] {
+  return graphImpactBadgesForInfluence(influence, allInfluences, intent).map((badge) => `Ref: ${badge.label}`);
 }
 
 export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticPacket, intent: ProblemIntent): Record<string, string[]> {
@@ -102,7 +151,7 @@ export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticP
 
   const entries = new Map<string, string[]>();
   for (const source of packet.columnLineage.sourceLeaves) {
-    entries.set(source.nodeId, uniqueLabels([...(entries.get(source.nodeId) ?? []), 'Data?']));
+    entries.set(source.nodeId, uniqueLabels([...(entries.get(source.nodeId) ?? []), 'Data']));
   }
   return Object.fromEntries(entries);
 }
@@ -192,6 +241,52 @@ function signalEffects(signal: PopulationSignal): PopulationEffect[] {
   }
 }
 
+function graphFocusBadgesForEffects(
+  effects: PopulationEffect[],
+  intent: ProblemIntent,
+  signals: PopulationSignal[],
+  hasTopN: boolean,
+): GraphFocusBadge[] {
+  return uniqueGraphPopulationSignals(
+    problemIntentBadgesForEffects(effects, intent, signals)
+      .flatMap((badge) => graphSignalsForPopulationBadge(badge, hasTopN)),
+  ).map((signal): GraphFocusBadge => {
+    const strength: ProblemIntentMatchStrength = intent === 'all_signals' || graphSignalMatchesIntent(signal, effects, intent) ? 'matched' : 'related';
+    return {
+      label: graphPopulationSignalLabel(signal),
+      signal,
+      strength,
+    };
+  }).filter((badge) => badge.strength === 'matched');
+}
+
+function graphSignalsForPopulationBadge(badge: ProblemIntentBadge, hasTopN: boolean): GraphPopulationSignal[] {
+  if (badge.signal === 'order_by') {
+    return hasTopN ? ['top_n'] : [];
+  }
+  if (badge.signal === 'limit') {
+    return hasTopN ? ['top_n'] : ['limit'];
+  }
+  return [badge.signal];
+}
+
+function graphSignalMatchesIntent(signal: GraphPopulationSignal, effects: PopulationEffect[], intent: ProblemIntent): boolean {
+  if (signal === 'top_n') {
+    return effects.some((effect) => (effect === 'output_cap' || effect === 'output_selection') && populationEffectMatchesIntent(effect, intent));
+  }
+  return populationSignalMatchesIntent(signal, effects, intent);
+}
+
+function influenceScopeHasTopN(influences: PopulationInfluence[], scopeId: string): boolean {
+  const scopeInfluences = influences.filter((influence) => influence.scopeId === scopeId);
+  return scopeInfluences.some((influence) => influence.signals.includes('order_by') || influence.kind === 'order_by')
+    && scopeInfluences.some((influence) => influence.signals.includes('limit') || influence.kind === 'limit' || influence.kind === 'offset');
+}
+
+function nodeImpactHasTopN(signals: PopulationSignal[]): boolean {
+  return signals.includes('order_by') && signals.includes('limit');
+}
+
 function strengthRank(strength: ProblemIntentMatchStrength) {
   switch (strength) {
     case 'matched':
@@ -240,6 +335,12 @@ function signalsFromEffects(effects: PopulationEffect[]): PopulationSignal[] {
 function uniquePopulationSignals(signals: PopulationSignal[]): PopulationSignal[] {
   const unique = new Set(signals);
   return populationSignalOrder.filter((signal) => unique.has(signal));
+}
+
+function uniqueGraphPopulationSignals(signals: GraphPopulationSignal[]): GraphPopulationSignal[] {
+  const unique = new Set(signals);
+  return ['where', 'having', 'join_xn', 'outer_join', 'distinct', 'distinct_on', 'group_by', 'limit', 'top_n']
+    .filter((signal): signal is GraphPopulationSignal => unique.has(signal as GraphPopulationSignal));
 }
 
 function uniqueLabels(labels: string[]): string[] {

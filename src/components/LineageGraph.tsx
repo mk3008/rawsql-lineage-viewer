@@ -25,8 +25,8 @@ import { isUnionNode } from '../lineage/nodeKind';
 import { problemIntentLabels, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
 import {
   filterPopulationInfluencesForIntent,
+  graphReferenceLabelsForInfluence,
   populationImpactLabelsByNodeIdForIntent,
-  problemIntentBadgesForEffects,
   sourceDataValueLabelsByNodeIdForIntent,
 } from '../lineage/problemIntentViewModel';
 import { LineageNodeCard } from './LineageNodeCard';
@@ -199,6 +199,7 @@ export function LineageGraph({
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const previousGraphStructureKeyRef = useRef<string | null>(null);
   const previousNodeStructureKeyRef = useRef<string | null>(null);
+  const previousProblemIntentRef = useRef(problemIntent);
   const previousAutoLayoutRequestIdRef = useRef(0);
   const previousAutoLayoutEnabledRef = useRef(true);
   const pendingAutoLayoutFrameRef = useRef<number | null>(null);
@@ -284,6 +285,15 @@ export function LineageGraph({
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
+  useEffect(() => {
+    if (previousProblemIntentRef.current === problemIntent) {
+      return;
+    }
+    previousProblemIntentRef.current = problemIntent;
+    if (selectedColumn) {
+      scheduleAutoLayout('focus-change');
+    }
+  }, [problemIntent, scheduleAutoLayout, selectedColumn]);
   useEffect(() => {
     if (!hasParameterNodes) {
       setShowParameterNodes(false);
@@ -1828,8 +1838,7 @@ function resolvePopulationHighlightContext(
     for (const influence of filterPopulationInfluencesForIntent(packet.rowLineage.influences, problemIntent)) {
       const ownerNodeId = populationInfluenceOwnerNodeId(lineage, influence);
       const referencedNodeIds = populationReferenceNodeIdsForLabel(influence, ownerNodeId);
-      const referenceLabels = problemIntentBadgesForEffects(influence.effects, problemIntent, influence.signals)
-        .map((badge) => `Used by ${badge.label}`);
+      const referenceLabels = graphReferenceLabelsForInfluence(influence, packet.rowLineage.influences, problemIntent);
       if (referenceLabels.length === 0) {
         continue;
       }

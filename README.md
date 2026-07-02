@@ -22,9 +22,13 @@ The graph visualizes value lineage, not JOIN relationships as separate edges. Da
 
 ## Diagnostic focus badges
 
-The `Focus` selector changes Row Lineage badges from a general graph annotation into a symptom-oriented diagnostic view. Badges mark SQL operations that are plausible places to inspect for the selected symptom, such as missing rows, duplicate rows, or suspicious values.
+The `Focus` selector changes Row Lineage badges from a general graph annotation into a symptom-oriented diagnostic view for the selected column. Badges are confirmation prompts, not a SQL syntax inventory.
 
-Badges are attached to the SELECT / CTE / output node that owns the row-shaping operation. They are not a claim that every referenced source table performs that operation. Referenced source columns remain visible through column highlights, inspector references, and diagnostic JSON `references` / `usages`.
+- Yellow badges mark the node that owns a row-lineage signal worth inspecting for the selected symptom.
+- Blue `Ref: ...` badges mark input nodes referenced by that highlighted condition or population signal.
+- Purple `Data` badges mark source data used by the selected value lineage, useful when SQL signals do not explain the symptom.
+
+`ORDER BY` is retained in diagnostic JSON, but it is not shown as an independent graph badge. `ORDER BY` with `LIMIT` / `OFFSET` is summarized as `Top-N`; `DISTINCT ON` absorbs its representative-row `ORDER BY` context.
 
 ## Development
 
