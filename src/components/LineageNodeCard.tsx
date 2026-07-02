@@ -24,6 +24,7 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
   const isPassthroughOnly =
     shouldRenderColumns && !data.collapsedGroup && node.columns.length > 0 && node.columns.every((column) => isCompressedPassthroughColumn(column, data));
   const populationImpactLabels = data.highlightedNodeImpactLabels?.get(node.id) ?? [];
+  const referenceLabels = data.highlightedReferenceLabels?.get(node.id) ?? [];
   const sourceDataLabels = data.highlightedSourceDataLabels?.get(node.id) ?? [];
   const isUnion = isUnionNode(node);
 
@@ -33,9 +34,10 @@ export function LineageNodeCard({ id, data }: NodeProps<GraphNode>) {
       className={`lineage-node lineage-node-${node.type} ${isUnion ? 'lineage-node-union' : ''} ${data.highlightedNodeIds?.has(node.id) ? `lineage-node-highlighted lineage-node-highlighted-${data.highlightedNodeTone ?? 'value'}` : ''} ${data.dimmed ? 'lineage-node-dimmed' : ''} ${data.collapsedGroup ? 'lineage-node-collapsed-group' : ''} ${columnsVisible || columnsExpanded ? 'lineage-node-expanded' : 'lineage-node-collapsed'} ${isPassthroughOnly ? 'lineage-node-passthrough-only' : ''}`}
       data-testid={`lineage-node-${node.type}`}
     >
-      {sourceDataLabels.length > 0 || data.collapsedGroup || populationImpactLabels.length > 0 ? (
+      {sourceDataLabels.length > 0 || referenceLabels.length > 0 || data.collapsedGroup || populationImpactLabels.length > 0 ? (
         <div className="lineage-node-badge-stack">
           {sourceDataLabels.length > 0 ? <SourceDataBadges labels={sourceDataLabels} /> : null}
+          {referenceLabels.length > 0 ? <ReferenceBadges labels={referenceLabels} /> : null}
           {data.collapsedGroup ? (
             <GroupPopulationImpactBadges group={data.collapsedGroup} highlightedLabels={data.highlightedNodeImpactLabels} />
           ) : populationImpactLabels.length > 0 ? (
@@ -167,6 +169,22 @@ function SourceDataBadges({ labels }: { labels: string[] }) {
     <div className="lineage-node-source-data-badges" aria-label={`Source data concerns: ${labels.join(', ')}`}>
       {visibleLabels.map((label) => (
         <span key={label} title="Source data values may be incorrect">
+          {label}
+        </span>
+      ))}
+      {overflowCount > 0 ? <span>+{overflowCount}</span> : null}
+    </div>
+  );
+}
+
+function ReferenceBadges({ labels }: { labels: string[] }) {
+  const visibleLabels = labels.slice(0, 2);
+  const overflowCount = labels.length - visibleLabels.length;
+
+  return (
+    <div className="lineage-node-reference-badges" aria-label={`Referenced by selected row-lineage causes: ${labels.join(', ')}`}>
+      {visibleLabels.map((label) => (
+        <span key={label} title={`This source is referenced by a row-lineage operation: ${label}`}>
           {label}
         </span>
       ))}

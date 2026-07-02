@@ -26,14 +26,25 @@ describe('problem intent view model', () => {
 
   it('maps symptom effects to visible population badges', () => {
     const packet = createPacket();
+    packet.rowLineage.nodeImpacts.push({
+      effects: ['row_filter', 'row_multiplication'],
+      influenceIds: ['join-filter-and-xn'],
+      nodeId: 'cte_join_scope',
+      nodeLabel: 'joined_scope',
+      nodeType: 'cte',
+      role: 'population_and_value',
+      signals: ['join_xn'],
+    });
 
     expect(populationImpactLabelsByNodeIdForIntent(packet, 'all_signals')).toEqual({
+      cte_join_scope: ['Join xN'],
       cte_payment_summary: ['Outer Join'],
       table_customers: ['Where'],
       table_orders: ['Join xN'],
       table_payments: ['Limit'],
     });
     expect(populationImpactLabelsByNodeIdForIntent(packet, 'duplicate_rows')).toEqual({
+      cte_join_scope: ['Join xN'],
       table_orders: ['Join xN'],
     });
     expect(populationImpactLabelsByNodeIdForIntent(packet, 'missing_rows')).toEqual({
@@ -44,6 +55,37 @@ describe('problem intent view model', () => {
       cte_payment_summary: ['Outer Join'],
       table_customers: ['Where'],
       table_payments: ['Limit'],
+    });
+  });
+
+  it('maps DISTINCT row deduplication to node-level population badges', () => {
+    const packet = createPacket();
+    packet.rowLineage.nodeImpacts.push({
+      effects: ['row_deduplication'],
+      influenceIds: ['distinct'],
+      nodeId: 'main_output',
+      nodeLabel: 'Final Result',
+      nodeType: 'output',
+      role: 'population_and_value',
+      signals: ['distinct'],
+    });
+    packet.rowLineage.nodeImpacts.push({
+      effects: ['row_deduplication', 'output_selection'],
+      influenceIds: ['distinct-on'],
+      nodeId: 'distinct_on_output',
+      nodeLabel: 'Distinct On Result',
+      nodeType: 'output',
+      role: 'population_and_value',
+      signals: ['distinct_on', 'order_by'],
+    });
+
+    expect(populationImpactLabelsByNodeIdForIntent(packet, 'all_signals')).toMatchObject({
+      main_output: ['Distinct'],
+      distinct_on_output: ['Distinct On', 'Order By'],
+    });
+    expect(populationImpactLabelsByNodeIdForIntent(packet, 'duplicate_rows')).toMatchObject({
+      main_output: ['Distinct'],
+      distinct_on_output: ['Distinct On'],
     });
   });
 

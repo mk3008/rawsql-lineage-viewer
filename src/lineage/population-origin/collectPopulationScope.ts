@@ -1,4 +1,4 @@
-import { SimpleSelectQuery } from 'rawsql-ts';
+import { DistinctOn, SimpleSelectQuery } from 'rawsql-ts';
 import type { JoinClause } from 'rawsql-ts';
 import type {
   LineageColumn,
@@ -41,6 +41,7 @@ export function collectPopulationScope(input: CollectPopulationScopeInput): Line
   const { deps, joins, outputColumns, parentScopeId, query, scopeId, sources, targetId, targetLabel } = input;
   const where = collectConditionInfluences(query.whereClause?.condition, 'where', scopeId, sources, ['may_filter_rows'], deps);
   const having = collectConditionInfluences(query.havingClause?.condition, 'having', scopeId, sources, ['may_filter_rows'], deps);
+  const { distinct, distinctOn } = collectDistinctInfluences(query.selectClause.distinct, scopeId, sources, deps);
   const groupBy = collectExpressionInfluences(query.groupByClause?.grouping ?? [], 'group_by', scopeId, sources, ['may_change_grain'], deps);
   const orderBy = collectOrderByInfluences(query.orderByClause?.order ?? [], scopeId, sources, targetId, outputColumns, deps);
   const limit = collectLimitInfluence(query.limitClause, 'limit', scopeId, deps);
@@ -50,6 +51,8 @@ export function collectPopulationScope(input: CollectPopulationScopeInput): Line
     .filter((join): join is LineageJoinInfluence => join !== null);
 
   return {
+    distinct,
+    distinctOn,
     groupBy,
     having,
     id: scopeId,
@@ -63,6 +66,40 @@ export function collectPopulationScope(input: CollectPopulationScopeInput): Line
     parentScopeId,
     querySql: deps.formatScopeQuerySql(query),
     where,
+  };
+}
+
+function collectDistinctInfluences(
+  distinct: SimpleSelectQuery['selectClause']['distinct'],
+  scopeId: string,
+  sources: PopulationOriginSource[],
+  deps: PopulationOriginDeps,
+): { distinct?: LineageExpressionInfluence; distinctOn?: LineageExpressionInfluence[] } {
+  if (!distinct) {
+    return {};
+  }
+
+  if (distinct instanceof DistinctOn) {
+    const distinctOn = collectExpressionInfluences(
+      [distinct.value],
+      'distinct_on',
+      scopeId,
+      sources,
+      ['may_deduplicate_rows', 'may_change_order'],
+      deps,
+    );
+    return { distinctOn };
+  }
+
+  return {
+    distinct: {
+      expressionSql: 'select distinct',
+      id: `${scopeId}_distinct_1`,
+      impact: ['may_deduplicate_rows'],
+      kind: 'distinct',
+      references: [],
+      scopeId,
+    },
   };
 }
 

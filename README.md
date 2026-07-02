@@ -20,6 +20,12 @@ Save/load, JSON import/export, SVG/PNG export, and upstream/downstream switching
 
 The graph visualizes value lineage, not JOIN relationships as separate edges. Dashed data-flow edges indicate values from an OUTER JOIN nullable side. This is a join-context marker, not full output nullability inference.
 
+## Diagnostic focus badges
+
+The `Focus` selector changes Row Lineage badges from a general graph annotation into a symptom-oriented diagnostic view. Badges mark SQL operations that are plausible places to inspect for the selected symptom, such as missing rows, duplicate rows, or suspicious values.
+
+Badges are attached to the SELECT / CTE / output node that owns the row-shaping operation. They are not a claim that every referenced source table performs that operation. Referenced source columns remain visible through column highlights, inspector references, and diagnostic JSON `references` / `usages`.
+
 ## Development
 
 ```bash
@@ -43,6 +49,7 @@ rawsql-lineage diagnose --sql ./queries/customer-health.sql
 rawsql-lineage diagnose --sql ./queries/customer-health.sql --ddl ./db/schema.sql
 rawsql-lineage diagnose --sql ./queries/customer-health.sql --ddl-dir ./db/ddl
 rawsql-lineage diagnose --sql ./queries/customer-health.sql --schema-facts ./schema-facts.json
+rawsql-lineage diagnose --sql ./queries/customer-health.sql --symptom missing_rows
 rawsql-lineage diagnose --sql ./queries/customer-health.sql --target-column paid_amount --out ./diagnostic.json
 ```
 
@@ -52,6 +59,7 @@ Options:
 - `--ddl <file>`: optional DDL file. May be specified more than once.
 - `--ddl-dir <dir>`: optional directory scanned recursively for `.sql` files. The CLI skips `.git`, `node_modules`, `dist`, `build`, and `coverage`, then sorts paths for stable reads.
 - `--schema-facts <file>`: optional `SchemaFacts` JSON. This is the intended boundary for future tools such as Ashiba.
+- `--symptom <intent>`: optional diagnostic focus. Supported values are `value_too_high`, `value_too_low`, `value_missing`, `missing_rows`, and `duplicate_rows`.
 - `--target-column <name>`: optional output-column filter. Without it, all output columns are diagnosed.
 - `--out <file>`: optional output path. Without it, JSON is printed to stdout.
 

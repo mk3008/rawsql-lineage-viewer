@@ -19,11 +19,16 @@ import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, Lin
 import { buildGraphModel, collectUnreachableCteNodeIds, type GraphFlowDirection } from '../graph/buildGraphModel';
 import { collectCollapsibleUpstreamGroups, collapseLineageGroups } from '../graph/collapseGroups';
 import { isSimpleColumnReference } from '../lineage/columnDisplay';
-import { buildColumnDiagnosticPacket, type ColumnDiagnosticPacket } from '../lineage/diagnostics';
+import { buildColumnDiagnosticPacket, type ColumnDiagnosticPacket, type PopulationInfluence } from '../lineage/diagnostics';
 import { buildDiagnosticTreeViewModel } from '../lineage/diagnosticViewModel';
 import { isUnionNode } from '../lineage/nodeKind';
 import { problemIntentLabels, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
-import { populationImpactLabelsByNodeIdForIntent, sourceDataValueLabelsByNodeIdForIntent } from '../lineage/problemIntentViewModel';
+import {
+  filterPopulationInfluencesForIntent,
+  populationImpactLabelsByNodeIdForIntent,
+  problemIntentBadgesForEffects,
+  sourceDataValueLabelsByNodeIdForIntent,
+} from '../lineage/problemIntentViewModel';
 import { LineageNodeCard } from './LineageNodeCard';
 import { SqlCodeMirror } from './SqlCodeMirror';
 
@@ -48,6 +53,7 @@ interface SelectedColumn {
 export interface GraphHighlightColumnTarget extends SelectedColumn {
   populationImpactLabelsByNodeId?: Record<string, string[]>;
   populationNodeIds?: string[];
+  referenceLabelsByNodeId?: Record<string, string[]>;
   scopeId?: string;
   sourceDataLabelsByNodeId?: Record<string, string[]>;
   sourceDataNodeIds?: string[];
@@ -61,6 +67,7 @@ export type GraphHighlightTarget =
       kind: 'nodes';
       nodeIds: string[];
       populationImpactLabelsByNodeId?: Record<string, string[]>;
+      referenceLabelsByNodeId?: Record<string, string[]>;
       sourceDataLabelsByNodeId?: Record<string, string[]>;
       targetColumn?: GraphHighlightColumnTarget;
     }
@@ -792,6 +799,7 @@ export function LineageGraph({
           highlightedColumnIds: columnHighlights.highlightedColumnIds,
           highlightedNodeImpactLabels: columnHighlights.highlightedNodeImpactLabels,
           highlightedNodeTone: columnHighlights.nodeTone,
+          highlightedReferenceLabels: columnHighlights.highlightedReferenceLabels,
           highlightedSourceDataLabels: columnHighlights.highlightedSourceDataLabels,
           highlightedSourceDataNodeIds: columnHighlights.highlightedSourceDataNodeIds,
           onTogglePassthroughColumns: togglePassthroughColumns,
@@ -807,6 +815,7 @@ export function LineageGraph({
       columnHighlights.highlightedColumnIds,
       columnHighlights.highlightedNodeImpactLabels,
       columnHighlights.highlightedNodeIds,
+      columnHighlights.highlightedReferenceLabels,
       columnHighlights.highlightedSourceDataLabels,
       columnHighlights.highlightedSourceDataNodeIds,
       columnHighlights.sourceColumnIds,
@@ -1802,7 +1811,10 @@ function resolvePopulationHighlightContext(
   lineage: LineageModel,
   target: GraphHighlightColumnTarget,
   problemIntent: ProblemIntent,
-): Pick<GraphHighlightColumnTarget, 'populationImpactLabelsByNodeId' | 'populationNodeIds' | 'sourceDataLabelsByNodeId' | 'sourceDataNodeIds'> {
+): Pick<
+  GraphHighlightColumnTarget,
+  'populationImpactLabelsByNodeId' | 'populationNodeIds' | 'referenceLabelsByNodeId' | 'sourceDataLabelsByNodeId' | 'sourceDataNodeIds'
+> {
   try {
     const packet = buildColumnDiagnosticPacket(lineage, {
       columnName: target.columnName,
@@ -1811,15 +1823,51 @@ function resolvePopulationHighlightContext(
     });
     const impactLabelsByNodeId = populationImpactLabelsByNodeIdFromPacket(packet, problemIntent);
     const sourceDataLabelsByNodeId = sourceDataLabelsByNodeIdFromPacket(packet, problemIntent);
+    const populationNodeIds = new Set(Object.keys(impactLabelsByNodeId));
+    const referenceLabelsByNodeId = new Map<string, string[]>();
+    for (const influence of filterPopulationInfluencesForIntent(packet.rowLineage.influences, problemIntent)) {
+      const ownerNodeId = populationInfluenceOwnerNodeId(lineage, influence);
+      const referencedNodeIds = populationReferenceNodeIdsForLabel(influence, ownerNodeId);
+      const referenceLabels = problemIntentBadgesForEffects(influence.effects, problemIntent, influence.signals)
+        .map((badge) => `Used by ${badge.label}`);
+      if (referenceLabels.length === 0) {
+        continue;
+      }
+      for (const nodeId of referencedNodeIds) {
+        populationNodeIds.add(nodeId);
+        referenceLabelsByNodeId.set(
+          nodeId,
+          uniqueStrings([...(referenceLabelsByNodeId.get(nodeId) ?? []), ...referenceLabels]),
+        );
+      }
+    }
     return {
       populationImpactLabelsByNodeId: impactLabelsByNodeId,
-      populationNodeIds: Object.keys(impactLabelsByNodeId),
+      populationNodeIds: [...populationNodeIds],
+      referenceLabelsByNodeId: Object.fromEntries(referenceLabelsByNodeId),
       sourceDataLabelsByNodeId,
       sourceDataNodeIds: Object.keys(sourceDataLabelsByNodeId),
     };
   } catch {
-    return { populationImpactLabelsByNodeId: {}, populationNodeIds: [target.nodeId], sourceDataLabelsByNodeId: {}, sourceDataNodeIds: [] };
+    return {
+      populationImpactLabelsByNodeId: {},
+      populationNodeIds: [target.nodeId],
+      referenceLabelsByNodeId: {},
+      sourceDataLabelsByNodeId: {},
+      sourceDataNodeIds: [],
+    };
   }
+}
+
+function populationInfluenceOwnerNodeId(lineage: LineageModel, influence: PopulationInfluence): string | undefined {
+  return lineage.scopes.find((scope) => scope.id === influence.scopeId)?.nodeId;
+}
+
+function populationReferenceNodeIdsForLabel(influence: PopulationInfluence, ownerNodeId?: string): string[] {
+  const referenceNodeIds = influence.kind === 'join_on' && influence.sourceNodeId
+    ? [influence.sourceNodeId]
+    : influence.references.map((reference) => reference.nodeId);
+  return uniqueStrings(referenceNodeIds.filter((nodeId) => nodeId !== ownerNodeId));
 }
 
 function populationImpactLabelsByNodeIdFromPacket(packet: ColumnDiagnosticPacket, problemIntent: ProblemIntent): Record<string, string[]> {
@@ -3314,6 +3362,7 @@ function resolveColumnHighlights(
     highlightedEdgeIds,
     highlightedNodeImpactLabels: toNodeImpactLabelMap(selectedColumn.populationImpactLabelsByNodeId),
     highlightedNodeIds: new Set(selectedColumn.populationNodeIds ?? []),
+    highlightedReferenceLabels: toNodeImpactLabelMap(selectedColumn.referenceLabelsByNodeId),
     highlightedSourceDataLabels: toNodeImpactLabelMap(selectedColumn.sourceDataLabelsByNodeId),
     highlightedSourceDataNodeIds: new Set(selectedColumn.sourceDataNodeIds ?? []),
     nodeTone: 'population',
@@ -3327,6 +3376,7 @@ interface GraphHighlightResult {
   highlightedEdgeIds: Set<string>;
   highlightedNodeImpactLabels: Map<string, string[]>;
   highlightedNodeIds: Set<string>;
+  highlightedReferenceLabels: Map<string, string[]>;
   highlightedSourceDataLabels: Map<string, string[]>;
   highlightedSourceDataNodeIds: Set<string>;
   nodeTone: 'population' | 'value';
@@ -3344,6 +3394,7 @@ function resolveHighlightTarget(
     highlightedEdgeIds: new Set<string>(),
     highlightedNodeImpactLabels: new Map<string, string[]>(),
     highlightedNodeIds: new Set<string>(),
+    highlightedReferenceLabels: new Map<string, string[]>(),
     highlightedSourceDataLabels: new Map<string, string[]>(),
     highlightedSourceDataNodeIds: new Set<string>(),
     nodeTone: 'value' as const,
@@ -3370,6 +3421,7 @@ function resolveHighlightTarget(
       highlightedEdgeIds,
       highlightedNodeIds,
       highlightedNodeImpactLabels: toNodeImpactLabelMap(target.populationImpactLabelsByNodeId),
+      highlightedReferenceLabels: toNodeImpactLabelMap(target.referenceLabelsByNodeId),
       highlightedSourceDataLabels: toNodeImpactLabelMap(target.sourceDataLabelsByNodeId),
       highlightedSourceDataNodeIds: new Set(Object.keys(target.sourceDataLabelsByNodeId ?? {})),
       nodeTone: 'population',
@@ -3395,6 +3447,13 @@ function resolveHighlightTarget(
         mergedLabels.add(label);
       }
       merged.highlightedNodeImpactLabels.set(nodeId, [...mergedLabels]);
+    }
+    for (const [nodeId, labels] of highlights.highlightedReferenceLabels) {
+      const mergedLabels = new Set(merged.highlightedReferenceLabels.get(nodeId) ?? []);
+      for (const label of labels) {
+        mergedLabels.add(label);
+      }
+      merged.highlightedReferenceLabels.set(nodeId, [...mergedLabels]);
     }
     for (const nodeId of highlights.highlightedSourceDataNodeIds) {
       merged.highlightedSourceDataNodeIds.add(nodeId);

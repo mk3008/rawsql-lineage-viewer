@@ -16,6 +16,10 @@ export interface ProblemIntentConcern extends CandidateConcern {
 
 export function populationSignalLabel(signal: PopulationSignal): string {
   switch (signal) {
+    case 'distinct':
+      return 'Distinct';
+    case 'distinct_on':
+      return 'Distinct On';
     case 'where':
       return 'Where';
     case 'having':
@@ -173,7 +177,7 @@ function signalEffects(signal: PopulationSignal): PopulationEffect[] {
     case 'having':
       return ['row_filter'];
     case 'join_xn':
-      return ['row_filter', 'row_multiplication'];
+      return ['row_multiplication'];
     case 'outer_join':
       return ['null_extension'];
     case 'group_by':
@@ -182,6 +186,9 @@ function signalEffects(signal: PopulationSignal): PopulationEffect[] {
       return ['output_cap'];
     case 'order_by':
       return ['output_selection'];
+    case 'distinct':
+    case 'distinct_on':
+      return ['row_deduplication'];
   }
 }
 
@@ -221,6 +228,9 @@ function signalsFromEffects(effects: PopulationEffect[]): PopulationSignal[] {
         break;
       case 'output_selection':
         signals.push('order_by');
+        break;
+      case 'row_deduplication':
+        signals.push('distinct');
         break;
     }
   }

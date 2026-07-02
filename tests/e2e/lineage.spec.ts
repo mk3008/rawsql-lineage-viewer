@@ -110,6 +110,44 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('graph-info')).not.toContainText('Warnings');
 });
 
+test('shows SELECT DISTINCT as a node-level row lineage badge only after selecting a column', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT DISTINCT a.id
+    FROM tables a
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByRole('combobox', { name: 'Focus' }).selectOption({ label: 'All signals' });
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
+  await outputNode.getByRole('button', { name: 'id', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Distinct');
+});
+
+test('keeps SELECT DISTINCT ON row lineage badge on the SELECT scope node after selecting a column', async ({ page }) => {
+  await page.goto('/');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT DISTINCT ON (o.customer_id)
+      o.customer_id,
+      o.id AS order_id
+    FROM orders o
+    ORDER BY o.customer_id, o.id DESC
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByRole('combobox', { name: 'Focus' }).selectOption({ label: 'All signals' });
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const ordersNode = page.getByTestId('rf__node-table_orders');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await outputNode.getByRole('button', { name: 'customer_id', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Distinct On');
+  await expect(ordersNode).not.toContainText('Distinct On');
+});
+
 test('allows the SQL editor to scroll vertically for long queries', async ({ page }) => {
   await page.setViewportSize({ width: 794, height: 1275 });
   await page.goto('/');
@@ -548,13 +586,13 @@ test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) =>
   await expect(diagnosticSection).toContainText('not exists');
   await expect(diagnosticSection).toContainText('orders');
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-selected/);
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Where');
   await expect(customersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
   await expect(ordersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
-
-  const ordersTitle = ordersNode.getByRole('button', { name: 'orders', exact: true });
-  await ordersTitle.click();
-  await expect(ordersTitle).toHaveClass(/lineage-comment-selected/);
-  await expect(page.getByTestId('lineage-inspector').locator('h2')).toHaveText('orders');
+  await expect(customersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await expect(ordersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await expect(customersNode.locator('.lineage-node-reference-badges')).toContainText('Used by Where');
+  await expect(ordersNode.locator('.lineage-node-reference-badges')).toContainText('Used by Where');
 });
 
 test('does not mix node condition columns into selected column lineage', async ({ page }) => {
@@ -1004,12 +1042,22 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(diagnosticJson).toContainText('"rowLineage"');
   await expect(diagnosticJson).toContainText('"columnLineage"');
   await problemFocus.selectOption('missing_rows');
-  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-impact-badges')).toContainText('Where');
+  await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Where');
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-reference-badges')).toContainText('Used by Where');
+  await problemFocus.selectOption('value_too_low');
+  await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
+  await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-reference-badges')).toHaveCount(0);
+  await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-reference-badges')).toContainText('Used by Outer Join');
+  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).toContainText('Used by Where');
+  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).not.toContainText('Used by Outer Join');
   await problemFocus.selectOption('value_missing');
-  await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
+  await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
+  await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).not.toContainText('Outer Join');
   await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).not.toContainText('Join xN');
   await expect(page.getByTestId('rf__node-cte_payment_summary')).not.toBeAttached();
-  await expect.poll(async () => page.locator('.lineage-node-highlighted').count()).toBeGreaterThan(1);
+  await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
   await inspector.getByRole('tab', { name: /Upstream/ }).click();
   const orderItemsSourceCard = sourcesSection.locator('.lineage-inspector-source-group').filter({ hasText: 'order_items' }).first();
   await expect(orderItemsSourceCard.getByRole('button', { name: /unit_price/ })).toHaveCount(0);
@@ -1018,7 +1066,6 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(selectedCard).toContainText('Final Result');
   await expect(selectedCard).toContainText('total_amount');
   await expect(orderItemsSourceCard).toHaveClass(/lineage-inspector-source-group-active/);
-  await expect(page.getByTestId('rf__node-table_order_items').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
   await expect(outputNode.getByRole('button', { name: 'total_amount', exact: true })).toHaveClass(/lineage-column-selected/);
 
   await expect(inspector).toContainText('Upstream');
@@ -1046,7 +1093,6 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   );
   await page.goBack();
   await expect(orderItemsSourceCard).toHaveClass(/lineage-inspector-source-group-active/);
-  await expect(page.getByTestId('rf__node-table_order_items').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
   await expect(inspector.locator('.lineage-inspector-column-card-active')).toHaveCount(0);
   await page.goBack();
   await expect(orderItemsSourceCard).not.toHaveClass(/lineage-inspector-source-group-active/);
@@ -1622,8 +1668,8 @@ test('keeps row lineage badges stable when expanding a CTE group', async ({ page
   await orderTotalsNode.getByRole('button', { name: 'Expand order_totals' }).click();
 
   await expect(customersBadges).toHaveCount(0);
-  await expect(orderTotalsBadges).toHaveCount(0);
-  await expect(page.getByTestId('rf__node-cte_recent_orders').locator('.lineage-node-impact-badges')).toContainText('Group By');
+  await expect(orderTotalsBadges).toContainText('Group By');
+  await expect(page.getByTestId('rf__node-cte_recent_orders').locator('.lineage-node-impact-badges')).toHaveCount(0);
 });
 
 test('keeps selected columns across group toggles after helper nodes are moved', async ({ page }) => {

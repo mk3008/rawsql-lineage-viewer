@@ -33,6 +33,7 @@ export type LineageImpact =
   | 'may_change_value'
   | 'may_change_order'
   | 'may_limit_rows'
+  | 'may_deduplicate_rows'
   | 'unknown';
 
 export type LineagePopulationEffect =
@@ -40,6 +41,7 @@ export type LineagePopulationEffect =
   | 'null_extension'
   | 'output_cap'
   | 'output_selection'
+  | 'row_deduplication'
   | 'row_filter'
   | 'row_multiplication';
 
@@ -88,7 +90,7 @@ export interface LineageExpressionInfluence {
   expressionSql: string;
   id: string;
   impact: LineageImpact[];
-  kind: 'group_by' | 'limit' | 'offset' | 'order_by' | 'window_order_by' | 'window_partition_by';
+  kind: 'distinct' | 'distinct_on' | 'group_by' | 'limit' | 'offset' | 'order_by' | 'window_order_by' | 'window_partition_by';
   references: LineageSourceReference[];
   scopeId: string;
   sourceSpan?: SourceSpan;
@@ -113,6 +115,8 @@ export interface LineageDiagnostic {
 
 export interface LineageScope {
   diagnostics?: LineageDiagnostic[];
+  distinct?: LineageExpressionInfluence;
+  distinctOn?: LineageExpressionInfluence[];
   groupBy?: LineageExpressionInfluence[];
   having?: LineageCondition[];
   id: string;

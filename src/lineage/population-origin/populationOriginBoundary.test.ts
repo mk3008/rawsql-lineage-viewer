@@ -63,4 +63,52 @@ describe('population-origin boundary', () => {
       references: [],
     });
   });
+
+  it('records SELECT DISTINCT separately from GROUP BY and LIMIT without marking individual columns', () => {
+    const { lineage } = analyzeSql(`
+      SELECT DISTINCT a, b
+      FROM t
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => ({ name: column.name, usage: column.usage }))).toEqual([
+      { name: 'a', usage: undefined },
+      { name: 'b', usage: undefined },
+    ]);
+    expect(scope?.distinct).toMatchObject({
+      expressionSql: 'select distinct',
+      impact: ['may_deduplicate_rows'],
+      kind: 'distinct',
+      references: [],
+    });
+    expect(scope?.groupBy).toEqual([]);
+    expect(scope?.limit).toBeUndefined();
+  });
+
+  it('records DISTINCT ON keys and keeps ORDER BY influence without GROUP BY or LIMIT substitution', () => {
+    const { lineage } = analyzeSql(`
+      SELECT DISTINCT ON (a) a, b
+      FROM t
+      ORDER BY a, b DESC
+    `);
+
+    const output = lineage.nodes.find((node) => node.id === 'main_output');
+    const scope = lineage.scopes.find((item) => item.nodeId === 'main_output');
+
+    expect(output?.columns.map((column) => ({ name: column.name, usage: column.usage }))).toEqual([
+      { name: 'a', usage: undefined },
+      { name: 'b', usage: undefined },
+    ]);
+    expect(scope?.distinctOn?.[0]).toMatchObject({
+      expressionSql: 'a',
+      impact: ['may_deduplicate_rows', 'may_change_order'],
+      kind: 'distinct_on',
+      references: [expect.objectContaining({ nodeId: 'table_t', columnName: 'a' })],
+    });
+    expect(scope?.orderBy?.map((item) => item.expressionSql)).toEqual(['a', 'b desc']);
+    expect(scope?.groupBy).toEqual([]);
+    expect(scope?.limit).toBeUndefined();
+  });
 });

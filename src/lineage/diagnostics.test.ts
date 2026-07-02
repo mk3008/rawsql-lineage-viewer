@@ -151,6 +151,80 @@ describe('column diagnostics', () => {
     ]);
   });
 
+  it('explains DISTINCT ON keys and representative-row ORDER BY in diagnostics metadata', () => {
+    const { lineage } = analyzeSql(`
+      SELECT DISTINCT ON (a) a, b, updated_at
+      FROM t
+      ORDER BY a, updated_at DESC
+    `);
+
+    const packet = buildColumnDiagnosticPacket(lineage, {
+      columnName: 'updated_at',
+      nodeId: 'main_output',
+    });
+
+    expect(packet.rowLineage.influences).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        effects: ['row_deduplication', 'output_selection'],
+        kind: 'distinct_on',
+        mechanism: 'distinct_on',
+        signals: ['distinct_on', 'order_by'],
+      }),
+      expect.objectContaining({
+        expressionSql: 'updated_at desc',
+        effects: ['output_selection'],
+        kind: 'order_by',
+        mechanism: 'order_by',
+      }),
+    ]));
+    expect(packet.rowLineage.nodeImpacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        nodeId: 'main_output',
+        signals: expect.arrayContaining(['distinct_on', 'order_by']),
+      }),
+    ]));
+    expect(packet.rowLineage.nodeImpacts).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        nodeId: 'table_t',
+        signals: expect.arrayContaining(['distinct_on']),
+      }),
+    ]));
+    expect(packet.candidateConcerns).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        impact: ['may_deduplicate_rows', 'may_change_order'],
+        kind: 'distinct_on',
+        reason: 'This expression is a DISTINCT ON key; for each key, the first row by ORDER BY is selected.',
+      }),
+    ]));
+  });
+
+  it('keeps SELECT DISTINCT as a row-lineage node impact instead of a column badge', () => {
+    const { lineage } = analyzeSql(`
+      SELECT DISTINCT a, b
+      FROM t
+    `);
+
+    const packet = buildColumnDiagnosticPacket(lineage, {
+      columnName: 'a',
+      nodeId: 'main_output',
+    });
+
+    expect(packet.rowLineage.influences).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        effects: ['row_deduplication'],
+        kind: 'distinct',
+        mechanism: 'distinct',
+        signals: ['distinct'],
+      }),
+    ]));
+    expect(packet.rowLineage.nodeImpacts).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        nodeId: 'main_output',
+        signals: ['distinct'],
+      }),
+    ]));
+  });
+
   it('includes WHERE scopes on the column-lineage route through CTEs', () => {
     const { lineage } = analyzeSql(`
       WITH recent_orders AS (
@@ -378,21 +452,19 @@ describe('column diagnostics', () => {
     expect(packet.rowLineage.nodeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          effects: expect.arrayContaining(['row_filter']),
-          influenceIds: expect.arrayContaining([whereExists?.id]),
-          nodeId: 'table_customer_favorites',
-          role: 'population_only',
-        }),
-        expect.objectContaining({
-          effects: expect.arrayContaining(['row_filter']),
-          nodeId: 'table_customers',
-          role: 'population_and_value',
-        }),
-        expect.objectContaining({
-          effects: expect.arrayContaining(['output_cap']),
+          effects: expect.arrayContaining(['row_filter', 'output_selection', 'output_cap']),
           influenceIds: expect.arrayContaining([limit?.id]),
           nodeId: 'main_output',
           role: 'population_and_value',
+          signals: expect.arrayContaining(['where', 'limit', 'order_by']),
+        }),
+      ]),
+    );
+    expect(packet.rowLineage.nodeImpacts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          influenceIds: expect.arrayContaining([whereExists?.id]),
+          nodeId: 'table_customer_favorites',
         }),
       ]),
     );
@@ -424,16 +496,20 @@ describe('column diagnostics', () => {
     expect(packet.rowLineage.nodeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          effects: ['null_extension'],
-          influenceIds: [orderTotalsJoin?.id],
-          nodeId: 'cte_order_totals',
+          effects: expect.arrayContaining(['null_extension']),
+          influenceIds: expect.arrayContaining([orderTotalsJoin?.id]),
+          nodeId: 'main_output',
           role: 'population_and_value',
+          signals: expect.arrayContaining(['outer_join']),
         }),
       ]),
     );
     expect(packet.rowLineage.nodeImpacts).not.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ nodeId: 'cte_payment_summary' }),
+        expect.objectContaining({
+          influenceIds: expect.arrayContaining([orderTotalsJoin?.id]),
+          nodeId: 'cte_order_totals',
+        }),
       ]),
     );
   });

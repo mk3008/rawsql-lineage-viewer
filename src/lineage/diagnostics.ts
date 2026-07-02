@@ -417,6 +417,8 @@ export function analyzeRowLineage(
     .flatMap((scope) => [
       ...(scope.where ?? []).map((condition) => conditionToInfluence(model, condition)),
       ...(scope.having ?? []).map((condition) => conditionToInfluence(model, condition)),
+      ...(scope.distinct ? [expressionToInfluence(model, scope.distinct)] : []),
+      ...(scope.distinctOn ?? []).map((expression) => expressionToInfluence(model, expression)),
       ...(scope.groupBy ?? []).map((expression) => expressionToInfluence(model, expression)),
       ...(scope.orderBy ?? []).map((expression) => expressionToInfluence(model, expression)),
       ...(scope.limit ? [expressionToInfluence(model, scope.limit)] : []),
@@ -972,20 +974,19 @@ function buildPopulationNodeImpacts(
   const nodeImpacts = new Map<string, PopulationNodeImpact>();
 
   for (const influence of influences) {
-    if (influence.references.length === 0) {
-      mergePopulationNodeImpact(nodeImpacts, model, target.nodeId, influence, influence.effects, valueRelevantNodeIds);
-      continue;
-    }
-    for (const reference of influence.references) {
-      const effects = populationEffectsForNode(influence, reference.nodeId, valueRelevantNodeIds);
-      if (effects.length === 0) {
-        continue;
-      }
-      mergePopulationNodeImpact(nodeImpacts, model, reference.nodeId, influence, effects, valueRelevantNodeIds);
-    }
+    const ownerNodeId = populationInfluenceOwnerNodeId(model, influence, target.nodeId);
+    mergePopulationNodeImpact(nodeImpacts, model, ownerNodeId, influence, influence.effects, valueRelevantNodeIds);
   }
 
   return [...nodeImpacts.values()];
+}
+
+function populationInfluenceOwnerNodeId(
+  model: LineageModel,
+  influence: PopulationInfluence,
+  fallbackNodeId: string,
+): string {
+  return model.scopes.find((scope) => scope.id === influence.scopeId)?.nodeId ?? fallbackNodeId;
 }
 
 function mergePopulationNodeImpact(
@@ -1019,24 +1020,6 @@ function mergePopulationNodeImpact(
   });
 }
 
-function populationEffectsForNode(
-  influence: PopulationInfluence,
-  nodeId: string,
-  valueRelevantNodeIds: Set<string>,
-): PopulationEffect[] {
-  const effects: PopulationEffect[] = [];
-  for (const effect of influence.effects) {
-    if (
-      effect === 'null_extension' &&
-      (influence.sourceNodeId !== nodeId || !valueRelevantNodeIds.has(nodeId))
-    ) {
-      continue;
-    }
-    effects.push(effect);
-  }
-  return dedupeEffects(effects);
-}
-
 function dedupeEffects(values: PopulationEffect[]): PopulationEffect[] {
   return [...new Set(values)];
 }
@@ -1066,10 +1049,16 @@ function signalsFromInfluence(kind: string, mechanism: PopulationMechanism, effe
   if (kind === 'group_by' && effects.includes('grain_change')) {
     signals.push('group_by');
   }
+  if ((kind === 'distinct' || mechanism === 'distinct') && effects.includes('row_deduplication')) {
+    signals.push('distinct');
+  }
+  if ((kind === 'distinct_on' || mechanism === 'distinct_on') && effects.includes('row_deduplication')) {
+    signals.push('distinct_on');
+  }
   if ((kind === 'limit' || kind === 'offset' || mechanism === 'limit' || mechanism === 'offset') && effects.includes('output_cap')) {
     signals.push('limit');
   }
-  if ((kind === 'order_by' || mechanism === 'order_by') && effects.includes('output_selection')) {
+  if ((kind === 'order_by' || mechanism === 'order_by' || kind === 'distinct_on') && effects.includes('output_selection')) {
     signals.push('order_by');
   }
   return dedupeSignals(signals);
@@ -1089,6 +1078,8 @@ function effectFromImpact(impact: LineageImpact): PopulationEffect | null {
       return 'output_selection';
     case 'may_limit_rows':
       return 'output_cap';
+    case 'may_deduplicate_rows':
+      return 'row_deduplication';
     default:
       return null;
   }
@@ -1105,6 +1096,8 @@ function impactsFromEffects(effects: PopulationEffect[]): LineageImpact[] {
         return 'may_limit_rows';
       case 'output_selection':
         return 'may_change_order';
+      case 'row_deduplication':
+        return 'may_deduplicate_rows';
       case 'row_filter':
         return 'may_filter_rows';
       case 'row_multiplication':
@@ -1124,6 +1117,10 @@ function mechanismFromKind(kind: string, expressionSql?: string): PopulationMech
       return 'case_when';
     case 'group_by':
       return 'group_by';
+    case 'distinct':
+      return 'distinct';
+    case 'distinct_on':
+      return 'distinct_on';
     case 'having':
       return 'having';
     case 'join_on':
@@ -1434,7 +1431,7 @@ function checkDomainsForInfluence(influence: PopulationInfluence): CheckDomain[]
   if (influence.kind === 'group_by') {
     return ['program_logic', 'schema_assumption'];
   }
-  if (influence.kind === 'limit' || influence.kind === 'offset' || influence.kind === 'order_by') {
+  if (influence.kind === 'limit' || influence.kind === 'offset' || influence.kind === 'order_by' || influence.kind === 'distinct' || influence.kind === 'distinct_on') {
     return ['program_logic'];
   }
   return ['program_logic'];
@@ -1598,6 +1595,12 @@ function concernReason(influence: PopulationInfluence): string {
   if (influence.kind === 'order_by') {
     return 'The ORDER BY expression may change which rows are returned when combined with LIMIT/OFFSET.';
   }
+  if (influence.kind === 'distinct') {
+    return 'SELECT output rows are deduplicated by the whole output tuple.';
+  }
+  if (influence.kind === 'distinct_on') {
+    return 'This expression is a DISTINCT ON key; for each key, the first row by ORDER BY is selected.';
+  }
   if (influence.kind === 'limit') {
     return 'The LIMIT clause restricts how many rows are returned.';
   }
@@ -1625,6 +1628,8 @@ function buildOmittedContext(
       count
       + (scope.where?.length ?? 0)
       + (scope.having?.length ?? 0)
+      + (scope.distinct ? 1 : 0)
+      + (scope.distinctOn?.length ?? 0)
       + (scope.groupBy?.length ?? 0)
       + (scope.orderBy?.length ?? 0)
       + (scope.limit ? 1 : 0)

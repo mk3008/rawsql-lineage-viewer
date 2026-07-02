@@ -8,6 +8,7 @@ export type PopulationMechanism =
   | 'case_when'
   | 'coalesce'
   | 'distinct'
+  | 'distinct_on'
   | 'exists'
   | 'function_call'
   | 'group_by'
@@ -23,6 +24,8 @@ export type PopulationMechanism =
   | 'window';
 
 export type PopulationSignal =
+  | 'distinct'
+  | 'distinct_on'
   | 'group_by'
   | 'having'
   | 'join_xn'
@@ -36,6 +39,8 @@ export const populationSignalOrder = [
   'having',
   'join_xn',
   'outer_join',
+  'distinct',
+  'distinct_on',
   'group_by',
   'limit',
   'order_by',
@@ -106,6 +111,7 @@ export const symptomEffectMap: Record<ProblemIntent, DiagnosticConcernEffect[]> 
     'row_filter',
     'row_multiplication',
     'grain_change',
+    'row_deduplication',
     'output_cap',
     'output_selection',
     'null_extension',
@@ -121,6 +127,7 @@ export const symptomEffectMap: Record<ProblemIntent, DiagnosticConcernEffect[]> 
   duplicate_rows: [
     'row_multiplication',
     'grain_change',
+    'row_deduplication',
     'missing_distinct',
     'union_all',
   ],
@@ -128,6 +135,7 @@ export const symptomEffectMap: Record<ProblemIntent, DiagnosticConcernEffect[]> 
     'row_filter',
     'inner_join_filter',
     'exists',
+    'row_deduplication',
     'output_cap',
     'output_selection',
   ],
@@ -167,6 +175,7 @@ export const symptomMechanismMap: Record<ProblemIntent, PopulationMechanism[]> =
     'case_when',
     'coalesce',
     'distinct',
+    'distinct_on',
     'exists',
     'function_call',
     'group_by',
@@ -192,6 +201,7 @@ export const symptomMechanismMap: Record<ProblemIntent, PopulationMechanism[]> =
     'join',
     'group_by',
     'distinct',
+    'distinct_on',
     'union_all',
     'missing_distinct',
   ],
@@ -202,6 +212,8 @@ export const symptomMechanismMap: Record<ProblemIntent, PopulationMechanism[]> =
     'join',
     'limit',
     'order_by',
+    'distinct',
+    'distinct_on',
   ],
   value_missing: [
     'join',

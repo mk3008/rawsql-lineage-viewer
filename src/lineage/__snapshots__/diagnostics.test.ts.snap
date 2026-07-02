@@ -1106,9 +1106,9 @@ end",
           "scope_cte_payment_summary_where_1",
           "scope_cte_payment_summary_group_by_1"
         ],
-        "nodeId": "table_payments",
-        "nodeLabel": "payments",
-        "nodeType": "table",
+        "nodeId": "cte_payment_summary",
+        "nodeLabel": "payment_summary",
+        "nodeType": "cte",
         "role": "population_and_value",
         "signals": [
           "where",
@@ -1117,65 +1117,26 @@ end",
       },
       {
         "effects": [
-          "row_filter"
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1"
-        ],
-        "nodeId": "table_customers",
-        "nodeLabel": "customers",
-        "nodeType": "table",
-        "role": "population_only",
-        "signals": [
-          "where"
-        ]
-      },
-      {
-        "effects": [
-          "row_filter"
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1"
-        ],
-        "nodeId": "table_customer_favorites",
-        "nodeLabel": "customer_favorites",
-        "nodeType": "table",
-        "role": "population_only",
-        "signals": [
-          "where"
-        ]
-      },
-      {
-        "effects": [
+          "row_filter",
           "output_selection",
-          "output_cap"
+          "output_cap",
+          "null_extension"
         ],
         "influenceIds": [
+          "scope_main_output_where_1",
           "scope_main_output_order_by_1",
-          "scope_main_output_limit_1"
+          "scope_main_output_limit_1",
+          "scope_main_output_join_2"
         ],
         "nodeId": "main_output",
         "nodeLabel": "Final Result",
         "nodeType": "output",
         "role": "population_and_value",
         "signals": [
+          "where",
+          "outer_join",
           "limit",
           "order_by"
-        ]
-      },
-      {
-        "effects": [
-          "null_extension"
-        ],
-        "influenceIds": [
-          "scope_main_output_join_2"
-        ],
-        "nodeId": "cte_payment_summary",
-        "nodeLabel": "payment_summary",
-        "nodeType": "cte",
-        "role": "population_and_value",
-        "signals": [
-          "outer_join"
         ]
       }
     ],
@@ -1823,9 +1784,9 @@ end",
           "scope_cte_payment_summary_where_1",
           "scope_cte_payment_summary_group_by_1",
         ],
-        "nodeId": "table_payments",
-        "nodeLabel": "payments",
-        "nodeType": "table",
+        "nodeId": "cte_payment_summary",
+        "nodeLabel": "payment_summary",
+        "nodeType": "cte",
         "role": "population_and_value",
         "signals": [
           "where",
@@ -1835,64 +1796,25 @@ end",
       {
         "effects": [
           "row_filter",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "nodeId": "table_customers",
-        "nodeLabel": "customers",
-        "nodeType": "table",
-        "role": "population_only",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "effects": [
-          "row_filter",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "nodeId": "table_customer_favorites",
-        "nodeLabel": "customer_favorites",
-        "nodeType": "table",
-        "role": "population_only",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "effects": [
           "output_selection",
           "output_cap",
+          "null_extension",
         ],
         "influenceIds": [
+          "scope_main_output_where_1",
           "scope_main_output_order_by_1",
           "scope_main_output_limit_1",
+          "scope_main_output_join_2",
         ],
         "nodeId": "main_output",
         "nodeLabel": "Final Result",
         "nodeType": "output",
         "role": "population_and_value",
         "signals": [
+          "where",
+          "outer_join",
           "limit",
           "order_by",
-        ],
-      },
-      {
-        "effects": [
-          "null_extension",
-        ],
-        "influenceIds": [
-          "scope_main_output_join_2",
-        ],
-        "nodeId": "cte_payment_summary",
-        "nodeLabel": "payment_summary",
-        "nodeType": "cte",
-        "role": "population_and_value",
-        "signals": [
-          "outer_join",
         ],
       },
     ],
@@ -2478,39 +2400,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         {
           "effects": [
             "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_and_value",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
             "output_cap",
           ],
           "influenceIds": [
+            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
           ],
@@ -2519,6 +2413,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
+            "where",
             "limit",
             "order_by",
           ],
@@ -3145,10 +3040,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "influenceIds": [
             "scope_cte_order_totals_group_by_1",
           ],
-          "nodeId": "cte_recent_orders",
-          "nodeLabel": "recent_orders",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
           "nodeType": "cte",
-          "role": "population_only",
+          "role": "population_and_value",
           "signals": [
             "group_by",
           ],
@@ -3156,64 +3051,25 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         {
           "effects": [
             "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
             "output_cap",
+            "null_extension",
           ],
           "influenceIds": [
+            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
+            "scope_main_output_join_1",
           ],
           "nodeId": "main_output",
           "nodeLabel": "Final Result",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
+            "where",
+            "outer_join",
             "limit",
             "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "influenceIds": [
-            "scope_main_output_join_1",
-          ],
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "nodeType": "cte",
-          "role": "population_and_value",
-          "signals": [
-            "outer_join",
           ],
         },
       ],
@@ -3963,9 +3819,9 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             "scope_cte_payment_summary_where_1",
             "scope_cte_payment_summary_group_by_1",
           ],
-          "nodeId": "table_payments",
-          "nodeLabel": "payments",
-          "nodeType": "table",
+          "nodeId": "cte_payment_summary",
+          "nodeLabel": "payment_summary",
+          "nodeType": "cte",
           "role": "population_and_value",
           "signals": [
             "where",
@@ -3975,64 +3831,25 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         {
           "effects": [
             "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
             "output_cap",
+            "null_extension",
           ],
           "influenceIds": [
+            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
+            "scope_main_output_join_2",
           ],
           "nodeId": "main_output",
           "nodeLabel": "Final Result",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
+            "where",
+            "outer_join",
             "limit",
             "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "influenceIds": [
-            "scope_main_output_join_2",
-          ],
-          "nodeId": "cte_payment_summary",
-          "nodeLabel": "payment_summary",
-          "nodeType": "cte",
-          "role": "population_and_value",
-          "signals": [
-            "outer_join",
           ],
         },
       ],
@@ -4914,9 +4731,9 @@ end",
             "scope_cte_payment_summary_where_1",
             "scope_cte_payment_summary_group_by_1",
           ],
-          "nodeId": "table_payments",
-          "nodeLabel": "payments",
-          "nodeType": "table",
+          "nodeId": "cte_payment_summary",
+          "nodeLabel": "payment_summary",
+          "nodeType": "cte",
           "role": "population_and_value",
           "signals": [
             "where",
@@ -4926,64 +4743,25 @@ end",
         {
           "effects": [
             "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
             "output_cap",
+            "null_extension",
           ],
           "influenceIds": [
+            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
+            "scope_main_output_join_2",
           ],
           "nodeId": "main_output",
           "nodeLabel": "Final Result",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
+            "where",
+            "outer_join",
             "limit",
             "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "influenceIds": [
-            "scope_main_output_join_2",
-          ],
-          "nodeId": "cte_payment_summary",
-          "nodeLabel": "payment_summary",
-          "nodeType": "cte",
-          "role": "population_and_value",
-          "signals": [
-            "outer_join",
           ],
         },
       ],
@@ -6187,28 +5965,12 @@ end",
             "scope_cte_recent_orders_where_2",
             "scope_cte_recent_orders_join_1",
           ],
-          "nodeId": "table_orders",
-          "nodeLabel": "orders",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-            "join_xn",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-            "row_multiplication",
-          ],
-          "influenceIds": [
-            "scope_cte_recent_orders_join_1",
-          ],
-          "nodeId": "table_order_items",
-          "nodeLabel": "order_items",
-          "nodeType": "table",
+          "nodeId": "cte_recent_orders",
+          "nodeLabel": "recent_orders",
+          "nodeType": "cte",
           "role": "population_and_value",
           "signals": [
+            "where",
             "join_xn",
           ],
         },
@@ -6219,8 +5981,8 @@ end",
           "influenceIds": [
             "scope_cte_order_totals_group_by_1",
           ],
-          "nodeId": "cte_recent_orders",
-          "nodeLabel": "recent_orders",
+          "nodeId": "cte_order_totals",
+          "nodeLabel": "order_totals",
           "nodeType": "cte",
           "role": "population_and_value",
           "signals": [
@@ -6230,64 +5992,25 @@ end",
         {
           "effects": [
             "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customers",
-          "nodeLabel": "customers",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "influenceIds": [
-            "scope_main_output_where_1",
-          ],
-          "nodeId": "table_customer_favorites",
-          "nodeLabel": "customer_favorites",
-          "nodeType": "table",
-          "role": "population_only",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
             "output_cap",
+            "null_extension",
           ],
           "influenceIds": [
+            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
+            "scope_main_output_join_1",
           ],
           "nodeId": "main_output",
           "nodeLabel": "Final Result",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
+            "where",
+            "outer_join",
             "limit",
             "order_by",
-          ],
-        },
-        {
-          "effects": [
-            "null_extension",
-          ],
-          "influenceIds": [
-            "scope_main_output_join_1",
-          ],
-          "nodeId": "cte_order_totals",
-          "nodeLabel": "order_totals",
-          "nodeType": "cte",
-          "role": "population_and_value",
-          "signals": [
-            "outer_join",
           ],
         },
       ],
