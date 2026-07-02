@@ -27,6 +27,7 @@ export type GraphNodeData = {
   highlightedNodeIds?: Set<string>;
   highlightedNodeImpactLabels?: Map<string, string[]>;
   highlightedNodeTone?: 'population' | 'value';
+  highlightedReferenceLabels?: Map<string, string[]>;
   highlightedSourceDataLabels?: Map<string, string[]>;
   highlightedSourceDataNodeIds?: Set<string>;
   dimmed?: boolean;

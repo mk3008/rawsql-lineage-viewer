@@ -635,6 +635,13 @@ textarea {
   color: #5b21b6;
 }
 
+.legend-badge-reference {
+  border-color: #bfdbfe;
+  background: rgb(239 246 255 / 94%);
+  color: #1d4ed8;
+  font-weight: 750;
+}
+
 .graph-shell {
   position: relative;
   align-self: stretch;
@@ -702,6 +709,14 @@ textarea {
   font-size: 11px;
   font-weight: 850;
   text-transform: uppercase;
+}
+
+.legend-panel-note {
+  margin: 0;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.45;
 }
 
 .legend-panel-list {
@@ -2290,6 +2305,7 @@ textarea {
 }
 
 .lineage-node-impact-badges,
+.lineage-node-reference-badges,
 .lineage-node-source-data-badges {
   display: inline-flex;
   align-items: center;
@@ -2319,6 +2335,21 @@ textarea {
   padding: 2px 7px;
   background: rgb(245 243 255 / 92%);
   color: #5b21b6;
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1.4;
+  white-space: nowrap;
+  box-shadow: 0 6px 12px rgb(15 23 42 / 8%);
+}
+
+.lineage-node-reference-badges span {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: rgb(239 246 255 / 94%);
+  color: #1d4ed8;
   font-size: 10px;
   font-weight: 750;
   line-height: 1.4;

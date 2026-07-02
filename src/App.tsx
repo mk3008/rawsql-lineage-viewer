@@ -913,14 +913,18 @@ function LegendPanel() {
       </section>
       <section className="legend-panel-section">
         <h3>Row Lineage badges</h3>
+        <p className="legend-panel-note">Focus badges show operations to inspect for the selected symptom. Operation badges stay on the SELECT/CTE/output node that owns them.</p>
         <dl className="legend-impact-list">
           <div><dt><i className="legend-badge">Where</i></dt><dd>WHERE / EXISTS may filter rows</dd></div>
           <div><dt><i className="legend-badge">Having</i></dt><dd>HAVING may filter groups</dd></div>
           <div><dt><i className="legend-badge">Join xN</i></dt><dd>JOIN may drop or multiply rows</dd></div>
           <div><dt><i className="legend-badge">Outer Join</i></dt><dd>OUTER JOIN may add NULLs</dd></div>
+          <div><dt><i className="legend-badge">Distinct</i></dt><dd>DISTINCT may remove duplicate output rows</dd></div>
+          <div><dt><i className="legend-badge">Distinct On</i></dt><dd>DISTINCT ON selects one row per key</dd></div>
           <div><dt><i className="legend-badge">Group By</i></dt><dd>GROUP BY may change grain/counts</dd></div>
           <div><dt><i className="legend-badge">Limit</i></dt><dd>LIMIT / OFFSET may cap rows</dd></div>
           <div><dt><i className="legend-badge">Order By</i></dt><dd>ORDER BY may change selected rows</dd></div>
+          <div><dt><i className="legend-badge legend-badge-reference">Used by ...</i></dt><dd>Source referenced by the selected operation</dd></div>
           <div><dt><i className="legend-badge legend-badge-source-data">Data?</i></dt><dd>Source data values may be incorrect</dd></div>
         </dl>
       </section>

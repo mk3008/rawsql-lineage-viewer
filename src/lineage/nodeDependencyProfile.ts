@@ -56,6 +56,8 @@ function collectScopeImpacts(scope: LineageScope): LineageImpact[] {
   return [
     ...(scope.where ?? []).flatMap((condition) => condition.impact),
     ...(scope.having ?? []).flatMap((condition) => condition.impact),
+    ...(scope.distinct?.impact ?? []),
+    ...(scope.distinctOn ?? []).flatMap((expression) => expression.impact),
     ...(scope.groupBy ?? []).flatMap((expression) => expression.impact),
     ...(scope.orderBy ?? []).flatMap((expression) => expression.impact),
     ...(scope.limit?.impact ?? []),
@@ -78,6 +80,8 @@ function populationEffectFromImpact(impact: LineageImpact): LineagePopulationEff
       return 'row_filter';
     case 'may_limit_rows':
       return 'output_cap';
+    case 'may_deduplicate_rows':
+      return 'row_deduplication';
     case 'may_multiply_rows':
       return 'row_multiplication';
     case 'may_null_extend_rows':
