@@ -22,6 +22,19 @@ function handleOffsetFromHeaderCenter(
   return Math.abs(headerCenterY - handleCenterY);
 }
 
+function rectanglesOverlap(
+  first: Awaited<ReturnType<import('@playwright/test').Locator['boundingBox']>>,
+  second: Awaited<ReturnType<import('@playwright/test').Locator['boundingBox']>>,
+) {
+  if (!first || !second) {
+    return false;
+  }
+  return first.x < second.x + second.width
+    && first.x + first.width > second.x
+    && first.y < second.y + second.height
+    && first.y + first.height > second.y;
+}
+
 test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await page.goto('/');
 
@@ -121,10 +134,13 @@ test('shows SELECT DISTINCT as a node-level row lineage badge only after selecti
   await page.getByRole('combobox', { name: 'Focus' }).selectOption({ label: 'All signals' });
 
   const outputNode = page.getByTestId('rf__node-main_output');
+  const sourceNode = page.getByTestId('rf__node-table_tables');
+  const sidePanel = page.getByLabel('Side panel');
   await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await outputNode.getByRole('button', { name: 'id', exact: true }).click();
   await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Distinct');
+  await expect(sourceNode.locator('.lineage-node-source-data-badges')).toContainText('Data');
 });
 
 test('keeps SELECT DISTINCT ON row lineage badge on the SELECT scope node after selecting a column', async ({ page }) => {
@@ -145,7 +161,50 @@ test('keeps SELECT DISTINCT ON row lineage badge on the SELECT scope node after 
   await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await outputNode.getByRole('button', { name: 'customer_id', exact: true }).click();
   await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Distinct On');
-  await expect(ordersNode).not.toContainText('Distinct On');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).not.toContainText('Order By');
+  await expect(ordersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+  await expect(ordersNode.locator('.lineage-node-reference-badges')).toContainText('Ref: Distinct On');
+});
+
+test('shows Limit and Top-N graph badges without a standalone Order By badge', async ({ page }) => {
+  await page.goto('/');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  const sidePanel = page.getByLabel('Side panel');
+
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT a.id
+    FROM tables a
+    ORDER BY a.id
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByRole('combobox', { name: 'Focus' }).selectOption({ label: 'All signals' });
+  await outputNode.getByRole('button', { name: 'id', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
+
+  await sidePanel.getByRole('tab', { name: 'SQL' }).click();
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT a.id
+    FROM tables a
+    LIMIT 10
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await outputNode.getByRole('button', { name: 'id', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Limit');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).not.toContainText('Order By');
+
+  await sidePanel.getByRole('tab', { name: 'SQL' }).click();
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill(`
+    SELECT a.id
+    FROM tables a
+    ORDER BY a.id
+    LIMIT 10
+  `);
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await outputNode.getByRole('button', { name: 'id', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Top-N');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).not.toContainText('Limit');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).not.toContainText('Order By');
 });
 
 test('allows the SQL editor to scroll vertically for long queries', async ({ page }) => {
@@ -588,11 +647,11 @@ test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) =>
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-selected/);
   await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Where');
   await expect(customersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
-  await expect(ordersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(ordersNode.locator('.lineage-node')).not.toHaveClass(/lineage-node-highlighted/);
   await expect(customersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(ordersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
-  await expect(customersNode.locator('.lineage-node-reference-badges')).toContainText('Used by Where');
-  await expect(ordersNode.locator('.lineage-node-reference-badges')).toContainText('Used by Where');
+  await expect(customersNode.locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
+  await expect(ordersNode.locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
 });
 
 test('does not mix node condition columns into selected column lineage', async ({ page }) => {
@@ -1043,15 +1102,15 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(diagnosticJson).toContainText('"columnLineage"');
   await problemFocus.selectOption('missing_rows');
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Where');
-  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).not.toHaveClass(/lineage-node-highlighted/);
   await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-impact-badges')).toHaveCount(0);
-  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-reference-badges')).toContainText('Used by Where');
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
   await problemFocus.selectOption('value_too_low');
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-reference-badges')).toHaveCount(0);
-  await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-reference-badges')).toContainText('Used by Outer Join');
-  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).toContainText('Used by Where');
-  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).not.toContainText('Used by Outer Join');
+  await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-reference-badges')).toContainText('Ref: Outer Join');
+  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
+  await expect(page.getByTestId('rf__node-table_customers').locator('.lineage-node-reference-badges')).not.toContainText('Ref: Outer Join');
   await problemFocus.selectOption('value_missing');
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Outer Join');
   await expect(page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-impact-badges')).not.toContainText('Outer Join');
@@ -1578,6 +1637,34 @@ test('uses the same compact collapsed-group layout on initial auto layout load',
       return Math.abs(nextLayout.orderTotalsGap - initialLayout.orderTotalsGap) + Math.abs(nextLayout.orderItemsGap - initialLayout.orderItemsGap);
     })
     .toBeLessThan(8);
+});
+
+test('keeps focus badges from overlapping neighboring nodes after switching to All signals', async ({ page }) => {
+  await page.setViewportSize({ width: 1500, height: 1000 });
+  await page.goto('/');
+  await showAllColumns(page);
+
+  const problemFocus = page.getByLabel('Focus', { exact: true });
+  await problemFocus.selectOption('missing_rows');
+
+  const outputNode = page.getByTestId('rf__node-main_output');
+  await outputNode.getByRole('button', { name: 'total_amount', exact: true }).click();
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Where');
+
+  await problemFocus.selectOption('all_signals');
+  await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Top-N');
+
+  const orderTotalsBadgeStack = page.getByTestId('rf__node-cte_order_totals').locator('.lineage-node-badge-stack');
+  const orderItemsCard = page.getByTestId('rf__node-table_order_items').locator('.lineage-node');
+  await expect(orderTotalsBadgeStack).toBeVisible();
+  await expect(orderItemsCard).toBeVisible();
+  await expect
+    .poll(async () => {
+      const badgeBox = await orderTotalsBadgeStack.boundingBox();
+      const orderItemsBox = await orderItemsCard.boundingBox();
+      return rectanglesOverlap(badgeBox, orderItemsBox) ? 'overlap' : 'clear';
+    })
+    .toBe('clear');
 });
 
 test('keeps auto layout compact for collapsed groups in the long SQL reading case', async ({ page }) => {

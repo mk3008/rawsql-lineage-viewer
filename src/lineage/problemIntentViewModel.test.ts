@@ -3,6 +3,7 @@ import type { ColumnDiagnosticPacket } from './diagnostics';
 import { diagnosticProblemIntents, problemIntentOptions, symptomEffectMap, symptomMechanismMap } from './problemIntent';
 import {
   filterPopulationInfluencesForIntent,
+  graphReferenceLabelsForInfluence,
   populationImpactLabelsByNodeIdForIntent,
   rankCandidateConcernsForIntent,
   sourceDataValueLabelsByNodeIdForIntent,
@@ -81,7 +82,7 @@ describe('problem intent view model', () => {
 
     expect(populationImpactLabelsByNodeIdForIntent(packet, 'all_signals')).toMatchObject({
       main_output: ['Distinct'],
-      distinct_on_output: ['Distinct On', 'Order By'],
+      distinct_on_output: ['Distinct On'],
     });
     expect(populationImpactLabelsByNodeIdForIntent(packet, 'duplicate_rows')).toMatchObject({
       main_output: ['Distinct'],
@@ -89,21 +90,73 @@ describe('problem intent view model', () => {
     });
   });
 
-  it('maps source data concerns to separate source leaf badges', () => {
+  it('hides standalone ORDER BY and folds ORDER BY with LIMIT into Top-N graph badges', () => {
     const packet = createPacket();
-    packet.candidateConcerns.push({
-      checkDomains: ['data_condition'],
-      confidence: 'possible',
-      effects: ['source_data_value'],
-      evidence: ['order_items.quantity', 'order_items.unit_price'],
-      impact: ['may_change_value'],
-      influenceIds: [],
-      kind: 'source_data_value',
-      mechanisms: [],
-      reason: 'Source leaf values may be incorrect.',
-      scopeId: 'scope_recent_orders',
-      signals: [],
+    packet.rowLineage.influences.push(
+      {
+        effects: ['output_selection'],
+        id: 'order-only',
+        kind: 'order_by',
+        mechanism: 'order_by',
+        references: [],
+        scopeId: 'scope_order_only',
+        signals: ['order_by'],
+      },
+      {
+        effects: ['output_selection'],
+        id: 'top-n-order',
+        kind: 'order_by',
+        mechanism: 'order_by',
+        references: [],
+        scopeId: 'scope_top_n',
+        signals: ['order_by'],
+      },
+      {
+        effects: ['output_cap'],
+        id: 'top-n-limit',
+        kind: 'limit',
+        mechanism: 'limit',
+        references: [],
+        scopeId: 'scope_top_n',
+        signals: ['limit'],
+      },
+    );
+    packet.rowLineage.nodeImpacts.push(
+      {
+        effects: ['output_selection'],
+        influenceIds: ['order-only'],
+        nodeId: 'order_only_output',
+        nodeLabel: 'Order Only',
+        nodeType: 'output',
+        role: 'population_and_value',
+        signals: ['order_by'],
+      },
+      {
+        effects: ['output_cap', 'output_selection'],
+        influenceIds: ['top-n-order', 'top-n-limit'],
+        nodeId: 'top_n_output',
+        nodeLabel: 'Top N',
+        nodeType: 'output',
+        role: 'population_and_value',
+        signals: ['order_by', 'limit'],
+      },
+    );
+
+    expect(populationImpactLabelsByNodeIdForIntent(packet, 'all_signals')).toMatchObject({
+      table_payments: ['Limit'],
+      top_n_output: ['Top-N'],
     });
+    expect(populationImpactLabelsByNodeIdForIntent(packet, 'all_signals')).not.toHaveProperty('order_only_output');
+    expect(populationImpactLabelsByNodeIdForIntent(packet, 'missing_rows')).toMatchObject({
+      table_payments: ['Limit'],
+      top_n_output: ['Top-N'],
+    });
+    expect(graphReferenceLabelsForInfluence(packet.rowLineage.influences.find((item) => item.id === 'top-n-order')!, packet.rowLineage.influences, 'all_signals')).toEqual(['Ref: Top-N']);
+    expect(graphReferenceLabelsForInfluence(packet.rowLineage.influences.find((item) => item.id === 'order-only')!, packet.rowLineage.influences, 'all_signals')).toEqual([]);
+  });
+
+  it('maps selected value source leaves to source data badges', () => {
+    const packet = createPacket();
     packet.columnLineage.sourceLeaves = [
       {
         columnName: 'quantity',
@@ -122,15 +175,17 @@ describe('problem intent view model', () => {
     ];
 
     expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'value_too_high')).toEqual({
-      table_order_items: ['Data?'],
+      table_order_items: ['Data'],
     });
     expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'value_too_low')).toEqual({
-      table_order_items: ['Data?'],
+      table_order_items: ['Data'],
     });
     expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'all_signals')).toEqual({
-      table_order_items: ['Data?'],
+      table_order_items: ['Data'],
     });
-    expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'logic_review')).toEqual({});
+    expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'logic_review')).toEqual({
+      table_order_items: ['Data'],
+    });
   });
 
   it('filters influences and ranks concerns by selected intent without mutating the packet', () => {

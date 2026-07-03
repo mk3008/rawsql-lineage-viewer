@@ -152,9 +152,11 @@ function PopulationImpactBadges({ labels }: { labels: string[] }) {
   const overflowCount = labels.length - visibleLabels.length;
 
   return (
-    <div className="lineage-node-impact-badges" aria-label={`Population impacts: ${labels.join(', ')}`}>
+    <div className="lineage-node-impact-badges" aria-label={`Focus row-lineage signals to inspect: ${labels.join(', ')}`}>
       {visibleLabels.map((label) => (
-        <span key={label}>{label}</span>
+        <span key={label} title="Focus symptom signal on the node that owns this row-lineage operation">
+          {label}
+        </span>
       ))}
       {overflowCount > 0 ? <span>+{overflowCount}</span> : null}
     </div>
@@ -166,9 +168,9 @@ function SourceDataBadges({ labels }: { labels: string[] }) {
   const overflowCount = labels.length - visibleLabels.length;
 
   return (
-    <div className="lineage-node-source-data-badges" aria-label={`Source data concerns: ${labels.join(', ')}`}>
+    <div className="lineage-node-source-data-badges" aria-label={`Source data used by the selected value lineage: ${labels.join(', ')}`}>
       {visibleLabels.map((label) => (
-        <span key={label} title="Source data values may be incorrect">
+        <span key={label} title="Source data used by the selected value lineage">
           {label}
         </span>
       ))}
@@ -182,9 +184,9 @@ function ReferenceBadges({ labels }: { labels: string[] }) {
   const overflowCount = labels.length - visibleLabels.length;
 
   return (
-    <div className="lineage-node-reference-badges" aria-label={`Referenced by selected row-lineage causes: ${labels.join(', ')}`}>
+    <div className="lineage-node-reference-badges" aria-label={`Referenced by the selected row-lineage signal: ${labels.join(', ')}`}>
       {visibleLabels.map((label) => (
-        <span key={label} title={`This source is referenced by a row-lineage operation: ${label}`}>
+        <span key={label} title="This source is referenced by the highlighted condition or population signal">
           {label}
         </span>
       ))}
