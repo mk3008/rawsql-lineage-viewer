@@ -7,6 +7,7 @@ import {
   FunctionSource,
   InsertQuery,
   InlineQuery,
+  optimizeConditions,
   ParenSource,
   SelectQueryParser,
   SelectOutputCollector,
@@ -102,14 +103,17 @@ const nodeSqlFormatter = new SqlFormatter({
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 function parseLineageSelectQuery(sql: string): SelectQuery {
+  const wrappedSelectSql = extractWrappedSelectSql(sql);
+  if (wrappedSelectSql) {
+    return parseLineageSelectQuery(wrappedSelectSql);
+  }
+
+  const originalStatement = parseSqlOrUndefined(sql);
   let statement: unknown;
   try {
-    statement = SqlParser.parse(sql);
+    statement = SqlParser.parse(optimizeLineageSelectSql(sql));
+    restoreLineageComments(statement, originalStatement);
   } catch (error) {
-    const wrappedSelectSql = extractWrappedSelectSql(sql);
-    if (wrappedSelectSql) {
-      return parseLineageSelectQuery(wrappedSelectSql);
-    }
     throw error;
   }
 
@@ -124,7 +128,10 @@ function parseLineageSelectQuery(sql: string): SelectQuery {
     if (!statement.selectQuery || statement.selectQuery instanceof ValuesQuery) {
       throw new Error('INSERT lineage requires a SELECT query.');
     }
-    return statement.selectQuery;
+    const originalSelectQuery = originalStatement instanceof InsertQuery && isSelectQuery(originalStatement.selectQuery)
+      ? originalStatement.selectQuery
+      : statement.selectQuery;
+    return optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery);
   }
 
   if (isSelectQuery(statement)) {
@@ -132,6 +139,123 @@ function parseLineageSelectQuery(sql: string): SelectQuery {
   }
 
   throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
+}
+
+function optimizeLineageSelectSql(sql: string): string {
+  const result = optimizeConditions(sql);
+  return result.ok ? result.sql : sql;
+}
+
+function optimizeLineageSelectQuery(query: SelectQuery, commentSource: SelectQuery = query): SelectQuery {
+  const result = optimizeConditions(query);
+  if (!result.ok) {
+    return query;
+  }
+
+  const optimized = SqlParser.parse(result.sql);
+  restoreLineageComments(optimized, commentSource);
+  return isSelectQuery(optimized) ? optimized : query;
+}
+
+function parseSqlOrUndefined(sql: string): unknown {
+  try {
+    return SqlParser.parse(sql);
+  } catch {
+    return undefined;
+  }
+}
+
+function restoreLineageComments(target: unknown, source: unknown): void {
+  if (!target || !source || typeof target !== 'object' || typeof source !== 'object') {
+    return;
+  }
+
+  copyCommentMetadata(target, source);
+  if (target instanceof CreateTableQuery && source instanceof CreateTableQuery) {
+    restoreLineageComments(target.asSelectQuery, source.asSelectQuery);
+    return;
+  }
+  if (target instanceof InsertQuery && source instanceof InsertQuery) {
+    restoreLineageComments(target.selectQuery, source.selectQuery);
+    return;
+  }
+  if (target instanceof SimpleSelectQuery && source instanceof SimpleSelectQuery) {
+    restoreSimpleSelectComments(target, source);
+    return;
+  }
+  if (target instanceof BinarySelectQuery && source instanceof BinarySelectQuery) {
+    restoreLineageComments(target.left, source.left);
+    restoreLineageComments(target.right, source.right);
+  }
+}
+
+function restoreSimpleSelectComments(target: SimpleSelectQuery, source: SimpleSelectQuery): void {
+  copyCommentMetadata(target.selectClause, source.selectClause);
+  copySelectItemComments(target.selectClause.items, source.selectClause.items);
+  copyCommentMetadata(target.fromClause, source.fromClause);
+  copyCommentMetadata(target.whereClause, source.whereClause);
+  copyCommentMetadata(target.groupByClause, source.groupByClause);
+  copyCommentMetadata(target.havingClause, source.havingClause);
+  copyCommentMetadata(target.orderByClause, source.orderByClause);
+  copyCommentMetadata(target.limitClause, source.limitClause);
+  copyCommentMetadata(target.offsetClause, source.offsetClause);
+  copyCteComments(target.withClause?.tables, source.withClause?.tables);
+}
+
+function copyCteComments(targetCtes: CommonTable[] | undefined | null, sourceCtes: CommonTable[] | undefined | null): void {
+  if (!targetCtes?.length || !sourceCtes?.length) {
+    return;
+  }
+
+  const sourceByName = new Map(sourceCtes.map((cte) => [cte.getSourceAliasName().toLowerCase(), cte]));
+  for (const targetCte of targetCtes) {
+    const sourceCte = sourceByName.get(targetCte.getSourceAliasName().toLowerCase());
+    if (!sourceCte) {
+      continue;
+    }
+    copyCommentMetadata(targetCte, sourceCte);
+    copyCommentMetadata(targetCte.aliasExpression, sourceCte.aliasExpression);
+    copyCommentMetadata(targetCte.aliasExpression?.table, sourceCte.aliasExpression?.table);
+    restoreLineageComments(targetCte.query, sourceCte.query);
+  }
+}
+
+function copySelectItemComments(targetItems: SimpleSelectQuery['selectClause']['items'], sourceItems: SimpleSelectQuery['selectClause']['items']): void {
+  for (let index = 0; index < targetItems.length && index < sourceItems.length; index += 1) {
+    const targetItem = targetItems[index] as CommentMetadataCarrier;
+    const sourceItem = sourceItems[index] as CommentMetadataCarrier;
+    copyCommentMetadata(targetItem, sourceItem);
+    copyCommentMetadata(targetItems[index].value, sourceItems[index].value);
+    copyCommentMetadata(targetItems[index].identifier, sourceItems[index].identifier);
+    copyCommentField(targetItem, sourceItem, 'aliasPositionedComments');
+  }
+}
+
+type CommentMetadataCarrier = {
+  comments?: unknown;
+  positionedComments?: unknown;
+  trailingComments?: unknown;
+  globalComments?: unknown;
+  headerComments?: unknown;
+  aliasPositionedComments?: unknown;
+};
+
+function copyCommentMetadata(target: unknown, source: unknown): void {
+  if (!target || !source || typeof target !== 'object' || typeof source !== 'object') {
+    return;
+  }
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'comments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'positionedComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'trailingComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'globalComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'headerComments');
+}
+
+function copyCommentField(target: CommentMetadataCarrier, source: CommentMetadataCarrier, field: keyof CommentMetadataCarrier): void {
+  const value = source[field];
+  if (value !== undefined && value !== null) {
+    target[field] = value;
+  }
 }
 
 function isSelectQuery(value: unknown): value is SelectQuery {
@@ -613,7 +737,7 @@ function formatCteExecutableSql(
         .map((dependency, index) => {
           const suffix = index === dependencySql.length - 1 ? '' : ',';
           const comments = cteCommentsByName.get(dependency.name)?.filter((comment) => !dependency.sql.includes(comment));
-          const commentSql = comments?.length ? `${comments.map((comment) => formatLineComment(comment, '  ')).join('\n')}\n` : '';
+          const commentSql = comments?.length ? `${formatSmartCommentBlock(comments, '  ')}\n` : '';
           return `${commentSql}  ${dependency.name} as (\n${indentSql(dependency.sql)}\n  )${suffix}`;
         })
         .join('\n');
@@ -668,7 +792,7 @@ function prependHeaderCommentsIfMissing(sql: string | undefined, comments: strin
     return sql;
   }
   const missingComments = comments.filter((comment) => !sql.includes(comment));
-  return `${missingComments.map((comment) => formatLineComment(comment, '')).join('\n')}\n${sql}`;
+  return `${formatSmartCommentBlock(missingComments, '')}\n${sql}`;
 }
 
 function restoreCteHeaderComments(sql: string, cteCommentsByName: Map<string, string[] | undefined>): string {
@@ -682,18 +806,23 @@ function restoreCteHeaderComments(sql: string, cteCommentsByName: Map<string, st
     }
     const declarationPattern = new RegExp(`^(\\s*)(${escapeRegExp(cteName)}\\s+as\\s*\\()`, 'im');
     restoredSql = restoredSql.replace(declarationPattern, (_match, indent: string, declaration: string) => {
-      const commentSql = comments.map((comment) => formatLineComment(comment, indent)).join('\n');
+      const commentSql = formatSmartCommentBlock(comments, indent);
       return `${commentSql}\n${indent}${declaration}`;
     });
   }
   return restoredSql;
 }
 
-function formatLineComment(comment: string, indent: string): string {
-  return comment
-    .split(/\r?\n/)
-    .map((line) => `${indent}-- ${line}`)
-    .join('\n');
+function formatSmartCommentBlock(comments: string[], indent: string): string {
+  const lines = comments.flatMap((comment) => comment.split(/\r?\n/).map((line) => line.trimEnd()));
+  if (lines.length === 1) {
+    return `${indent}-- ${lines[0]}`;
+  }
+  return [
+    `${indent}/*`,
+    ...lines.map((line) => `${indent}  ${line}`),
+    `${indent}*/`,
+  ].join('\n');
 }
 
 function escapeRegExp(value: string): string {

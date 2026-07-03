@@ -250,50 +250,6 @@ textarea {
   color: #fff;
 }
 
-.sql-panel-tabs-layout {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  min-height: 0;
-  overflow: hidden;
-}
-
-.panel-subtabs {
-  display: inline-flex;
-  width: fit-content;
-  max-width: calc(100% - 28px);
-  align-self: start;
-  overflow: hidden;
-  border: 1px solid #d8e2ef;
-  border-radius: 8px;
-  padding: 10px 14px;
-  margin: 10px 14px;
-  padding: 0;
-  background: #fff;
-}
-
-.panel-subtabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 32px;
-  border: 0;
-  padding: 0 10px;
-  background: #f8fafc;
-  color: #475569;
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.panel-subtabs button + button {
-  border-left: 1px solid #d8e2ef;
-}
-
-.panel-subtabs button.active {
-  background: #dbeafe;
-  color: #1d4ed8;
-}
-
 .text-button {
   min-height: 32px;
   padding: 0 10px;

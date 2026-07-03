@@ -248,9 +248,9 @@ describe('column diagnostics', () => {
     expect(packet.rowLineage.influences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          expressionSql: 'ro.customer_id = :customer_id',
+          expressionSql: 'o.customer_id = :customer_id',
           kind: 'where',
-          scopeId: 'scope_main_output',
+          scopeId: 'scope_cte_recent_orders',
         }),
         expect.objectContaining({
           expressionSql: 'o.status = :status',
