@@ -1113,6 +1113,8 @@ describe('rawsqlAdapter', () => {
     expect(orders?.columns.map((column) => column.name)).toEqual(['order_id', 'customer_id', 'status']);
     expect(conditionOptimization).toMatchObject({
       appliedCount: 1,
+      blockedCount: 0,
+      changed: true,
       enabled: true,
       safety: {
         mode: 'safe_only',
@@ -1121,8 +1123,13 @@ describe('rawsqlAdapter', () => {
     });
     expect(conditionOptimization.applied[0]).toMatchObject({
       conditionSql: 'ob.customer_id = :customer_id',
+      from: 'final SELECT WHERE',
       phaseKind: 'parameter_condition_placement',
+      status: 'moved',
+      to: 'orders_base CTE WHERE',
     });
+    expect(conditionOptimization.originalSql).toContain('ob.customer_id = :customer_id');
+    expect(conditionOptimization.optimizedSql.replace(/"/g, '')).toContain('o.customer_id = :customer_id');
   });
 
   it('can analyze SQL without condition placement optimization', () => {
@@ -1142,9 +1149,13 @@ describe('rawsqlAdapter', () => {
     expect(outputScope?.where?.map((condition) => condition.expressionSql)).toEqual(['ob.customer_id = :customer_id']);
     expect(conditionOptimization).toMatchObject({
       appliedCount: 0,
+      blockedCount: 0,
+      changed: false,
       enabled: false,
       ok: true,
     });
+    expect(conditionOptimization.originalSql).toContain('ob.customer_id = :customer_id');
+    expect(conditionOptimization.optimizedSql).toBe(conditionOptimization.originalSql);
   });
 
   it('classifies grouped output columns as GROUP BY usage before downstream joins', () => {

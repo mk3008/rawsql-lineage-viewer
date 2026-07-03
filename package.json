@@ -33,6 +33,7 @@
     "lucide-react": "^1.18.0",
     "rawsql-ts": "^0.26.1",
     "react": "^19.2.7",
+    "react-diff-viewer-continued": "4.2.2",
     "react-dom": "^19.2.7"
   }
 }

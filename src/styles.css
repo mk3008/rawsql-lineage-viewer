@@ -267,7 +267,7 @@ textarea {
 
 .sql-tab-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -358,6 +358,15 @@ textarea {
   font-weight: 750;
 }
 
+.sql-editor-analyze-button {
+  width: auto;
+  min-width: 132px;
+  height: 32px;
+  padding: 0 12px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 .analysis-status {
   display: flex;
   align-items: center;
@@ -375,9 +384,9 @@ textarea {
   color: #b45309;
 }
 
-.condition-optimization-summary {
+.condition-optimization-review {
   display: grid;
-  gap: 7px;
+  gap: 9px;
   margin: 0 16px 12px;
   border: 1px solid #bfdbfe;
   border-radius: 8px;
@@ -387,7 +396,7 @@ textarea {
   font-size: 12px;
 }
 
-.condition-optimization-summary-disabled {
+.condition-optimization-review-disabled {
   border-color: #e2e8f0;
   background: #f8fafc;
   color: #475569;
@@ -410,7 +419,7 @@ textarea {
   font-weight: 850;
 }
 
-.condition-optimization-summary-disabled .condition-optimization-summary-header strong {
+.condition-optimization-review-disabled .condition-optimization-summary-header strong {
   color: #64748b;
 }
 
@@ -419,44 +428,195 @@ textarea {
   line-height: 1.4;
 }
 
-.condition-optimization-summary ul {
-  display: grid;
-  gap: 5px;
-  margin: 0;
-  padding-left: 17px;
+.condition-optimization-trace-tabs {
+  display: inline-flex;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #f8fafc;
 }
 
-.condition-optimization-summary li {
+.condition-optimization-trace-tabs button {
+  display: inline-flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  min-height: 30px;
+  border: 0;
+  padding: 0 8px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.condition-optimization-trace-tabs button + button {
+  border-left: 1px solid #bfdbfe;
+}
+
+.condition-optimization-trace-tabs strong {
+  color: inherit;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.condition-optimization-trace-tabs .condition-optimization-trace-tab-active {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.condition-optimization-trace {
+  display: grid;
+  gap: 5px;
+}
+
+.condition-optimization-trace-title {
+  color: #475569;
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.condition-optimization-trace ul {
+  display: grid;
+  gap: 5px;
+  max-height: 150px;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  list-style: none;
+}
+
+.condition-optimization-trace li {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border-left: 3px solid #93c5fd;
+  border-radius: 5px;
+  padding: 5px 7px;
+  background: rgb(255 255 255 / 66%);
+  color: #334155;
   overflow-wrap: anywhere;
+}
+
+.condition-optimization-trace code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
   line-height: 1.35;
+}
+
+.condition-optimization-trace span,
+.condition-optimization-trace small {
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.condition-optimization-tabs {
+  display: inline-flex;
+  width: fit-content;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.condition-optimization-tabs button {
+  min-height: 28px;
+  border: 0;
+  padding: 0 10px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.condition-optimization-tabs button + button {
+  border-left: 1px solid #bfdbfe;
+}
+
+.condition-optimization-tabs .condition-optimization-tab-active {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.condition-optimization-sql-frame,
+.condition-optimization-diff {
+  min-width: 0;
+  max-height: 280px;
+  overflow: auto;
+  border: 1px solid #dbeafe;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.condition-optimization-sql {
+  min-width: 0;
+  background: #fff;
+  color: #152033;
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.condition-optimization-sql .cm-editor {
+  min-height: 180px;
+  padding: 10px 12px;
+}
+
+.condition-optimization-sql .cm-scroller {
+  overflow: auto;
+}
+
+.condition-optimization-diff table {
+  width: 100%;
+  min-width: 640px;
+  font-family: "Cascadia Code", "Fira Code", Consolas, monospace;
+  font-size: 11px;
+}
+
+.condition-optimization-diff pre {
+  white-space: pre-wrap;
+}
+
+.condition-optimization-empty-diff {
+  border: 1px dashed #cbd5e1;
+  border-radius: 7px;
+  padding: 10px;
+  background: #fff;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 @media (max-width: 960px) {
   .sql-tab-panel {
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
   }
 
   .sql-editor-actions {
     grid-row: 1;
   }
 
-  .panel-actions {
-    grid-row: 2;
-    border-bottom: 1px solid #e8edf5;
-    padding: 12px 16px;
-  }
-
   .sql-editor-frame {
-    grid-row: 3;
+    grid-row: 2;
   }
 
   .analysis-status {
-    grid-row: 4;
+    grid-row: 3;
   }
 
-  .condition-optimization-summary {
-    grid-row: 5;
+  .condition-optimization-review {
+    grid-row: 4;
   }
 }
 
@@ -3103,7 +3263,7 @@ textarea {
   }
 
   .workspace-mobile-panel-active .sql-tab-panel {
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto auto;
   }
 
   .workspace-mobile-panel-active .sql-editor-actions {
@@ -3115,22 +3275,15 @@ textarea {
   }
 
   .workspace-mobile-panel-active .sql-editor-frame {
-    grid-row: 3;
-  }
-
-  .workspace-mobile-panel-active .panel-actions {
     grid-row: 2;
-    border-top: 0;
-    border-bottom: 1px solid #e8edf5;
-    padding: 12px 16px;
   }
 
   .workspace-mobile-panel-active .analysis-status {
-    grid-row: 4;
+    grid-row: 3;
   }
 
-  .workspace-mobile-panel-active .condition-optimization-summary {
-    grid-row: 5;
+  .workspace-mobile-panel-active .condition-optimization-review {
+    grid-row: 4;
   }
 
   .canvas-area {
