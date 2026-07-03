@@ -73,7 +73,7 @@ describe('buildGraphModel', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const graph = buildGraphModel(lineage);
 
-    const preservedDataFlow = graph.edges.find((edge) => edge.id === 'table_customers-main_output');
+    const preservedDataFlow = graph.edges.find((edge) => edge.id === 'table_customers-cte_customer_scope');
     const outerDataFlow = graph.edges.find((edge) => edge.id === 'cte_order_totals-main_output');
     const innerDataFlow = graph.edges.find((edge) => edge.id === 'table_order_items-cte_recent_orders');
     const unaliasedDataFlow = graph.edges.find((edge) => edge.id === 'cte_recent_orders-cte_order_totals');
@@ -119,13 +119,13 @@ describe('buildGraphModel', () => {
     const downstreamOutput = downstream.nodes.find((node) => node.id === 'main_output');
     const upstreamCustomers = upstream.nodes.find((node) => node.id === 'table_customers');
     const upstreamOutput = upstream.nodes.find((node) => node.id === 'main_output');
-    const upstreamCustomerEdge = upstream.edges.find((edge) => edge.id === 'table_customers-main_output');
+    const upstreamCustomerScopeEdge = upstream.edges.find((edge) => edge.id === 'cte_customer_scope-main_output');
 
     expect(downstreamCustomers?.position.x).toBeLessThan(downstreamOutput?.position.x ?? 0);
     expect(upstreamOutput?.position.x).toBeLessThan(upstreamCustomers?.position.x ?? 0);
-    expect(upstreamCustomerEdge).toMatchObject({
+    expect(upstreamCustomerScopeEdge).toMatchObject({
       source: 'main_output',
-      target: 'table_customers',
+      target: 'cte_customer_scope',
     });
   });
 
@@ -235,12 +235,17 @@ describe('buildGraphModel', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const upstream = buildGraphModel(lineage, 'upstream');
     const output = upstream.nodes.find((node) => node.id === 'main_output');
+    const customerScope = upstream.nodes.find((node) => node.id === 'cte_customer_scope');
     const directTargets = upstream.edges
       .filter((edge) => edge.source === 'main_output')
       .map((edge) => upstream.nodes.find((node) => node.id === edge.target))
       .filter((node): node is NonNullable<typeof node> => Boolean(node));
     const cteTargets = directTargets.filter((node) => node.data.lineageNode.type === 'cte');
-    const tableTargets = directTargets.filter((node) => node.data.lineageNode.type === 'table');
+    const tableTargets = upstream.edges
+      .filter((edge) => edge.source === 'cte_customer_scope')
+      .map((edge) => upstream.nodes.find((node) => node.id === edge.target))
+      .filter((node): node is NonNullable<typeof node> => Boolean(node))
+      .filter((node) => node.data.lineageNode.type === 'table');
     const cteAverageY = cteTargets.reduce((sum, node) => sum + node.position.y, 0) / cteTargets.length;
     const tableAverageY = tableTargets.reduce((sum, node) => sum + node.position.y, 0) / tableTargets.length;
 
@@ -248,6 +253,7 @@ describe('buildGraphModel', () => {
     expect(cteTargets.length).toBeGreaterThan(0);
     expect(tableTargets.length).toBeGreaterThan(0);
     expect(Math.abs((output?.position.y ?? 0) - cteAverageY)).toBeLessThan(Math.abs((output?.position.y ?? 0) - tableAverageY));
+    expect(Math.abs((customerScope?.position.y ?? 0) - tableAverageY)).toBeLessThanOrEqual(Math.abs((output?.position.y ?? 0) - tableAverageY));
   });
 
   it('does not render recursive CTE self-reference edges as graph lines', () => {

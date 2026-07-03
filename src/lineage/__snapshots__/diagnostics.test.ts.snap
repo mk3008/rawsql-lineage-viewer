@@ -24,7 +24,7 @@ Column Lineage:
   - payments.paid_at (table)
 
 Row Lineage:
-- 6 row lineage influence(s) were found on the column lineage route.
+- 5 row lineage influence(s) were found on the column lineage route.
 - Influences:
   - where: p.status = 'succeeded'
     refs: payments.status [row_lineage]
@@ -32,25 +32,21 @@ Row Lineage:
   - group_by: p.customer_id
     refs: payments.customer_id [row_lineage]
     effects: grain_change
-  - exists: exists ( select 1 from customer_favorites as cf where cf.customer_id = c.id and cf.is_active = true )
-    refs: customers.id [row_lineage], customer_favorites.customer_id [row_lineage], customer_favorites.is_active [row_lineage]
-    effects: row_filter
   - order_by: total_amount desc
     refs: Final Result.total_amount [row_lineage]
     effects: output_selection
   - limit: limit 100
     effects: output_cap
-  - join: on ps.customer_id = c.id
-    refs: payment_summary.customer_id [row_lineage], customers.id [row_lineage]
+  - join: on ps.customer_id = cs.id
+    refs: payment_summary.customer_id [row_lineage], customer_scope.id [row_lineage]
     effects: null_extension
 
 Candidate concerns:
 - where (possible): where may influence the row population used to compute this column. evidence: p.status = 'succeeded'
 - group_by (possible): The GROUP BY expression may change the aggregation grain. evidence: p.customer_id
-- where_exists (possible): The EXISTS predicate may filter rows to those with a matching related record. evidence: exists ( select 1 from customer_favorites as cf where cf.customer_id = c.id and cf.is_active = true )
 - order_by (possible): The ORDER BY expression may change which rows are returned when combined with LIMIT/OFFSET. evidence: total_amount desc
 - limit (possible): The LIMIT clause restricts how many rows are returned. evidence: limit 100
-- join_on (low): The outer join should preserve left-side rows, but it may null-extend or multiply rows depending on matches. evidence: on ps.customer_id = c.id
+- join_on (low): The outer join should preserve left-side rows, but it may null-extend or multiply rows depending on matches. evidence: on ps.customer_id = cs.id
 - source_data_value (possible): Source leaf values may be incorrect and can affect the calculated value. evidence: payments.paid_at
 - case_when (possible): The CASE branch conditions or result expressions may change this column value. evidence: ps.last_paid_at is null -> 'unknown' | ps.last_paid_at < current_date - INTERVAL '30 days' -> 'needs_followup' | 'active'
 - aggregate_expression (possible): The aggregate expression may change the value and depends on the grouping grain. evidence: max(p.paid_at)"
@@ -98,32 +94,6 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     {
       "confidence": "possible",
       "evidence": [
-        "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-      ],
-      "impact": [
-        "may_filter_rows",
-      ],
-      "influenceIds": [
-        "scope_main_output_where_1",
-      ],
-      "kind": "where_exists",
-      "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-      "scopeId": "scope_main_output",
-      "signals": [
-        "where",
-      ],
-    },
-    {
-      "confidence": "possible",
-      "evidence": [
         "total_amount desc",
       ],
       "impact": [
@@ -161,7 +131,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     {
       "confidence": "low",
       "evidence": [
-        "on ps.customer_id = c.id",
+        "on ps.customer_id = cs.id",
       ],
       "impact": [
         "may_null_extend_rows",
@@ -639,36 +609,6 @@ end",
     },
     {
       "checkDomains": [
-        "program_logic",
-        "data_condition"
-      ],
-      "confidence": "possible",
-      "effects": [
-        "row_filter",
-        "exists"
-      ],
-      "evidence": [
-        "exists (\\n  select\\n    1\\n  from\\n    customer_favorites as cf\\n  where\\n    cf.customer_id = c.id\\n    and cf.is_active = true\\n)"
-      ],
-      "impact": [
-        "may_filter_rows"
-      ],
-      "influenceIds": [
-        "scope_main_output_where_1"
-      ],
-      "kind": "where_exists",
-      "mechanisms": [
-        "exists",
-        "where"
-      ],
-      "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-      "scopeId": "scope_main_output",
-      "signals": [
-        "where"
-      ]
-    },
-    {
-      "checkDomains": [
         "program_logic"
       ],
       "confidence": "possible",
@@ -734,7 +674,7 @@ end",
         "missing_match"
       ],
       "evidence": [
-        "on ps.customer_id = c.id"
+        "on ps.customer_id = cs.id"
       ],
       "impact": [
         "may_null_extend_rows"
@@ -837,9 +777,9 @@ end",
   "kind": "column-diagnostic-packet",
   "omittedContext": {
     "message": "Unrelated nodes and expressions were omitted.",
-    "omittedColumnCount": 16,
-    "omittedInfluenceCount": 5,
-    "omittedNodeCount": 4
+    "omittedColumnCount": 21,
+    "omittedInfluenceCount": 8,
+    "omittedNodeCount": 6
   },
   "rowLineage": {
     "influences": [
@@ -915,81 +855,6 @@ end",
       },
       {
         "effects": [
-          "row_filter"
-        ],
-        "expressionSql": "exists (\\n  select\\n    1\\n  from\\n    customer_favorites as cf\\n  where\\n    cf.customer_id = c.id\\n    and cf.is_active = true\\n)",
-        "id": "scope_main_output_where_1",
-        "kind": "where",
-        "mechanism": "exists",
-        "references": [
-          {
-            "columnName": "id",
-            "id": "ref:table_customers:id",
-            "nodeId": "table_customers",
-            "nodeLabel": "customers",
-            "roles": [
-              "row_lineage"
-            ],
-            "scopeId": "scope_main_output",
-            "usages": [
-              {
-                "role": "row_lineage",
-                "scopeId": "scope_main_output",
-                "usageKind": "where"
-              }
-            ],
-            "usedInScopeIds": [
-              "scope_main_output"
-            ]
-          },
-          {
-            "columnName": "customer_id",
-            "id": "ref:table_customer_favorites:customer_id",
-            "nodeId": "table_customer_favorites",
-            "nodeLabel": "customer_favorites",
-            "roles": [
-              "row_lineage"
-            ],
-            "scopeId": "scope_main_output",
-            "usages": [
-              {
-                "role": "row_lineage",
-                "scopeId": "scope_main_output",
-                "usageKind": "where"
-              }
-            ],
-            "usedInScopeIds": [
-              "scope_main_output"
-            ]
-          },
-          {
-            "columnName": "is_active",
-            "id": "ref:table_customer_favorites:is_active",
-            "nodeId": "table_customer_favorites",
-            "nodeLabel": "customer_favorites",
-            "roles": [
-              "row_lineage"
-            ],
-            "scopeId": "scope_main_output",
-            "usages": [
-              {
-                "role": "row_lineage",
-                "scopeId": "scope_main_output",
-                "usageKind": "where"
-              }
-            ],
-            "usedInScopeIds": [
-              "scope_main_output"
-            ]
-          }
-        ],
-        "signals": [
-          "where"
-        ],
-        "scopeId": "scope_main_output"
-      },
-      {
-        "effects": [
           "output_selection"
         ],
         "expressionSql": "total_amount desc",
@@ -1042,7 +907,7 @@ end",
         "effects": [
           "null_extension"
         ],
-        "expressionSql": "on ps.customer_id = c.id",
+        "expressionSql": "on ps.customer_id = cs.id",
         "id": "scope_main_output_join_2",
         "kind": "join_on",
         "mechanism": "join",
@@ -1070,9 +935,10 @@ end",
           },
           {
             "columnName": "id",
-            "id": "ref:table_customers:id",
-            "nodeId": "table_customers",
-            "nodeLabel": "customers",
+            "definedInScopeId": "scope_cte_customer_scope",
+            "id": "ref:cte_customer_scope:id",
+            "nodeId": "cte_customer_scope",
+            "nodeLabel": "customer_scope",
             "roles": [
               "row_lineage"
             ],
@@ -1117,13 +983,11 @@ end",
       },
       {
         "effects": [
-          "row_filter",
           "output_selection",
           "output_cap",
           "null_extension"
         ],
         "influenceIds": [
-          "scope_main_output_where_1",
           "scope_main_output_order_by_1",
           "scope_main_output_limit_1",
           "scope_main_output_join_2"
@@ -1133,14 +997,13 @@ end",
         "nodeType": "output",
         "role": "population_and_value",
         "signals": [
-          "where",
           "outer_join",
           "limit",
           "order_by"
         ]
       }
     ],
-    "summary": "6 row lineage influence(s) were found on the column lineage route."
+    "summary": "5 row lineage influence(s) were found on the column lineage route."
   },
   "target": {
     "columnName": "payment_status",
@@ -1641,62 +1504,6 @@ end",
       },
       {
         "effects": [
-          "row_filter",
-        ],
-        "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-        "id": "scope_main_output_where_1",
-        "kind": "where",
-        "mechanism": "exists",
-        "references": [
-          {
-            "columnName": "id",
-            "nodeId": "table_customers",
-            "nodeLabel": "customers",
-            "roles": [
-              "row_lineage",
-            ],
-            "usages": [
-              "row_lineage:where:scope_main_output",
-            ],
-          },
-          {
-            "columnName": "customer_id",
-            "nodeId": "table_customer_favorites",
-            "nodeLabel": "customer_favorites",
-            "roles": [
-              "row_lineage",
-            ],
-            "usages": [
-              "row_lineage:where:scope_main_output",
-            ],
-          },
-          {
-            "columnName": "is_active",
-            "nodeId": "table_customer_favorites",
-            "nodeLabel": "customer_favorites",
-            "roles": [
-              "row_lineage",
-            ],
-            "usages": [
-              "row_lineage:where:scope_main_output",
-            ],
-          },
-        ],
-        "scopeId": "scope_main_output",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "effects": [
           "output_selection",
         ],
         "expressionSql": "total_amount desc",
@@ -1740,7 +1547,7 @@ end",
         "effects": [
           "null_extension",
         ],
-        "expressionSql": "on ps.customer_id = c.id",
+        "expressionSql": "on ps.customer_id = cs.id",
         "id": "scope_main_output_join_2",
         "kind": "join_on",
         "mechanism": "join",
@@ -1758,8 +1565,8 @@ end",
           },
           {
             "columnName": "id",
-            "nodeId": "table_customers",
-            "nodeLabel": "customers",
+            "nodeId": "cte_customer_scope",
+            "nodeLabel": "customer_scope",
             "roles": [
               "row_lineage",
             ],
@@ -1795,13 +1602,11 @@ end",
       },
       {
         "effects": [
-          "row_filter",
           "output_selection",
           "output_cap",
           "null_extension",
         ],
         "influenceIds": [
-          "scope_main_output_where_1",
           "scope_main_output_order_by_1",
           "scope_main_output_limit_1",
           "scope_main_output_join_2",
@@ -1811,14 +1616,13 @@ end",
         "nodeType": "output",
         "role": "population_and_value",
         "signals": [
-          "where",
           "outer_join",
           "limit",
           "order_by",
         ],
       },
     ],
-    "summary": "6 row lineage influence(s) were found on the column lineage route.",
+    "summary": "5 row lineage influence(s) were found on the column lineage route.",
   },
   "target": {
     "columnName": "payment_status",
@@ -1889,28 +1693,6 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
     },
     {
       "effects": [
-        "row_filter",
-      ],
-      "kind": "where",
-      "sourceIds": [
-        "source:table_customers.id",
-        "source:table_customer_favorites.customer_id",
-        "source:table_customer_favorites.is_active",
-      ],
-      "targetId": "influence:scope_main_output_where_1",
-    },
-    {
-      "effects": [
-        "row_filter",
-      ],
-      "kind": "row_lineage",
-      "sourceIds": [
-        "influence:scope_main_output_where_1",
-      ],
-      "targetId": "target:main_output.payment_status",
-    },
-    {
-      "effects": [
         "output_selection",
       ],
       "kind": "order_by",
@@ -1954,7 +1736,7 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "kind": "join_on",
       "sourceIds": [
         "source:cte_payment_summary.customer_id",
-        "source:table_customers.id",
+        "source:cte_customer_scope.id",
       ],
       "targetId": "influence:scope_main_output_join_2",
     },
@@ -2006,26 +1788,6 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "role": "source",
     },
     {
-      "id": "influence:scope_main_output_where_1",
-      "label": "where",
-      "role": "influence",
-    },
-    {
-      "id": "source:table_customers.id",
-      "label": "customers.id",
-      "role": "source",
-    },
-    {
-      "id": "source:table_customer_favorites.customer_id",
-      "label": "customer_favorites.customer_id",
-      "role": "source",
-    },
-    {
-      "id": "source:table_customer_favorites.is_active",
-      "label": "customer_favorites.is_active",
-      "role": "source",
-    },
-    {
       "id": "influence:scope_main_output_order_by_1",
       "label": "order_by",
       "role": "influence",
@@ -2050,6 +1812,11 @@ exports[`column diagnostics > renders representative diagnostic text and view mo
       "label": "payment_summary.customer_id",
       "role": "source",
     },
+    {
+      "id": "source:cte_customer_scope.id",
+      "label": "customer_scope.id",
+      "role": "source",
+    },
   ],
 }
 `;
@@ -2058,6 +1825,62 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
 {
   "customer_id": {
     "candidateConcerns": [
+      {
+        "checkDomains": [
+          "program_logic",
+          "data_condition",
+        ],
+        "confidence": "possible",
+        "effects": [
+          "row_filter",
+        ],
+        "evidence": [
+          "c.region = :region",
+        ],
+        "impact": [
+          "may_filter_rows",
+        ],
+        "influenceIds": [
+          "scope_cte_customer_scope_where_1",
+        ],
+        "kind": "where",
+        "mechanisms": [
+          "where",
+        ],
+        "reason": "where may influence the row population used to compute this column.",
+        "scopeId": "scope_cte_customer_scope",
+        "signals": [
+          "where",
+        ],
+      },
+      {
+        "checkDomains": [
+          "program_logic",
+          "data_condition",
+        ],
+        "confidence": "possible",
+        "effects": [
+          "row_filter",
+        ],
+        "evidence": [
+          "c.status = :customer_status",
+        ],
+        "impact": [
+          "may_filter_rows",
+        ],
+        "influenceIds": [
+          "scope_cte_customer_scope_where_2",
+        ],
+        "kind": "where",
+        "mechanisms": [
+          "where",
+        ],
+        "reason": "where may influence the row population used to compute this column.",
+        "scopeId": "scope_cte_customer_scope",
+        "signals": [
+          "where",
+        ],
+      },
       {
         "checkDomains": [
           "program_logic",
@@ -2083,7 +1906,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "may_filter_rows",
         ],
         "influenceIds": [
-          "scope_main_output_where_1",
+          "scope_cte_customer_scope_where_3",
         ],
         "kind": "where_exists",
         "mechanisms": [
@@ -2091,7 +1914,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "where",
         ],
         "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-        "scopeId": "scope_main_output",
+        "scopeId": "scope_cte_customer_scope",
         "signals": [
           "where",
         ],
@@ -2158,7 +1981,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         {
           "columnName": "customer_id",
           "expressionId": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
-          "expressionSql": "c.id",
+          "expressionSql": "cs.id",
           "id": "step:main_output:customer_id:scope_main_output_output_1:out0",
           "nodeId": "main_output",
           "nodeLabel": "Final Result",
@@ -2167,10 +1990,36 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "scopeId": "scope_main_output",
           "selectItemId": "scope_main_output_output_1",
         },
+        {
+          "columnName": "id",
+          "expressionId": "expr:step:cte_customer_scope:id:scope_cte_customer_scope_output_1:out0",
+          "expressionSql": "c.id",
+          "id": "step:cte_customer_scope:id:scope_cte_customer_scope_output_1:out0",
+          "nodeId": "cte_customer_scope",
+          "nodeLabel": "customer_scope",
+          "nodeType": "cte",
+          "outputIndex": 0,
+          "scopeId": "scope_cte_customer_scope",
+          "selectItemId": "scope_cte_customer_scope_output_1",
+        },
       ],
       "expressions": [
         {
           "id": "expr:step:main_output:customer_id:scope_main_output_output_1:out0",
+          "inputs": [
+            {
+              "kind": "column_ref",
+              "refId": "ref:cte_customer_scope:id",
+            },
+          ],
+          "kind": "column_ref",
+          "operator": undefined,
+          "ownerStepId": "step:main_output:customer_id:scope_main_output_output_1:out0",
+          "semanticKind": "column_passthrough",
+          "sql": "cs.id",
+        },
+        {
+          "id": "expr:step:cte_customer_scope:id:scope_cte_customer_scope_output_1:out0",
           "inputs": [
             {
               "kind": "column_ref",
@@ -2179,12 +2028,33 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           ],
           "kind": "column_ref",
           "operator": undefined,
-          "ownerStepId": "step:main_output:customer_id:scope_main_output_output_1:out0",
+          "ownerStepId": "step:cte_customer_scope:id:scope_cte_customer_scope_output_1:out0",
           "semanticKind": "column_passthrough",
           "sql": "c.id",
         },
       ],
       "references": [
+        {
+          "columnName": "id",
+          "definedInScopeId": "scope_cte_customer_scope",
+          "id": "ref:cte_customer_scope:id",
+          "nodeId": "cte_customer_scope",
+          "nodeLabel": "customer_scope",
+          "roles": [
+            "column_lineage",
+          ],
+          "scopeId": "scope_cte_customer_scope",
+          "usages": [
+            {
+              "role": "column_lineage",
+              "scopeId": "scope_cte_customer_scope",
+              "usageKind": "column_value",
+            },
+          ],
+          "usedInScopeIds": [
+            "scope_cte_customer_scope",
+          ],
+        },
         {
           "columnName": "id",
           "definedInScopeId": undefined,
@@ -2195,21 +2065,21 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             "column_lineage",
             "row_lineage",
           ],
-          "scopeId": "scope_main_output",
+          "scopeId": "scope_cte_customer_scope",
           "usages": [
             {
               "role": "column_lineage",
-              "scopeId": "scope_main_output",
+              "scopeId": "scope_cte_customer_scope",
               "usageKind": "column_value",
             },
             {
               "role": "row_lineage",
-              "scopeId": "scope_main_output",
+              "scopeId": "scope_cte_customer_scope",
               "usageKind": "where",
             },
           ],
           "usedInScopeIds": [
-            "scope_main_output",
+            "scope_cte_customer_scope",
           ],
         },
       ],
@@ -2219,6 +2089,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "label": "select:Final Result",
           "nodeId": "main_output",
           "scopeId": "scope_main_output",
+        },
+        {
+          "label": "cte:customer_scope",
+          "nodeId": "cte_customer_scope",
+          "scopeId": "scope_cte_customer_scope",
         },
       ],
       "sourceLeaves": [
@@ -2236,8 +2111,8 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       ],
       "summary": {
         "caseRuleCount": 0,
-        "expressionStepCount": 1,
-        "intermediateReferenceCount": 0,
+        "expressionStepCount": 2,
+        "intermediateReferenceCount": 1,
         "sourceLeafCount": 1,
       },
     },
@@ -2262,6 +2137,78 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "effects": [
             "row_filter",
           ],
+          "expressionSql": "c.region = :region",
+          "id": "scope_cte_customer_scope_where_1",
+          "kind": "where",
+          "mechanism": "where",
+          "references": [
+            {
+              "columnName": "region",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customers:region",
+              "nodeId": "table_customers",
+              "nodeLabel": "customers",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_cte_customer_scope",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_cte_customer_scope",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_cte_customer_scope",
+              ],
+            },
+          ],
+          "scopeId": "scope_cte_customer_scope",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "expressionSql": "c.status = :customer_status",
+          "id": "scope_cte_customer_scope_where_2",
+          "kind": "where",
+          "mechanism": "where",
+          "references": [
+            {
+              "columnName": "status",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customers:status",
+              "nodeId": "table_customers",
+              "nodeLabel": "customers",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_cte_customer_scope",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_cte_customer_scope",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_cte_customer_scope",
+              ],
+            },
+          ],
+          "scopeId": "scope_cte_customer_scope",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
           "expressionSql": "exists (
   select
     1
@@ -2271,7 +2218,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     cf.customer_id = c.id
     and cf.is_active = true
 )",
-          "id": "scope_main_output_where_1",
+          "id": "scope_cte_customer_scope_where_3",
           "kind": "where",
           "mechanism": "exists",
           "references": [
@@ -2284,16 +2231,16 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "roles": [
                 "row_lineage",
               ],
-              "scopeId": "scope_main_output",
+              "scopeId": "scope_cte_customer_scope",
               "usages": [
                 {
                   "role": "row_lineage",
-                  "scopeId": "scope_main_output",
+                  "scopeId": "scope_cte_customer_scope",
                   "usageKind": "where",
                 },
               ],
               "usedInScopeIds": [
-                "scope_main_output",
+                "scope_cte_customer_scope",
               ],
             },
             {
@@ -2305,16 +2252,16 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "roles": [
                 "row_lineage",
               ],
-              "scopeId": "scope_main_output",
+              "scopeId": "scope_cte_customer_scope",
               "usages": [
                 {
                   "role": "row_lineage",
-                  "scopeId": "scope_main_output",
+                  "scopeId": "scope_cte_customer_scope",
                   "usageKind": "where",
                 },
               ],
               "usedInScopeIds": [
-                "scope_main_output",
+                "scope_cte_customer_scope",
               ],
             },
             {
@@ -2326,20 +2273,20 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "roles": [
                 "row_lineage",
               ],
-              "scopeId": "scope_main_output",
+              "scopeId": "scope_cte_customer_scope",
               "usages": [
                 {
                   "role": "row_lineage",
-                  "scopeId": "scope_main_output",
+                  "scopeId": "scope_cte_customer_scope",
                   "usageKind": "where",
                 },
               ],
               "usedInScopeIds": [
-                "scope_main_output",
+                "scope_cte_customer_scope",
               ],
             },
           ],
-          "scopeId": "scope_main_output",
+          "scopeId": "scope_cte_customer_scope",
           "signals": [
             "where",
           ],
@@ -2400,11 +2347,26 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         {
           "effects": [
             "row_filter",
+          ],
+          "influenceIds": [
+            "scope_cte_customer_scope_where_1",
+            "scope_cte_customer_scope_where_2",
+            "scope_cte_customer_scope_where_3",
+          ],
+          "nodeId": "cte_customer_scope",
+          "nodeLabel": "customer_scope",
+          "nodeType": "cte",
+          "role": "population_and_value",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
             "output_selection",
             "output_cap",
           ],
           "influenceIds": [
-            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
           ],
@@ -2413,17 +2375,16 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
-            "where",
             "limit",
             "order_by",
           ],
         },
       ],
-      "summary": "3 row lineage influence(s) were found on the column lineage route.",
+      "summary": "5 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "customer_id",
-      "expressionSql": "c.id",
+      "expressionSql": "cs.id",
       "nodeId": "main_output",
       "nodeLabel": "Final Result",
       "nodeType": "output",
@@ -2439,25 +2400,42 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           {
             "children": [
               {
-                "children": [],
+                "children": [
+                  {
+                    "children": [],
+                    "column": {
+                      "columnName": "id",
+                      "expressionSql": undefined,
+                      "id": "step:table_customers:id",
+                      "nodeId": "table_customers",
+                      "nodeLabel": "customers",
+                      "nodeType": "table",
+                      "outputIndex": undefined,
+                      "scopeId": "scope_table_customers_source_leaf",
+                      "selectItemId": undefined,
+                    },
+                    "kind": "column",
+                    "leaf": true,
+                  },
+                ],
                 "column": {
                   "columnName": "id",
-                  "expressionSql": undefined,
-                  "id": "step:table_customers:id",
-                  "nodeId": "table_customers",
-                  "nodeLabel": "customers",
-                  "nodeType": "table",
-                  "outputIndex": undefined,
-                  "scopeId": "scope_table_customers_source_leaf",
-                  "selectItemId": undefined,
+                  "expressionSql": "c.id",
+                  "id": "step:cte_customer_scope:id:scope_cte_customer_scope_output_1:out0",
+                  "nodeId": "cte_customer_scope",
+                  "nodeLabel": "customer_scope",
+                  "nodeType": "cte",
+                  "outputIndex": 0,
+                  "scopeId": "scope_cte_customer_scope",
+                  "selectItemId": "scope_cte_customer_scope_output_1",
                 },
                 "kind": "column",
-                "leaf": true,
+                "leaf": false,
               },
             ],
             "column": {
               "columnName": "customer_id",
-              "expressionSql": "c.id",
+              "expressionSql": "cs.id",
               "id": "step:main_output:customer_id:scope_main_output_output_1:out0",
               "nodeId": "main_output",
               "nodeLabel": "Final Result",
@@ -2501,44 +2479,6 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         "scopeId": "scope_cte_order_totals",
         "signals": [
           "group_by",
-        ],
-      },
-      {
-        "checkDomains": [
-          "program_logic",
-          "data_condition",
-        ],
-        "confidence": "possible",
-        "effects": [
-          "row_filter",
-          "exists",
-        ],
-        "evidence": [
-          "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-        ],
-        "impact": [
-          "may_filter_rows",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "kind": "where_exists",
-        "mechanisms": [
-          "exists",
-          "where",
-        ],
-        "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-        "scopeId": "scope_main_output",
-        "signals": [
-          "where",
         ],
       },
       {
@@ -2609,7 +2549,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "missing_match",
         ],
         "evidence": [
-          "on ot.customer_id = c.id",
+          "on ot.customer_id = cs.id",
         ],
         "impact": [
           "may_null_extend_rows",
@@ -2639,7 +2579,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         ],
         "evidence": [
           "coalesce(ot.order_count, 0)",
-          "on ot.customer_id = c.id",
+          "on ot.customer_id = cs.id",
         ],
         "impact": [
           "may_change_value",
@@ -2794,9 +2734,9 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 12,
-      "omittedInfluenceCount": 6,
-      "omittedNodeCount": 4,
+      "omittedColumnCount": 17,
+      "omittedInfluenceCount": 9,
+      "omittedNodeCount": 6,
     },
     "rowLineage": {
       "influences": [
@@ -2834,92 +2774,6 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "scopeId": "scope_cte_order_totals",
           "signals": [
             "group_by",
-          ],
-        },
-        {
-          "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-          "id": "scope_main_output_where_1",
-          "kind": "where",
-          "mechanism": "exists",
-          "references": [
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:customer_id",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "is_active",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:is_active",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "where",
           ],
         },
         {
@@ -2977,7 +2831,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "effects": [
             "null_extension",
           ],
-          "expressionSql": "on ot.customer_id = c.id",
+          "expressionSql": "on ot.customer_id = cs.id",
           "id": "scope_main_output_join_1",
           "kind": "join_on",
           "mechanism": "join",
@@ -3005,10 +2859,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             },
             {
               "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
+              "definedInScopeId": "scope_cte_customer_scope",
+              "id": "ref:cte_customer_scope:id",
+              "nodeId": "cte_customer_scope",
+              "nodeLabel": "customer_scope",
               "roles": [
                 "row_lineage",
               ],
@@ -3050,13 +2904,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         },
         {
           "effects": [
-            "row_filter",
             "output_selection",
             "output_cap",
             "null_extension",
           ],
           "influenceIds": [
-            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
             "scope_main_output_join_1",
@@ -3066,14 +2918,13 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
-            "where",
             "outer_join",
             "limit",
             "order_by",
           ],
         },
       ],
-      "summary": "5 row lineage influence(s) were found on the column lineage route.",
+      "summary": "4 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "order_count",
@@ -3188,44 +3039,6 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       {
         "checkDomains": [
           "program_logic",
-          "data_condition",
-        ],
-        "confidence": "possible",
-        "effects": [
-          "row_filter",
-          "exists",
-        ],
-        "evidence": [
-          "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-        ],
-        "impact": [
-          "may_filter_rows",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "kind": "where_exists",
-        "mechanisms": [
-          "exists",
-          "where",
-        ],
-        "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-        "scopeId": "scope_main_output",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "checkDomains": [
-          "program_logic",
         ],
         "confidence": "possible",
         "effects": [
@@ -3291,7 +3104,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "missing_match",
         ],
         "evidence": [
-          "on ps.customer_id = c.id",
+          "on ps.customer_id = cs.id",
         ],
         "impact": [
           "may_null_extend_rows",
@@ -3342,7 +3155,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         ],
         "evidence": [
           "coalesce(ps.paid_amount, 0)",
-          "on ps.customer_id = c.id",
+          "on ps.customer_id = cs.id",
         ],
         "impact": [
           "may_change_value",
@@ -3535,9 +3348,9 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 16,
-      "omittedInfluenceCount": 5,
-      "omittedNodeCount": 4,
+      "omittedColumnCount": 21,
+      "omittedInfluenceCount": 8,
+      "omittedNodeCount": 6,
     },
     "rowLineage": {
       "influences": [
@@ -3615,92 +3428,6 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         },
         {
           "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-          "id": "scope_main_output_where_1",
-          "kind": "where",
-          "mechanism": "exists",
-          "references": [
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:customer_id",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "is_active",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:is_active",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
           ],
           "expressionSql": "total_amount desc",
@@ -3754,7 +3481,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "effects": [
             "null_extension",
           ],
-          "expressionSql": "on ps.customer_id = c.id",
+          "expressionSql": "on ps.customer_id = cs.id",
           "id": "scope_main_output_join_2",
           "kind": "join_on",
           "mechanism": "join",
@@ -3782,10 +3509,10 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             },
             {
               "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
+              "definedInScopeId": "scope_cte_customer_scope",
+              "id": "ref:cte_customer_scope:id",
+              "nodeId": "cte_customer_scope",
+              "nodeLabel": "customer_scope",
               "roles": [
                 "row_lineage",
               ],
@@ -3830,13 +3557,11 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
         },
         {
           "effects": [
-            "row_filter",
             "output_selection",
             "output_cap",
             "null_extension",
           ],
           "influenceIds": [
-            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
             "scope_main_output_join_2",
@@ -3846,14 +3571,13 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
-            "where",
             "outer_join",
             "limit",
             "order_by",
           ],
         },
       ],
-      "summary": "6 row lineage influence(s) were found on the column lineage route.",
+      "summary": "5 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "paid_amount",
@@ -3985,44 +3709,6 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
       {
         "checkDomains": [
           "program_logic",
-          "data_condition",
-        ],
-        "confidence": "possible",
-        "effects": [
-          "row_filter",
-          "exists",
-        ],
-        "evidence": [
-          "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-        ],
-        "impact": [
-          "may_filter_rows",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "kind": "where_exists",
-        "mechanisms": [
-          "exists",
-          "where",
-        ],
-        "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-        "scopeId": "scope_main_output",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "checkDomains": [
-          "program_logic",
         ],
         "confidence": "possible",
         "effects": [
@@ -4088,7 +3774,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "missing_match",
         ],
         "evidence": [
-          "on ps.customer_id = c.id",
+          "on ps.customer_id = cs.id",
         ],
         "impact": [
           "may_null_extend_rows",
@@ -4447,9 +4133,9 @@ end",
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 16,
-      "omittedInfluenceCount": 5,
-      "omittedNodeCount": 4,
+      "omittedColumnCount": 21,
+      "omittedInfluenceCount": 8,
+      "omittedNodeCount": 6,
     },
     "rowLineage": {
       "influences": [
@@ -4527,92 +4213,6 @@ end",
         },
         {
           "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-          "id": "scope_main_output_where_1",
-          "kind": "where",
-          "mechanism": "exists",
-          "references": [
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:customer_id",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "is_active",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:is_active",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
           ],
           "expressionSql": "total_amount desc",
@@ -4666,7 +4266,7 @@ end",
           "effects": [
             "null_extension",
           ],
-          "expressionSql": "on ps.customer_id = c.id",
+          "expressionSql": "on ps.customer_id = cs.id",
           "id": "scope_main_output_join_2",
           "kind": "join_on",
           "mechanism": "join",
@@ -4694,10 +4294,10 @@ end",
             },
             {
               "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
+              "definedInScopeId": "scope_cte_customer_scope",
+              "id": "ref:cte_customer_scope:id",
+              "nodeId": "cte_customer_scope",
+              "nodeLabel": "customer_scope",
               "roles": [
                 "row_lineage",
               ],
@@ -4742,13 +4342,11 @@ end",
         },
         {
           "effects": [
-            "row_filter",
             "output_selection",
             "output_cap",
             "null_extension",
           ],
           "influenceIds": [
-            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
             "scope_main_output_join_2",
@@ -4758,14 +4356,13 @@ end",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
-            "where",
             "outer_join",
             "limit",
             "order_by",
           ],
         },
       ],
-      "summary": "6 row lineage influence(s) were found on the column lineage route.",
+      "summary": "5 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "payment_status",
@@ -5143,44 +4740,6 @@ end",
       {
         "checkDomains": [
           "program_logic",
-          "data_condition",
-        ],
-        "confidence": "possible",
-        "effects": [
-          "row_filter",
-          "exists",
-        ],
-        "evidence": [
-          "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-        ],
-        "impact": [
-          "may_filter_rows",
-        ],
-        "influenceIds": [
-          "scope_main_output_where_1",
-        ],
-        "kind": "where_exists",
-        "mechanisms": [
-          "exists",
-          "where",
-        ],
-        "reason": "The EXISTS predicate may filter rows to those with a matching related record.",
-        "scopeId": "scope_main_output",
-        "signals": [
-          "where",
-        ],
-      },
-      {
-        "checkDomains": [
-          "program_logic",
         ],
         "confidence": "possible",
         "effects": [
@@ -5246,7 +4805,7 @@ end",
           "missing_match",
         ],
         "evidence": [
-          "on ot.customer_id = c.id",
+          "on ot.customer_id = cs.id",
         ],
         "impact": [
           "may_null_extend_rows",
@@ -5298,7 +4857,7 @@ end",
         ],
         "evidence": [
           "coalesce(ot.total_amount, 0)",
-          "on ot.customer_id = c.id",
+          "on ot.customer_id = cs.id",
         ],
         "impact": [
           "may_change_value",
@@ -5585,9 +5144,9 @@ end",
     "kind": "column-diagnostic-packet",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
-      "omittedColumnCount": 6,
-      "omittedInfluenceCount": 3,
-      "omittedNodeCount": 2,
+      "omittedColumnCount": 11,
+      "omittedInfluenceCount": 6,
+      "omittedNodeCount": 4,
     },
     "rowLineage": {
       "influences": [
@@ -5760,92 +5319,6 @@ end",
         },
         {
           "effects": [
-            "row_filter",
-          ],
-          "expressionSql": "exists (
-  select
-    1
-  from
-    customer_favorites as cf
-  where
-    cf.customer_id = c.id
-    and cf.is_active = true
-)",
-          "id": "scope_main_output_where_1",
-          "kind": "where",
-          "mechanism": "exists",
-          "references": [
-            {
-              "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "customer_id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:customer_id",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-            {
-              "columnName": "is_active",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customer_favorites:is_active",
-              "nodeId": "table_customer_favorites",
-              "nodeLabel": "customer_favorites",
-              "roles": [
-                "row_lineage",
-              ],
-              "scopeId": "scope_main_output",
-              "usages": [
-                {
-                  "role": "row_lineage",
-                  "scopeId": "scope_main_output",
-                  "usageKind": "where",
-                },
-              ],
-              "usedInScopeIds": [
-                "scope_main_output",
-              ],
-            },
-          ],
-          "scopeId": "scope_main_output",
-          "signals": [
-            "where",
-          ],
-        },
-        {
-          "effects": [
             "output_selection",
           ],
           "expressionSql": "total_amount desc",
@@ -5899,7 +5372,7 @@ end",
           "effects": [
             "null_extension",
           ],
-          "expressionSql": "on ot.customer_id = c.id",
+          "expressionSql": "on ot.customer_id = cs.id",
           "id": "scope_main_output_join_1",
           "kind": "join_on",
           "mechanism": "join",
@@ -5927,10 +5400,10 @@ end",
             },
             {
               "columnName": "id",
-              "definedInScopeId": undefined,
-              "id": "ref:table_customers:id",
-              "nodeId": "table_customers",
-              "nodeLabel": "customers",
+              "definedInScopeId": "scope_cte_customer_scope",
+              "id": "ref:cte_customer_scope:id",
+              "nodeId": "cte_customer_scope",
+              "nodeLabel": "customer_scope",
               "roles": [
                 "row_lineage",
               ],
@@ -5991,13 +5464,11 @@ end",
         },
         {
           "effects": [
-            "row_filter",
             "output_selection",
             "output_cap",
             "null_extension",
           ],
           "influenceIds": [
-            "scope_main_output_where_1",
             "scope_main_output_order_by_1",
             "scope_main_output_limit_1",
             "scope_main_output_join_1",
@@ -6007,14 +5478,13 @@ end",
           "nodeType": "output",
           "role": "population_and_value",
           "signals": [
-            "where",
             "outer_join",
             "limit",
             "order_by",
           ],
         },
       ],
-      "summary": "8 row lineage influence(s) were found on the column lineage route.",
+      "summary": "7 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "total_amount",

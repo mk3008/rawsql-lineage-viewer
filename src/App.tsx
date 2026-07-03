@@ -6,7 +6,7 @@ import { salesSummarySql } from './examples/salesSummarySql';
 import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/buildGraphModel';
 import type { AnalysisWarning } from './domain/lineage';
 import type { ProblemIntent } from './lineage/problemIntent';
-import { analyzeSql } from './lineage/rawsqlAdapter';
+import { analyzeSql, type ConditionOptimizationReport } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
@@ -62,6 +62,7 @@ export function App() {
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
+  const [conditionOptimizationEnabled, setConditionOptimizationEnabled] = useState(true);
   const flowDirection: GraphFlowDirection = 'upstream';
   const lastHandledAutoInspectOutputNonceRef = useRef(0);
   const pendingAutoInspectOutputNonceRef = useRef<number | null>(null);
@@ -72,7 +73,7 @@ export function App() {
   const analysis = useMemo(() => {
     try {
       return {
-        result: analyzeSql(lastAnalyzedSql),
+        result: analyzeSql(lastAnalyzedSql, { optimizeConditions: conditionOptimizationEnabled }),
         error: null,
       };
     } catch (caught) {
@@ -82,7 +83,7 @@ export function App() {
         error: message,
       };
     }
-  }, [lastAnalyzedSql]);
+  }, [conditionOptimizationEnabled, lastAnalyzedSql]);
 
   const error = analysis.error;
   const adapterResult = analysis.result;
@@ -299,7 +300,7 @@ export function App() {
     let nextInspectorSelection: InspectorSelection = null;
     suppressNullInspectorSelectionRef.current = true;
     try {
-      const nextAnalysis = analyzeSql(nextSql);
+      const nextAnalysis = analyzeSql(nextSql, { optimizeConditions: conditionOptimizationEnabled });
       const outputNode = nextAnalysis.lineage.nodes.find((node) => node.type === 'output');
       if (outputNode) {
         nextInspectorSelection = { kind: 'node', node: { ...outputNode, label: resolvedOutputTitle } };
@@ -334,7 +335,7 @@ export function App() {
       setIsPanelOpen(true);
       setPanelTab('inspector');
     }
-  }, [isMobileLineageViewport, sqlHistory]);
+  }, [conditionOptimizationEnabled, isMobileLineageViewport, sqlHistory]);
   const openHistoryItem = useCallback((item: SqlHistoryItem) => {
     openSql(item.sql, item.outputTitle ?? defaultOutputTitle);
   }, [openSql]);
@@ -482,6 +483,14 @@ export function App() {
           {panelTab === 'sql' ? (
             <div className="sql-tab-panel">
               <div className="sql-editor-actions">
+                <label className="condition-optimization-toggle">
+                  <input
+                    checked={conditionOptimizationEnabled}
+                    type="checkbox"
+                    onChange={(event) => setConditionOptimizationEnabled(event.currentTarget.checked)}
+                  />
+                  Optimize conditions
+                </label>
                 <button
                   className="text-button"
                   type="button"
@@ -532,8 +541,9 @@ export function App() {
               </div>
               <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
                 {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                <span>{error ? error : 'Parsed successfully'}</span>
+                <span>{error ? error : formatAnalysisStatus(adapterResult?.conditionOptimization)}</span>
               </div>
+              {adapterResult ? <ConditionOptimizationSummary report={adapterResult.conditionOptimization} /> : null}
             </div>
           ) : panelTab === 'inspector' ? (
             adapterResult ? (
@@ -675,6 +685,65 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
     <span className="graph-info-warning" title={title}>
       {label} <strong>{value}</strong>
     </span>
+  );
+}
+
+function formatAnalysisStatus(report?: ConditionOptimizationReport) {
+  if (!report) {
+    return 'Parsed successfully';
+  }
+  if (!report.enabled) {
+    return 'Parsed successfully - condition optimization off';
+  }
+  if (!report.ok) {
+    return `Parsed successfully - optimization reported ${report.errorCount} errors`;
+  }
+  if (report.appliedCount > 0) {
+    return `Parsed successfully - ${report.appliedCount} conditions optimized`;
+  }
+  return 'Parsed successfully - no condition moves';
+}
+
+function ConditionOptimizationSummary({ report }: { report: ConditionOptimizationReport }) {
+  const status = !report.enabled
+    ? 'Off'
+    : report.appliedCount > 0
+      ? `${report.appliedCount} moved`
+      : 'No changes';
+  const applied = report.applied.filter((item) => item.displaySql).slice(0, 3);
+
+  return (
+    <section className={`condition-optimization-summary ${report.enabled ? '' : 'condition-optimization-summary-disabled'}`} aria-label="Condition optimization">
+      <div className="condition-optimization-summary-header">
+        <span>Condition optimization</span>
+        <strong>{status}</strong>
+      </div>
+      {report.enabled ? (
+        <>
+          <div className="condition-optimization-summary-meta">
+            {report.safety?.mode === 'safe_only' ? 'safe only' : 'safety unknown'}
+            {' · unsafe rewrite '}
+            {report.safety?.unsafeRewriteApplied ? 'applied' : 'not applied'}
+          </div>
+          {applied.length > 0 ? (
+            <ul>
+              {applied.map((item, index) => (
+                <li key={`${item.phaseKind ?? 'phase'}:${item.displaySql}:${index}`}>
+                  {item.displaySql}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {report.skippedCount > 0 || report.warningCount > 0 || report.errorCount > 0 ? (
+            <div className="condition-optimization-summary-meta">
+              {report.skippedCount} skipped · {report.warningCount} warnings · {report.errorCount} errors
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <div className="condition-optimization-summary-meta">Original SQL is analyzed as-is.</div>
+      )}
+    </section>
   );
 }
 

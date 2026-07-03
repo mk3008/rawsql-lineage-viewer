@@ -7,7 +7,7 @@ import {
   FunctionSource,
   InsertQuery,
   InlineQuery,
-  optimizeConditions,
+  optimizeConditions as optimizeRawsqlConditions,
   ParenSource,
   SelectQueryParser,
   SelectOutputCollector,
@@ -18,7 +18,7 @@ import {
   TableSource,
   ValuesQuery,
 } from 'rawsql-ts';
-import type { CommonTable, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
+import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
@@ -44,12 +44,58 @@ import { collectColumnReferences, resolveColumnReferences, resolveColumnReferenc
 import type { SourceReferenceTarget } from './source-references/sourceReferences.types';
 
 export interface ParserAdapterResult {
+  conditionOptimization: ConditionOptimizationReport;
   lineage: LineageModel;
   parserVersion: string;
 }
 
 export interface AnalyzeSqlOptions {
+  optimizeConditions?: boolean;
   schemaFacts?: SchemaFacts;
+}
+
+export interface ConditionOptimizationReport {
+  applied: ConditionOptimizationReportItem[];
+  appliedCount: number;
+  enabled: boolean;
+  errorCount: number;
+  errors: ConditionOptimizationReportItem[];
+  ok: boolean;
+  phases: ConditionOptimizationPhaseReport[];
+  safety?: {
+    dryRun: boolean;
+    formatterGeneratedSource: boolean;
+    mode: 'safe_only';
+    unsafeRewriteApplied: boolean;
+  };
+  skipped: ConditionOptimizationReportItem[];
+  skippedCount: number;
+  warningCount: number;
+  warnings: ConditionOptimizationReportItem[];
+}
+
+export interface ConditionOptimizationPhaseReport {
+  appliedCount: number;
+  errorCount: number;
+  kind: string;
+  skippedCount: number;
+  warningCount: number;
+}
+
+export interface ConditionOptimizationReportItem {
+  code?: string;
+  conditionSql?: string;
+  displaySql?: string;
+  kind?: string;
+  parameterName?: string;
+  phaseKind?: string;
+  predicateSql?: string;
+  reason?: string;
+}
+
+interface ParsedLineageSelectQuery {
+  conditionOptimization: ConditionOptimizationReport;
+  query: SelectQuery;
 }
 
 const parserVersion = 'rawsql-ts';
@@ -102,16 +148,17 @@ const nodeSqlFormatter = new SqlFormatter({
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
-function parseLineageSelectQuery(sql: string): SelectQuery {
+function parseLineageSelectQuery(sql: string, optimizeConditions: boolean): ParsedLineageSelectQuery {
   const wrappedSelectSql = extractWrappedSelectSql(sql);
   if (wrappedSelectSql) {
-    return parseLineageSelectQuery(wrappedSelectSql);
+    return parseLineageSelectQuery(wrappedSelectSql, optimizeConditions);
   }
 
   const originalStatement = parseSqlOrUndefined(sql);
+  const optimization = optimizeLineageSelectSql(sql, optimizeConditions);
   let statement: unknown;
   try {
-    statement = SqlParser.parse(optimizeLineageSelectSql(sql));
+    statement = SqlParser.parse(optimization.sql);
     restoreLineageComments(statement, originalStatement);
   } catch (error) {
     throw error;
@@ -121,7 +168,7 @@ function parseLineageSelectQuery(sql: string): SelectQuery {
     if (!statement.asSelectQuery) {
       throw new Error('CREATE TABLE lineage requires an AS SELECT query.');
     }
-    return statement.asSelectQuery;
+    return { conditionOptimization: optimization.report, query: statement.asSelectQuery };
   }
 
   if (statement instanceof InsertQuery) {
@@ -131,30 +178,143 @@ function parseLineageSelectQuery(sql: string): SelectQuery {
     const originalSelectQuery = originalStatement instanceof InsertQuery && isSelectQuery(originalStatement.selectQuery)
       ? originalStatement.selectQuery
       : statement.selectQuery;
-    return optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery);
+    const optimizedSelect = optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery, optimizeConditions);
+    return {
+      conditionOptimization: mergeConditionOptimizationReports(optimization.report, optimizedSelect.conditionOptimization),
+      query: optimizedSelect.query,
+    };
   }
 
   if (isSelectQuery(statement)) {
-    return statement;
+    return { conditionOptimization: optimization.report, query: statement };
   }
 
   throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
 }
 
-function optimizeLineageSelectSql(sql: string): string {
-  const result = optimizeConditions(sql);
-  return result.ok ? result.sql : sql;
+function optimizeLineageSelectSql(sql: string, enabled: boolean): { report: ConditionOptimizationReport; sql: string } {
+  if (!enabled) {
+    return { report: createDisabledConditionOptimizationReport(), sql };
+  }
+  const result = optimizeRawsqlConditions(sql);
+  return {
+    report: toConditionOptimizationReport(true, result),
+    sql: result.ok ? result.sql : sql,
+  };
 }
 
-function optimizeLineageSelectQuery(query: SelectQuery, commentSource: SelectQuery = query): SelectQuery {
-  const result = optimizeConditions(query);
+function optimizeLineageSelectQuery(
+  query: SelectQuery,
+  commentSource: SelectQuery,
+  enabled: boolean,
+): ParsedLineageSelectQuery {
+  if (!enabled) {
+    return { conditionOptimization: createDisabledConditionOptimizationReport(), query };
+  }
+  const result = optimizeRawsqlConditions(query);
   if (!result.ok) {
-    return query;
+    return { conditionOptimization: toConditionOptimizationReport(true, result), query };
   }
 
   const optimized = SqlParser.parse(result.sql);
   restoreLineageComments(optimized, commentSource);
-  return isSelectQuery(optimized) ? optimized : query;
+  return {
+    conditionOptimization: toConditionOptimizationReport(true, result),
+    query: isSelectQuery(optimized) ? optimized : query,
+  };
+}
+
+function createDisabledConditionOptimizationReport(): ConditionOptimizationReport {
+  return {
+    applied: [],
+    appliedCount: 0,
+    enabled: false,
+    errorCount: 0,
+    errors: [],
+    ok: true,
+    phases: [],
+    skipped: [],
+    skippedCount: 0,
+    warningCount: 0,
+    warnings: [],
+  };
+}
+
+function toConditionOptimizationReport(enabled: boolean, result: ConditionOptimizationResult): ConditionOptimizationReport {
+  return {
+    applied: result.applied.map(toConditionOptimizationReportItem),
+    appliedCount: result.applied.length,
+    enabled,
+    errorCount: result.errors.length,
+    errors: result.errors.map(toConditionOptimizationReportItem),
+    ok: result.ok,
+    phases: result.phases.map((phase) => ({
+      appliedCount: phase.appliedCount,
+      errorCount: phase.errorCount,
+      kind: phase.kind,
+      skippedCount: phase.skippedCount,
+      warningCount: phase.warningCount,
+    })),
+    safety: {
+      dryRun: result.safety.dryRun,
+      formatterGeneratedSource: result.safety.formatterGeneratedSource,
+      mode: result.safety.mode,
+      unsafeRewriteApplied: result.safety.unsafeRewriteApplied,
+    },
+    skipped: result.skipped.map(toConditionOptimizationReportItem),
+    skippedCount: result.skipped.length,
+    warningCount: result.warnings.length,
+    warnings: result.warnings.map(toConditionOptimizationReportItem),
+  };
+}
+
+function mergeConditionOptimizationReports(
+  left: ConditionOptimizationReport,
+  right: ConditionOptimizationReport,
+): ConditionOptimizationReport {
+  if (!left.enabled) {
+    return right;
+  }
+  if (!right.enabled) {
+    return left;
+  }
+  return {
+    applied: [...left.applied, ...right.applied],
+    appliedCount: left.appliedCount + right.appliedCount,
+    enabled: true,
+    errorCount: left.errorCount + right.errorCount,
+    errors: [...left.errors, ...right.errors],
+    ok: left.ok && right.ok,
+    phases: [...left.phases, ...right.phases],
+    safety: right.safety ?? left.safety,
+    skipped: [...left.skipped, ...right.skipped],
+    skippedCount: left.skippedCount + right.skippedCount,
+    warningCount: left.warningCount + right.warningCount,
+    warnings: [...left.warnings, ...right.warnings],
+  };
+}
+
+function toConditionOptimizationReportItem(item: unknown): ConditionOptimizationReportItem {
+  if (!item || typeof item !== 'object') {
+    return {};
+  }
+  const record = item as Record<string, unknown>;
+  const conditionSql = typeof record.conditionSql === 'string' ? normalizeDisplaySql(record.conditionSql) : undefined;
+  const predicateSql = typeof record.predicateSql === 'string' ? normalizeDisplaySql(record.predicateSql) : undefined;
+  return {
+    code: typeof record.code === 'string' ? record.code : undefined,
+    conditionSql,
+    displaySql: conditionSql ?? predicateSql,
+    kind: typeof record.kind === 'string' ? record.kind : undefined,
+    parameterName: typeof record.parameterName === 'string' ? record.parameterName : undefined,
+    phaseKind: typeof record.phaseKind === 'string' ? record.phaseKind : undefined,
+    predicateSql,
+    reason: typeof record.reason === 'string' ? record.reason : typeof record.message === 'string' ? record.message : undefined,
+  };
+}
+
+function normalizeDisplaySql(sql: string): string {
+  return sql.replace(/"/g, '');
 }
 
 function parseSqlOrUndefined(sql: string): unknown {
@@ -278,10 +438,14 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   const derivedCounter = { value: 0 };
   const scalarSubqueryCounter = { value: 0 };
   const scopeCounter = { value: 0 };
+  const optimizeConditions = options.optimizeConditions ?? true;
 
   let query: SelectQuery;
+  let conditionOptimization: ConditionOptimizationReport;
   try {
-    query = parseLineageSelectQuery(sql);
+    const parsed = parseLineageSelectQuery(sql, optimizeConditions);
+    query = parsed.query;
+    conditionOptimization = parsed.conditionOptimization;
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
@@ -367,6 +531,7 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   });
 
   return {
+    conditionOptimization,
     lineage,
     parserVersion,
   };

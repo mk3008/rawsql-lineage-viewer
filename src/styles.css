@@ -267,7 +267,7 @@ textarea {
 
 .sql-tab-panel {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
   min-height: 0;
   overflow: hidden;
 }
@@ -319,9 +319,29 @@ textarea {
   display: flex;
   flex-wrap: wrap;
   justify-content: flex-end;
+  align-items: center;
   gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid #e8edf5;
+}
+
+.condition-optimization-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: auto;
+  color: #334155;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.condition-optimization-toggle input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: #2563eb;
 }
 
 .panel-actions {
@@ -355,9 +375,66 @@ textarea {
   color: #b45309;
 }
 
+.condition-optimization-summary {
+  display: grid;
+  gap: 7px;
+  margin: 0 16px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  padding: 10px 11px;
+  background: #eff6ff;
+  color: #1e3a8a;
+  font-size: 12px;
+}
+
+.condition-optimization-summary-disabled {
+  border-color: #e2e8f0;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.condition-optimization-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.condition-optimization-summary-header span {
+  color: #475569;
+  font-weight: 750;
+}
+
+.condition-optimization-summary-header strong {
+  color: #1d4ed8;
+  font-weight: 850;
+}
+
+.condition-optimization-summary-disabled .condition-optimization-summary-header strong {
+  color: #64748b;
+}
+
+.condition-optimization-summary-meta {
+  color: #64748b;
+  line-height: 1.4;
+}
+
+.condition-optimization-summary ul {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 17px;
+}
+
+.condition-optimization-summary li {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  line-height: 1.35;
+}
+
 @media (max-width: 960px) {
   .sql-tab-panel {
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   }
 
   .sql-editor-actions {
@@ -376,6 +453,10 @@ textarea {
 
   .analysis-status {
     grid-row: 4;
+  }
+
+  .condition-optimization-summary {
+    grid-row: 5;
   }
 }
 
@@ -3022,7 +3103,7 @@ textarea {
   }
 
   .workspace-mobile-panel-active .sql-tab-panel {
-    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
   }
 
   .workspace-mobile-panel-active .sql-editor-actions {
@@ -3046,6 +3127,10 @@ textarea {
 
   .workspace-mobile-panel-active .analysis-status {
     grid-row: 4;
+  }
+
+  .workspace-mobile-panel-active .condition-optimization-summary {
+    grid-row: 5;
   }
 
   .canvas-area {
