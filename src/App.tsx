@@ -913,7 +913,7 @@ function LegendPanel() {
       </section>
       <section className="legend-panel-section">
         <h3>Row Lineage badges</h3>
-        <p className="legend-panel-note">Badges are Focus annotations for the selected column and symptom: yellow marks signal owners, blue marks referenced inputs, and purple marks source data to review.</p>
+        <p className="legend-panel-note">Badges are Focus annotations for the selected column and symptom: yellow marks signal owners, blue marks referenced inputs, and purple marks source data used by the selected value.</p>
         <dl className="legend-impact-list">
           <div><dt><i className="legend-badge">Where</i></dt><dd>WHERE / EXISTS may filter rows</dd></div>
           <div><dt><i className="legend-badge">Having</i></dt><dd>HAVING may filter groups</dd></div>

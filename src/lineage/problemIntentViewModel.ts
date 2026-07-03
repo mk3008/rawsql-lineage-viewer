@@ -137,15 +137,8 @@ export function graphReferenceLabelsForInfluence(
   return graphImpactBadgesForInfluence(influence, allInfluences, intent).map((badge) => `Ref: ${badge.label}`);
 }
 
-export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticPacket, intent: ProblemIntent): Record<string, string[]> {
-  if (intent === 'logic_review') {
-    return {};
-  }
-
-  const hasSourceDataConcern = packet.candidateConcerns.some((concern) =>
-    concern.kind === 'source_data_value' && concern.effects.some((effect) => symptomEffectMap[intent].includes(effect)),
-  );
-  if (!hasSourceDataConcern) {
+export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticPacket, _intent: ProblemIntent): Record<string, string[]> {
+  if (!packet.columnLineage.sourceLeaves.length) {
     return {};
   }
 

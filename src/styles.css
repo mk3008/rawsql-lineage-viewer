@@ -2275,8 +2275,9 @@ textarea {
 .lineage-node-highlighted,
 .lineage-node-highlighted-value {
   box-shadow:
-    0 0 0 3px rgb(37 99 235 / 22%),
-    0 12px 28px rgb(37 99 235 / 18%);
+    0 0 0 2px rgb(37 99 235 / 24%),
+    0 0 0 6px rgb(96 165 250 / 10%),
+    0 12px 24px rgb(37 99 235 / 14%);
 }
 
 .lineage-node-highlighted-population {
@@ -2375,6 +2376,15 @@ textarea {
   box-shadow:
     0 0 0 3px rgb(15 23 42 / 8%),
     0 14px 30px rgb(15 23 42 / 16%);
+}
+
+.lineage-node-highlighted.lineage-node-collapsed-group,
+.lineage-node-highlighted-value.lineage-node-collapsed-group {
+  box-shadow:
+    0 0 0 2px rgb(37 99 235 / 24%),
+    0 0 0 6px rgb(96 165 250 / 10%),
+    0 12px 24px rgb(37 99 235 / 14%),
+    0 16px 30px rgb(15 23 42 / 10%);
 }
 
 .lineage-node-collapsed-group.lineage-node-cte {

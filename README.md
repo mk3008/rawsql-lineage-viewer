@@ -26,7 +26,7 @@ The `Focus` selector changes Row Lineage badges from a general graph annotation 
 
 - Yellow badges mark the node that owns a row-lineage signal worth inspecting for the selected symptom.
 - Blue `Ref: ...` badges mark input nodes referenced by that highlighted condition or population signal.
-- Purple `Data` badges mark source data used by the selected value lineage, useful when SQL signals do not explain the symptom.
+- Purple `Data` badges mark source data used by the selected value lineage.
 
 `ORDER BY` is retained in diagnostic JSON, but it is not shown as an independent graph badge. `ORDER BY` with `LIMIT` / `OFFSET` is summarized as `Top-N`; `DISTINCT ON` absorbs its representative-row `ORDER BY` context.
 

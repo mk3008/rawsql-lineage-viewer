@@ -170,7 +170,7 @@ function SourceDataBadges({ labels }: { labels: string[] }) {
   return (
     <div className="lineage-node-source-data-badges" aria-label={`Source data used by the selected value lineage: ${labels.join(', ')}`}>
       {visibleLabels.map((label) => (
-        <span key={label} title="Review source data values if SQL signals do not explain the symptom">
+        <span key={label} title="Source data used by the selected value lineage">
           {label}
         </span>
       ))}

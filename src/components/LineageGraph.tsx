@@ -591,6 +591,9 @@ export function LineageGraph({
       for (const nodeId of columnHighlights.highlightedNodeIds) {
         activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
       }
+      for (const nodeId of columnHighlights.relatedNodeIds) {
+        activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
+      }
       for (const nodeId of columnHighlights.highlightedSourceDataNodeIds) {
         activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
       }
@@ -610,6 +613,7 @@ export function LineageGraph({
   }, [
     columnHighlights.highlightedEdgeIds,
     columnHighlights.highlightedNodeIds,
+    columnHighlights.relatedNodeIds,
     columnHighlights.highlightedSourceDataNodeIds,
     displayLineage.edges,
     baseGraph.edges,
@@ -3288,6 +3292,7 @@ function resolveColumnHighlights(
   const downstreamByColumnKey = new Map<string, Array<{ columnName: string; nodeId: string }>>();
   const highlightedColumnIds = new Set<string>();
   const highlightedEdgeIds = new Set<string>();
+  const valueFlowNodeIds = new Set<string>();
   const sourceColumnIds = new Set<string>();
   const visitedUpstream = new Set<string>();
   const visitedDownstream = new Set<string>();
@@ -3322,6 +3327,8 @@ function resolveColumnHighlights(
     let resolvedAny = false;
     for (const ref of upstream) {
       highlightedEdgeIds.add(edgeKey(ref.nodeId, nodeId));
+      valueFlowNodeIds.add(nodeId);
+      valueFlowNodeIds.add(ref.nodeId);
       resolvedAny = visitUpstream(ref.nodeId, ref.columnName) || resolvedAny;
     }
 
@@ -3349,6 +3356,8 @@ function resolveColumnHighlights(
 
       highlightedColumnIds.add(downstreamColumn.id);
       highlightedEdgeIds.add(edgeKey(nodeId, ref.nodeId));
+      valueFlowNodeIds.add(nodeId);
+      valueFlowNodeIds.add(ref.nodeId);
       visitDownstream(ref.nodeId, ref.columnName);
     }
   };
@@ -3357,8 +3366,10 @@ function resolveColumnHighlights(
   const selected = selectedNode?.columns.find((column) => column.id === selectedColumn.columnId);
   const initialUpstreamRefs = upstreamRefs ?? selected?.upstream ?? [];
   if (initialUpstreamRefs.length > 0) {
+    valueFlowNodeIds.add(selectedColumn.nodeId);
     for (const ref of initialUpstreamRefs) {
       highlightedEdgeIds.add(edgeKey(ref.nodeId, selectedColumn.nodeId));
+      valueFlowNodeIds.add(ref.nodeId);
       visitUpstream(ref.nodeId, ref.columnName);
     }
   }
@@ -3370,11 +3381,12 @@ function resolveColumnHighlights(
     highlightedColumnIds,
     highlightedEdgeIds,
     highlightedNodeImpactLabels: toNodeImpactLabelMap(selectedColumn.populationImpactLabelsByNodeId),
-    highlightedNodeIds: new Set(selectedColumn.populationNodeIds ?? []),
+    highlightedNodeIds: valueFlowNodeIds,
     highlightedReferenceLabels: toNodeImpactLabelMap(selectedColumn.referenceLabelsByNodeId),
     highlightedSourceDataLabels: toNodeImpactLabelMap(selectedColumn.sourceDataLabelsByNodeId),
     highlightedSourceDataNodeIds: new Set(selectedColumn.sourceDataNodeIds ?? []),
-    nodeTone: 'population',
+    nodeTone: 'value',
+    relatedNodeIds: new Set([...(selectedColumn.populationNodeIds ?? []), ...(selectedColumn.sourceDataNodeIds ?? [])]),
     sourceColumnIds,
   };
 }
@@ -3389,6 +3401,7 @@ interface GraphHighlightResult {
   highlightedSourceDataLabels: Map<string, string[]>;
   highlightedSourceDataNodeIds: Set<string>;
   nodeTone: 'population' | 'value';
+  relatedNodeIds: Set<string>;
   sourceColumnIds: Set<string>;
 }
 
@@ -3407,6 +3420,7 @@ function resolveHighlightTarget(
     highlightedSourceDataLabels: new Map<string, string[]>(),
     highlightedSourceDataNodeIds: new Set<string>(),
     nodeTone: 'value' as const,
+    relatedNodeIds: new Set<string>(),
     sourceColumnIds: new Set<string>(),
   };
   if (!target) {
@@ -3428,12 +3442,12 @@ function resolveHighlightTarget(
       ...empty,
       edgeTone: 'population',
       highlightedEdgeIds,
-      highlightedNodeIds,
+      highlightedNodeIds: new Set<string>(),
       highlightedNodeImpactLabels: toNodeImpactLabelMap(target.populationImpactLabelsByNodeId),
       highlightedReferenceLabels: toNodeImpactLabelMap(target.referenceLabelsByNodeId),
       highlightedSourceDataLabels: toNodeImpactLabelMap(target.sourceDataLabelsByNodeId),
       highlightedSourceDataNodeIds: new Set(Object.keys(target.sourceDataLabelsByNodeId ?? {})),
-      nodeTone: 'population',
+      relatedNodeIds: highlightedNodeIds,
     };
   }
 
@@ -3449,6 +3463,9 @@ function resolveHighlightTarget(
     }
     for (const nodeId of highlights.highlightedNodeIds) {
       merged.highlightedNodeIds.add(nodeId);
+    }
+    for (const nodeId of highlights.relatedNodeIds) {
+      merged.relatedNodeIds.add(nodeId);
     }
     for (const [nodeId, labels] of highlights.highlightedNodeImpactLabels) {
       const mergedLabels = new Set(merged.highlightedNodeImpactLabels.get(nodeId) ?? []);
@@ -3476,9 +3493,6 @@ function resolveHighlightTarget(
     }
     for (const columnId of highlights.sourceColumnIds) {
       merged.sourceColumnIds.add(columnId);
-    }
-    if (highlights.highlightedNodeIds.size > 0) {
-      merged.nodeTone = 'population';
     }
   }
   return merged;

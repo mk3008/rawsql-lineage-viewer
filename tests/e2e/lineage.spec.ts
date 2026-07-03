@@ -134,11 +134,13 @@ test('shows SELECT DISTINCT as a node-level row lineage badge only after selecti
   await page.getByRole('combobox', { name: 'Focus' }).selectOption({ label: 'All signals' });
 
   const outputNode = page.getByTestId('rf__node-main_output');
+  const sourceNode = page.getByTestId('rf__node-table_tables');
   const sidePanel = page.getByLabel('Side panel');
   await expect(outputNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toBeVisible();
   await outputNode.getByRole('button', { name: 'id', exact: true }).click();
   await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Distinct');
+  await expect(sourceNode.locator('.lineage-node-source-data-badges')).toContainText('Data');
 });
 
 test('keeps SELECT DISTINCT ON row lineage badge on the SELECT scope node after selecting a column', async ({ page }) => {
@@ -645,7 +647,7 @@ test('renders WHERE EXISTS subquery sources as row lineage', async ({ page }) =>
   await expect(outputNode.getByRole('button', { name: 'id', exact: true })).toHaveClass(/lineage-column-selected/);
   await expect(outputNode.locator('.lineage-node-impact-badges')).toContainText('Where');
   await expect(customersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
-  await expect(ordersNode.locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(ordersNode.locator('.lineage-node')).not.toHaveClass(/lineage-node-highlighted/);
   await expect(customersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(ordersNode.locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(customersNode.locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
@@ -1100,7 +1102,7 @@ test('shows selected lineage details in the inspector panel', async ({ page }) =
   await expect(diagnosticJson).toContainText('"columnLineage"');
   await problemFocus.selectOption('missing_rows');
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-impact-badges')).toContainText('Where');
-  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).toHaveClass(/lineage-node-highlighted/);
+  await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node')).not.toHaveClass(/lineage-node-highlighted/);
   await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-impact-badges')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-table_customer_favorites').locator('.lineage-node-reference-badges')).toContainText('Ref: Where');
   await problemFocus.selectOption('value_too_low');

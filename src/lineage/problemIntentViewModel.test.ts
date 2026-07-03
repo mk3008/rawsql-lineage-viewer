@@ -155,21 +155,8 @@ describe('problem intent view model', () => {
     expect(graphReferenceLabelsForInfluence(packet.rowLineage.influences.find((item) => item.id === 'order-only')!, packet.rowLineage.influences, 'all_signals')).toEqual([]);
   });
 
-  it('maps source data concerns to separate source leaf badges', () => {
+  it('maps selected value source leaves to source data badges', () => {
     const packet = createPacket();
-    packet.candidateConcerns.push({
-      checkDomains: ['data_condition'],
-      confidence: 'possible',
-      effects: ['source_data_value'],
-      evidence: ['order_items.quantity', 'order_items.unit_price'],
-      impact: ['may_change_value'],
-      influenceIds: [],
-      kind: 'source_data_value',
-      mechanisms: [],
-      reason: 'Source leaf values may be incorrect.',
-      scopeId: 'scope_recent_orders',
-      signals: [],
-    });
     packet.columnLineage.sourceLeaves = [
       {
         columnName: 'quantity',
@@ -196,7 +183,9 @@ describe('problem intent view model', () => {
     expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'all_signals')).toEqual({
       table_order_items: ['Data'],
     });
-    expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'logic_review')).toEqual({});
+    expect(sourceDataValueLabelsByNodeIdForIntent(packet, 'logic_review')).toEqual({
+      table_order_items: ['Data'],
+    });
   });
 
   it('filters influences and ranks concerns by selected intent without mutating the packet', () => {
