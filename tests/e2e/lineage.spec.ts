@@ -1585,8 +1585,7 @@ test('uses the same compact collapsed-group layout on initial auto layout load',
   await page.goto('/');
   await showAllColumns(page);
 
-  const autoLayout = page.getByRole('checkbox', { name: 'Auto layout' });
-  await expect(autoLayout).toBeChecked();
+  await expect(page.getByRole('checkbox', { name: 'Auto layout' })).toHaveCount(0);
 
   const readLayout = async () => {
     const outputBox = await page.getByTestId('rf__node-main_output').boundingBox();
@@ -1604,16 +1603,6 @@ test('uses the same compact collapsed-group layout on initial auto layout load',
   const initialLayout = await readLayout();
   expect(initialLayout.orderTotalsGap).toBeLessThan(620);
   expect(initialLayout.orderItemsGap).toBeLessThan(720);
-
-  await autoLayout.uncheck();
-  await autoLayout.check();
-
-  await expect
-    .poll(async () => {
-      const nextLayout = await readLayout();
-      return Math.abs(nextLayout.orderTotalsGap - initialLayout.orderTotalsGap) + Math.abs(nextLayout.orderItemsGap - initialLayout.orderItemsGap);
-    })
-    .toBeLessThan(8);
 });
 
 test('keeps focus badges from overlapping neighboring nodes after switching to All signals', async ({ page }) => {

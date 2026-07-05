@@ -255,8 +255,7 @@ export function LineageGraph({
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const [showEdgeAliases, setShowEdgeAliases] = useState(false);
-  const [autoLayoutEnabled, setAutoLayoutEnabled] = useState(true);
-  const effectiveAutoLayoutEnabled = isMobileGraphDisplayMode || autoLayoutEnabled;
+  const effectiveAutoLayoutEnabled = true;
   const [autoLayoutRequestId, setAutoLayoutRequestId] = useState(0);
   const scheduleAutoLayout = useCallback((reason: AutoLayoutReason) => {
     if (!effectiveAutoLayoutEnabled || typeof window === 'undefined') {
@@ -1183,12 +1182,6 @@ export function LineageGraph({
           <Rows3 size={15} />
           Collapse groups
         </button>
-        {isMobileGraphDisplayMode ? null : (
-          <label className="graph-alias-toggle">
-            <input aria-label="Auto layout" type="checkbox" checked={autoLayoutEnabled} onChange={(event) => setAutoLayoutEnabled(event.target.checked)} />
-            Auto layout
-          </label>
-        )}
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
           {Math.round(viewportZoom * 100)}%
