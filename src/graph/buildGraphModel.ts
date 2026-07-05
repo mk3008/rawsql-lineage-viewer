@@ -171,6 +171,8 @@ function layoutNodes(nodes: LineageNode[], edges: LineageEdge[]): Array<{ id: st
   alignPrimaryTransformationSources(groups, edges, depthByNode, yByNode, nodeById);
   pushSecondaryTransformationSourcesOutward(groups, edges, depthByNode, yByNode, nodeById);
   alignPrimaryTransformationSources(groups, edges, depthByNode, yByNode, nodeById);
+  reduceForwardLayerCrossings(groups, edges, depthByNode, yByNode);
+  alignPrimaryTransformationSources(groups, edges, depthByNode, yByNode, nodeById, false);
   pushPredicateTargetsOutward(edges, depthByNode, yByNode);
   compactUnusedVerticalLanes(yByNode);
 
@@ -434,6 +436,60 @@ function prioritizeContinuingNodesInLayer(groups: Map<number, LineageNode[]>, ed
   }
 }
 
+function reduceForwardLayerCrossings(
+  groups: Map<number, LineageNode[]>,
+  edges: LineageEdge[],
+  depthByNode: Map<string, number>,
+  yByNode: Map<string, number>,
+) {
+  const depths = [...groups.keys()].sort((a, b) => a - b);
+  for (const depth of depths) {
+    const group = groups.get(depth);
+    if (!group || group.length < 2) {
+      continue;
+    }
+
+    const desiredYByNode = new Map(
+      group.map((node) => {
+        const incomingNeighborYs = edges
+          .filter((edge) => edge.target === node.id && (depthByNode.get(edge.source) ?? depth) < depth)
+          .map((edge) => {
+            const y = yByNode.get(edge.source);
+            return y === undefined ? null : { weight: layerCrossingEdgeWeight(edge), y };
+          })
+          .filter((item): item is { weight: number; y: number } => item !== null);
+        return [node.id, incomingNeighborYs.length > 0 ? weightedAverage(incomingNeighborYs) : yByNode.get(node.id) ?? 0] as const;
+      }),
+    );
+    const currentSlots = group.map((node) => yByNode.get(node.id) ?? 0).sort((a, b) => a - b);
+    const sorted = [...group].sort((a, b) => {
+      const desiredDelta = (desiredYByNode.get(a.id) ?? 0) - (desiredYByNode.get(b.id) ?? 0);
+      if (desiredDelta !== 0) {
+        return desiredDelta;
+      }
+      return (yByNode.get(a.id) ?? 0) - (yByNode.get(b.id) ?? 0) || nodeTypeRank(a) - nodeTypeRank(b) || a.label.localeCompare(b.label);
+    });
+
+    groups.set(depth, sorted);
+    sorted.forEach((node, index) => {
+      const slot = currentSlots[index];
+      if (slot !== undefined) {
+        yByNode.set(node.id, slot);
+      }
+    });
+  }
+}
+
+function layerCrossingEdgeWeight(edge: LineageEdge): number {
+  if (isLowPriorityLayoutEdge(edge)) {
+    return 0.2;
+  }
+  if (edge.kind === 'subquery_value') {
+    return 0.5;
+  }
+  return 1;
+}
+
 function alignPrimaryOutputConsumers(
   groups: Map<number, LineageNode[]>,
   edges: LineageEdge[],
@@ -496,6 +552,7 @@ function alignPrimaryTransformationSources(
   depthByNode: Map<string, number>,
   yByNode: Map<string, number>,
   nodeById: Map<string, LineageNode>,
+  allowDisplacement = true,
 ) {
   const scalarRowSourceTargets = new Set(
     edges
@@ -520,7 +577,7 @@ function alignPrimaryTransformationSources(
         continue;
       }
 
-      alignNodeToYWithinDepth(primarySourceEdge.target, sourceY, groups, depthByNode, yByNode, scalarRowSourceTargets);
+      alignNodeToYWithinDepth(primarySourceEdge.target, sourceY, groups, depthByNode, yByNode, scalarRowSourceTargets, allowDisplacement);
     }
   }
 }
@@ -655,6 +712,7 @@ function alignNodeToYWithinDepth(
   depthByNode: Map<string, number>,
   yByNode: Map<string, number>,
   protectedNodeIds: Set<string> = new Set(),
+  allowDisplacement = true,
 ) {
   const currentY = yByNode.get(nodeId);
   const depth = depthByNode.get(nodeId);
@@ -665,6 +723,9 @@ function alignNodeToYWithinDepth(
   const group = groups.get(depth) ?? [];
   const occupyingNode = group.find((node) => node.id !== nodeId && yByNode.get(node.id) === desiredY);
   if (occupyingNode && protectedNodeIds.has(occupyingNode.id)) {
+    return;
+  }
+  if (occupyingNode && !allowDisplacement) {
     return;
   }
   yByNode.set(nodeId, desiredY);

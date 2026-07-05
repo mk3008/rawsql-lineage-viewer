@@ -394,7 +394,7 @@ describe('buildGraphModel', () => {
     expect(supportTickets?.position.y).toBe(supportPressure?.position.y);
   });
 
-  it('keeps expanded helper CTE primary sources aligned after secondary inputs move outward', () => {
+  it('keeps expanded helper CTE source order from crossing sibling support edges', () => {
     const { lineage } = analyzeSql(rankedCustomerHealthSql);
     const visibleNodeIds = new Set([
       'main_output',
@@ -418,7 +418,9 @@ describe('buildGraphModel', () => {
 
     expect(orders?.position.y).toBe(orderBase?.position.y);
     expect(customers?.position.y).toBe(customerOrderSummary?.position.y);
-    expect(supportTickets?.position.y).toBe(supportPressure?.position.y);
+    expect(orderBase?.position.y).toBeGreaterThanOrEqual(customerOrderSummary?.position.y ?? Number.POSITIVE_INFINITY);
+    expect(orderBase?.position.y).toBeLessThan(supportTickets?.position.y ?? Number.NEGATIVE_INFINITY);
+    expect(supportTickets?.position.y).toBeGreaterThan(supportPressure?.position.y ?? Number.POSITIVE_INFINITY);
   });
 
   it('does not render recursive CTE self-reference edges as graph lines', () => {
