@@ -11,7 +11,7 @@ import {
   type EdgeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
@@ -198,6 +198,7 @@ export function LineageGraph({
   const nodePositionsRef = useRef(new Map<string, { x: number; y: number }>());
   const flowInstanceRef = useRef<ReactFlowInstance<GraphNode, GraphEdge> | null>(null);
   const previousGraphStructureKeyRef = useRef<string | null>(null);
+  const previousNodeLayoutKeyRef = useRef<string | null>(null);
   const previousNodeStructureKeyRef = useRef<string | null>(null);
   const previousProblemIntentRef = useRef(problemIntent);
   const previousAutoLayoutRequestIdRef = useRef(0);
@@ -254,8 +255,7 @@ export function LineageGraph({
   const [expandedPassthroughNodeIds, setExpandedPassthroughNodeIds] = useState<Set<string>>(() => new Set());
   const [viewportZoom, setViewportZoom] = useState(1);
   const [showEdgeAliases, setShowEdgeAliases] = useState(false);
-  const [autoLayoutEnabled, setAutoLayoutEnabled] = useState(true);
-  const effectiveAutoLayoutEnabled = isMobileGraphDisplayMode || autoLayoutEnabled;
+  const effectiveAutoLayoutEnabled = true;
   const [autoLayoutRequestId, setAutoLayoutRequestId] = useState(0);
   const scheduleAutoLayout = useCallback((reason: AutoLayoutReason) => {
     if (!effectiveAutoLayoutEnabled || typeof window === 'undefined') {
@@ -281,7 +281,6 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
-  const allColumnsHidden = hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => hiddenColumnNodeIds.has(nodeId));
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
@@ -304,15 +303,6 @@ export function LineageGraph({
       setShowUnreachableCtes(false);
     }
   }, [hasUnreachableCtes]);
-  const toggleAllColumns = useCallback(() => {
-    setHiddenColumnNodeIds((current) => {
-      if (hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => current.has(nodeId))) {
-        return new Set();
-      }
-
-      return new Set(hideableColumnNodeIds);
-    });
-  }, [hideableColumnNodeIds]);
   const togglePassthroughColumns = useCallback((nodeId: string) => {
     setExpandedPassthroughNodeIds((current) => {
       const next = new Set(current);
@@ -597,8 +587,20 @@ export function LineageGraph({
       for (const nodeId of columnHighlights.highlightedSourceDataNodeIds) {
         activeNodeIds.add(mapToVisibleNodeId(nodeId, visibleNodeIdBySourceNodeId) ?? nodeId);
       }
+      const activeConditionEdgePairKeys = new Set(
+        baseGraph.edges
+          .filter((edge) => activeNodeIds.has(edge.source) && activeNodeIds.has(edge.target) && isConditionReferenceEdge(edge.data?.lineageEdge))
+          .map(directedEdgePairKey),
+      );
       for (const edge of baseGraph.edges) {
         if (activeNodeIds.has(edge.source) && activeNodeIds.has(edge.target)) {
+          if (
+            activeConditionEdgePairKeys.has(directedEdgePairKey(edge)) &&
+            !isConditionReferenceEdge(edge.data?.lineageEdge) &&
+            !columnHighlights.highlightedEdgeIds.has(edge.id)
+          ) {
+            continue;
+          }
           activeEdgeIds.add(edge.id);
         }
       }
@@ -863,9 +865,19 @@ export function LineageGraph({
     ],
   );
   const graphEdges = useMemo<GraphEdge[]>(
-    () =>
-      graph.edges.map((edge) => {
+    () => {
+      const activeConditionEdgePairKeys = new Set(
+        graph.edges
+          .filter((edge) => activeGraphSelection?.activeEdgeIds.has(edge.id) && isConditionReferenceEdge(edge.data?.lineageEdge))
+          .map(directedEdgePairKey),
+      );
+      return graph.edges.map((edge) => {
         const edgeDimmed = activeGraphSelection ? !activeGraphSelection.activeEdgeIds.has(edge.id) : false;
+        const suppressDimmedDuplicate =
+          edgeDimmed &&
+          activeConditionEdgePairKeys.has(directedEdgePairKey(edge)) &&
+          !isConditionReferenceEdge(edge.data?.lineageEdge) &&
+          !columnHighlights.highlightedEdgeIds.has(edge.id);
         const displayEdge = showEdgeAliases
           ? edge
           : {
@@ -880,13 +892,20 @@ export function LineageGraph({
               className: [displayEdge.className, 'lineage-edge-dimmed'].filter(Boolean).join(' '),
               style: {
                 ...(displayEdge.style ?? {}),
-                opacity: 0.16,
+                opacity: suppressDimmedDuplicate ? 0 : 0.16,
               },
             }
           : displayEdge;
 
         if (!columnHighlights.highlightedEdgeIds.has(edge.id)) {
           return dimmedEdge;
+        }
+
+        if (isConditionReferenceEdge(edge.data?.lineageEdge)) {
+          return {
+            ...dimmedEdge,
+            zIndex: 1000,
+          };
         }
 
         const baseStyle = dimmedEdge.style ?? {};
@@ -907,7 +926,8 @@ export function LineageGraph({
                 }
               : edge.markerEnd,
         };
-      }),
+      });
+    },
     [activeGraphSelection, columnHighlights.edgeTone, columnHighlights.highlightedEdgeIds, graph.edges, showEdgeAliases],
   );
   const graphStructureKey = useMemo(
@@ -917,6 +937,10 @@ export function LineageGraph({
         graph.edges.map((edge) => `${edge.id}:${edge.source}->${edge.target}`).join('|'),
       ].join('::'),
     [graph.edges, graph.nodes],
+  );
+  const graphLayoutKey = useMemo(
+    () => graphNodes.map((node) => `${node.id}:${node.position.x},${node.position.y}`).join('|'),
+    [graphNodes],
   );
   const [nodes, setNodes, onNodesChange] = useNodesState(graphNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(graphEdges);
@@ -936,6 +960,7 @@ export function LineageGraph({
       previousLineageRef.current = lineage;
       previousFlowDirectionRef.current = flowDirection;
       previousNodeStructureKeyRef.current = graphStructureKey;
+      previousNodeLayoutKeyRef.current = graphLayoutKey;
       previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
       previousAutoLayoutEnabledRef.current = effectiveAutoLayoutEnabled;
       outputViewportCorrectionPendingRef.current = lineageChanged;
@@ -946,9 +971,12 @@ export function LineageGraph({
 
     const graphStructureChanged =
       previousNodeStructureKeyRef.current !== null && previousNodeStructureKeyRef.current !== graphStructureKey;
+    const graphLayoutChanged =
+      previousNodeLayoutKeyRef.current !== null && previousNodeLayoutKeyRef.current !== graphLayoutKey;
     const autoLayoutJustEnabled = effectiveAutoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
     const autoLayoutRequested = effectiveAutoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
     previousNodeStructureKeyRef.current = graphStructureKey;
+    previousNodeLayoutKeyRef.current = graphLayoutKey;
     previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
     previousAutoLayoutEnabledRef.current = effectiveAutoLayoutEnabled;
 
@@ -959,7 +987,7 @@ export function LineageGraph({
       const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
       const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
       const autoLayoutOffset =
-        effectiveAutoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested) && currentOriginNode && nextOriginNode
+        effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested) && currentOriginNode && nextOriginNode
           ? {
               x: currentOriginNode.position.x - nextOriginNode.position.x,
               y: currentOriginNode.position.y - nextOriginNode.position.y,
@@ -967,7 +995,7 @@ export function LineageGraph({
           : null;
       return graphNodes.map((node) => {
         const current = currentById.get(node.id);
-        if (effectiveAutoLayoutEnabled && (graphStructureChanged || autoLayoutJustEnabled || autoLayoutRequested)) {
+        if (effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested)) {
           const savedPosition = nodePositionsRef.current.get(node.id);
           const shouldKeepDraggedPosition = draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
           return {
@@ -1004,7 +1032,7 @@ export function LineageGraph({
         };
       });
     });
-  }, [effectiveAutoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
+  }, [effectiveAutoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphLayoutKey, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -1132,10 +1160,6 @@ export function LineageGraph({
         <ProblemIntentSelector intent={problemIntent} onChange={onProblemIntentChange} />
         {isMobileGraphDisplayMode ? null : (
           <>
-            <button className="graph-column-toggle" type="button" onClick={toggleAllColumns}>
-              {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
-              {allColumnsHidden ? 'Always show columns' : 'Minimize columns'}
-            </button>
             <label className="graph-alias-toggle">
               <input aria-label="Show aliases" type="checkbox" checked={showEdgeAliases} onChange={(event) => setShowEdgeAliases(event.target.checked)} />
               Aliases
@@ -1158,12 +1182,6 @@ export function LineageGraph({
           <Rows3 size={15} />
           Collapse groups
         </button>
-        {isMobileGraphDisplayMode ? null : (
-          <label className="graph-alias-toggle">
-            <input aria-label="Auto layout" type="checkbox" checked={autoLayoutEnabled} onChange={(event) => setAutoLayoutEnabled(event.target.checked)} />
-            Auto layout
-          </label>
-        )}
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
           {Math.round(viewportZoom * 100)}%
@@ -3556,6 +3574,14 @@ function columnKey(nodeId: string, columnName: string) {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function isConditionReferenceEdge(edge: LineageEdge | undefined): boolean {
+  return edge?.kind === 'correlation' || edge?.kind === 'predicate_subquery';
+}
+
+function directedEdgePairKey(edge: Pick<GraphEdge, 'source' | 'target'>) {
+  return `${edge.source}->${edge.target}`;
 }
 
 function edgeKey(sourceId: string, targetId: string) {

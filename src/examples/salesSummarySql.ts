@@ -1,4 +1,15 @@
 export const salesSummarySql = `WITH
+-- Customer scope is intentionally simple so safe condition placement can move
+-- customer filters from the final SELECT into this CTE.
+customer_scope AS (
+  SELECT
+    c.id,
+    c.name,
+    c.email,
+    c.region,
+    c.status
+  FROM customers c
+),
 -- Recent order line items used as the base sales fact.
 recent_orders AS (
   SELECT
@@ -34,9 +45,9 @@ payment_summary AS (
   GROUP BY p.customer_id
 )
 SELECT
-  c.id AS customer_id,
-  c.name AS customer_name,
-  c.email,
+  cs.id AS customer_id,
+  cs.name AS customer_name,
+  cs.email,
   COALESCE(ot.order_count, 0) AS order_count,
   COALESCE(ot.total_amount, 0) AS total_amount,
   COALESCE(ps.paid_amount, 0) AS paid_amount,
@@ -45,14 +56,16 @@ SELECT
     WHEN ps.last_paid_at < CURRENT_DATE - INTERVAL '30 days' THEN 'needs_followup'
     ELSE 'active'
   END AS payment_status
-FROM customers c
-LEFT JOIN order_totals ot ON ot.customer_id = c.id
-LEFT JOIN payment_summary ps ON ps.customer_id = c.id
-WHERE EXISTS (
-  SELECT 1
-  FROM customer_favorites cf
-  WHERE cf.customer_id = c.id
-    AND cf.is_active = TRUE
-)
+FROM customer_scope cs
+LEFT JOIN order_totals ot ON ot.customer_id = cs.id
+LEFT JOIN payment_summary ps ON ps.customer_id = cs.id
+WHERE cs.region = :region
+  AND cs.status = :customer_status
+  AND EXISTS (
+    SELECT 1
+    FROM customer_favorites cf
+    WHERE cf.customer_id = cs.id
+      AND cf.is_active = TRUE
+  )
 ORDER BY total_amount DESC
 LIMIT 100;`;

@@ -7,6 +7,7 @@ import {
   FunctionSource,
   InsertQuery,
   InlineQuery,
+  optimizeConditions as optimizeRawsqlConditions,
   ParenSource,
   SelectQueryParser,
   SelectOutputCollector,
@@ -17,7 +18,7 @@ import {
   TableSource,
   ValuesQuery,
 } from 'rawsql-ts';
-import type { CommonTable, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
+import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
@@ -43,12 +44,67 @@ import { collectColumnReferences, resolveColumnReferences, resolveColumnReferenc
 import type { SourceReferenceTarget } from './source-references/sourceReferences.types';
 
 export interface ParserAdapterResult {
+  conditionOptimization: ConditionOptimizationReport;
   lineage: LineageModel;
   parserVersion: string;
 }
 
 export interface AnalyzeSqlOptions {
+  optimizeConditions?: boolean;
   schemaFacts?: SchemaFacts;
+}
+
+export interface ConditionOptimizationReport {
+  applied: ConditionOptimizationReportItem[];
+  appliedCount: number;
+  blockedCount: number;
+  changed: boolean;
+  enabled: boolean;
+  errorCount: number;
+  errors: ConditionOptimizationReportItem[];
+  ok: boolean;
+  optimizedSql: string;
+  originalSql: string;
+  phases: ConditionOptimizationPhaseReport[];
+  safety?: {
+    dryRun: boolean;
+    formatterGeneratedSource: boolean;
+    mode: 'safe_only';
+    unsafeRewriteApplied: boolean;
+  };
+  skipped: ConditionOptimizationReportItem[];
+  skippedCount: number;
+  unchangedAvailable: boolean;
+  unchangedCount: number;
+  warningCount: number;
+  warnings: ConditionOptimizationReportItem[];
+}
+
+export interface ConditionOptimizationPhaseReport {
+  appliedCount: number;
+  errorCount: number;
+  kind: string;
+  skippedCount: number;
+  warningCount: number;
+}
+
+export interface ConditionOptimizationReportItem {
+  code?: string;
+  conditionSql?: string;
+  displaySql?: string;
+  from?: string;
+  kind?: string;
+  parameterName?: string;
+  phaseKind?: string;
+  predicateSql?: string;
+  reason?: string;
+  status: 'blocked' | 'moved' | 'warning';
+  to?: string;
+}
+
+interface ParsedLineageSelectQuery {
+  conditionOptimization: ConditionOptimizationReport;
+  query: SelectQuery;
 }
 
 const parserVersion = 'rawsql-ts';
@@ -101,37 +157,355 @@ const nodeSqlFormatter = new SqlFormatter({
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
-function parseLineageSelectQuery(sql: string): SelectQuery {
+function parseLineageSelectQuery(sql: string, optimizeConditions: boolean): ParsedLineageSelectQuery {
+  const wrappedSelectSql = extractWrappedSelectSql(sql);
+  if (wrappedSelectSql) {
+    return parseLineageSelectQuery(wrappedSelectSql, optimizeConditions);
+  }
+
+  const originalStatement = parseSqlOrUndefined(sql);
+  const optimization = optimizeLineageSelectSql(sql, optimizeConditions);
   let statement: unknown;
   try {
-    statement = SqlParser.parse(sql);
+    statement = SqlParser.parse(optimization.sql);
+    restoreLineageComments(statement, originalStatement);
   } catch (error) {
-    const wrappedSelectSql = extractWrappedSelectSql(sql);
-    if (wrappedSelectSql) {
-      return parseLineageSelectQuery(wrappedSelectSql);
-    }
     throw error;
   }
+
+  const optimizationDisplaySql = formatConditionOptimizationDisplaySql(sql, optimization.report.enabled ? optimization.report.optimizedSql : sql);
+  const report = withConditionOptimizationSql(
+    optimization.report,
+    optimizationDisplaySql.originalSql,
+    optimizationDisplaySql.optimizedSql,
+  );
 
   if (statement instanceof CreateTableQuery) {
     if (!statement.asSelectQuery) {
       throw new Error('CREATE TABLE lineage requires an AS SELECT query.');
     }
-    return statement.asSelectQuery;
+    return { conditionOptimization: report, query: statement.asSelectQuery };
   }
 
   if (statement instanceof InsertQuery) {
     if (!statement.selectQuery || statement.selectQuery instanceof ValuesQuery) {
       throw new Error('INSERT lineage requires a SELECT query.');
     }
-    return statement.selectQuery;
+    const originalSelectQuery = originalStatement instanceof InsertQuery && isSelectQuery(originalStatement.selectQuery)
+      ? originalStatement.selectQuery
+      : statement.selectQuery;
+    const optimizedSelect = optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery, optimizeConditions);
+    return {
+      conditionOptimization: mergeConditionOptimizationReports(report, optimizedSelect.conditionOptimization),
+      query: optimizedSelect.query,
+    };
   }
 
   if (isSelectQuery(statement)) {
-    return statement;
+    return { conditionOptimization: report, query: statement };
   }
 
   throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
+}
+
+function optimizeLineageSelectSql(sql: string, enabled: boolean): { report: ConditionOptimizationReport; sql: string } {
+  if (!enabled) {
+    return { report: createDisabledConditionOptimizationReport(sql), sql };
+  }
+  const result = optimizeRawsqlConditions(sql);
+  const optimizedSql = result.ok ? result.sql : sql;
+  return {
+    report: toConditionOptimizationReport(true, result, sql, optimizedSql),
+    sql: optimizedSql,
+  };
+}
+
+function optimizeLineageSelectQuery(
+  query: SelectQuery,
+  commentSource: SelectQuery,
+  enabled: boolean,
+): ParsedLineageSelectQuery {
+  if (!enabled) {
+    return { conditionOptimization: createDisabledConditionOptimizationReport(), query };
+  }
+  const result = optimizeRawsqlConditions(query);
+  if (!result.ok) {
+    return { conditionOptimization: toConditionOptimizationReport(true, result, '', result.sql), query };
+  }
+
+  const optimized = SqlParser.parse(result.sql);
+  restoreLineageComments(optimized, commentSource);
+  return {
+    conditionOptimization: toConditionOptimizationReport(true, result, '', result.sql),
+    query: isSelectQuery(optimized) ? optimized : query,
+  };
+}
+
+function formatConditionOptimizationDisplaySql(originalSql: string, optimizedSql: string): { optimizedSql: string; originalSql: string } {
+  const originalForDisplay = parseSqlOrUndefined(originalSql);
+  const originalForRestore = parseSqlOrUndefined(originalSql);
+  const optimizedForDisplay = parseSqlOrUndefined(optimizedSql);
+  if (optimizedForDisplay && originalForRestore) {
+    restoreLineageComments(optimizedForDisplay, originalForRestore);
+  }
+
+  return {
+    optimizedSql: formatNodeQuerySql(optimizedForDisplay) ?? optimizedSql.trim(),
+    originalSql: formatNodeQuerySql(originalForDisplay) ?? originalSql.trim(),
+  };
+}
+
+function createDisabledConditionOptimizationReport(sql = ''): ConditionOptimizationReport {
+  return {
+    applied: [],
+    appliedCount: 0,
+    blockedCount: 0,
+    changed: false,
+    enabled: false,
+    errorCount: 0,
+    errors: [],
+    ok: true,
+    optimizedSql: sql,
+    originalSql: sql,
+    phases: [],
+    skipped: [],
+    skippedCount: 0,
+    unchangedAvailable: false,
+    unchangedCount: 0,
+    warningCount: 0,
+    warnings: [],
+  };
+}
+
+function toConditionOptimizationReport(
+  enabled: boolean,
+  result: ConditionOptimizationResult,
+  originalSql: string,
+  optimizedSql: string,
+): ConditionOptimizationReport {
+  return {
+    applied: result.applied.map((item) => toConditionOptimizationReportItem(item, 'moved')),
+    appliedCount: result.applied.length,
+    blockedCount: result.skipped.length + result.errors.length,
+    changed: normalizedSqlForCompare(originalSql) !== normalizedSqlForCompare(optimizedSql),
+    enabled,
+    errorCount: result.errors.length,
+    errors: result.errors.map((item) => toConditionOptimizationReportItem(item, 'blocked')),
+    ok: result.ok,
+    optimizedSql,
+    originalSql,
+    phases: result.phases.map((phase) => ({
+      appliedCount: phase.appliedCount,
+      errorCount: phase.errorCount,
+      kind: phase.kind,
+      skippedCount: phase.skippedCount,
+      warningCount: phase.warningCount,
+    })),
+    safety: {
+      dryRun: result.safety.dryRun,
+      formatterGeneratedSource: result.safety.formatterGeneratedSource,
+      mode: result.safety.mode,
+      unsafeRewriteApplied: result.safety.unsafeRewriteApplied,
+    },
+    skipped: result.skipped.map((item) => toConditionOptimizationReportItem(item, 'blocked')),
+    skippedCount: result.skipped.length,
+    unchangedAvailable: false,
+    unchangedCount: 0,
+    warningCount: result.warnings.length,
+    warnings: result.warnings.map((item) => toConditionOptimizationReportItem(item, 'warning')),
+  };
+}
+
+function mergeConditionOptimizationReports(
+  left: ConditionOptimizationReport,
+  right: ConditionOptimizationReport,
+): ConditionOptimizationReport {
+  if (!left.enabled) {
+    return right;
+  }
+  if (!right.enabled) {
+    return left;
+  }
+  return {
+    applied: [...left.applied, ...right.applied],
+    appliedCount: left.appliedCount + right.appliedCount,
+    blockedCount: left.blockedCount + right.blockedCount,
+    changed: left.changed || right.changed,
+    enabled: true,
+    errorCount: left.errorCount + right.errorCount,
+    errors: [...left.errors, ...right.errors],
+    ok: left.ok && right.ok,
+    optimizedSql: right.optimizedSql || left.optimizedSql,
+    originalSql: left.originalSql || right.originalSql,
+    phases: [...left.phases, ...right.phases],
+    safety: right.safety ?? left.safety,
+    skipped: [...left.skipped, ...right.skipped],
+    skippedCount: left.skippedCount + right.skippedCount,
+    unchangedAvailable: left.unchangedAvailable || right.unchangedAvailable,
+    unchangedCount: left.unchangedCount + right.unchangedCount,
+    warningCount: left.warningCount + right.warningCount,
+    warnings: [...left.warnings, ...right.warnings],
+  };
+}
+
+function toConditionOptimizationReportItem(
+  item: unknown,
+  status: ConditionOptimizationReportItem['status'],
+): ConditionOptimizationReportItem {
+  if (!item || typeof item !== 'object') {
+    return { status };
+  }
+  const record = item as Record<string, unknown>;
+  const conditionSql = typeof record.conditionSql === 'string' ? normalizeDisplaySql(record.conditionSql) : undefined;
+  const predicateSql = typeof record.predicateSql === 'string' ? normalizeDisplaySql(record.predicateSql) : undefined;
+  return {
+    code: typeof record.code === 'string' ? record.code : undefined,
+    conditionSql,
+    displaySql: conditionSql ?? predicateSql,
+    from: typeof record.fromScopeId === 'string' ? normalizeOptimizationScope(record.fromScopeId) : typeof record.scopeId === 'string' ? normalizeOptimizationScope(record.scopeId) : undefined,
+    kind: typeof record.kind === 'string' ? record.kind : undefined,
+    parameterName: typeof record.parameterName === 'string' ? record.parameterName : undefined,
+    phaseKind: typeof record.phaseKind === 'string' ? record.phaseKind : undefined,
+    predicateSql,
+    reason: typeof record.reason === 'string' ? record.reason : typeof record.message === 'string' ? record.message : undefined,
+    status,
+    to: typeof record.toScopeId === 'string' ? normalizeOptimizationScope(record.toScopeId) : undefined,
+  };
+}
+
+function withConditionOptimizationSql(
+  report: ConditionOptimizationReport,
+  originalSql: string,
+  optimizedSql: string,
+): ConditionOptimizationReport {
+  return {
+    ...report,
+    changed: report.enabled && normalizedSqlForCompare(originalSql) !== normalizedSqlForCompare(optimizedSql),
+    optimizedSql,
+    originalSql,
+  };
+}
+
+function normalizeDisplaySql(sql: string): string {
+  return sql.replace(/"/g, '');
+}
+
+function normalizeOptimizationScope(scopeId: string): string {
+  if (scopeId === 'scope:root') {
+    return 'final SELECT WHERE';
+  }
+  if (scopeId.startsWith('cte:')) {
+    return `${scopeId.slice('cte:'.length)} CTE WHERE`;
+  }
+  if (scopeId.startsWith('scope_')) {
+    return scopeId.replace(/^scope_/, '').replace(/_/g, ' ');
+  }
+  return scopeId;
+}
+
+function normalizedSqlForCompare(sql: string): string {
+  return sql.replace(/\s+/g, ' ').trim();
+}
+
+function parseSqlOrUndefined(sql: string): unknown {
+  try {
+    return SqlParser.parse(sql);
+  } catch {
+    return undefined;
+  }
+}
+
+function restoreLineageComments(target: unknown, source: unknown): void {
+  if (!target || !source || typeof target !== 'object' || typeof source !== 'object') {
+    return;
+  }
+
+  copyCommentMetadata(target, source);
+  if (target instanceof CreateTableQuery && source instanceof CreateTableQuery) {
+    restoreLineageComments(target.asSelectQuery, source.asSelectQuery);
+    return;
+  }
+  if (target instanceof InsertQuery && source instanceof InsertQuery) {
+    restoreLineageComments(target.selectQuery, source.selectQuery);
+    return;
+  }
+  if (target instanceof SimpleSelectQuery && source instanceof SimpleSelectQuery) {
+    restoreSimpleSelectComments(target, source);
+    return;
+  }
+  if (target instanceof BinarySelectQuery && source instanceof BinarySelectQuery) {
+    restoreLineageComments(target.left, source.left);
+    restoreLineageComments(target.right, source.right);
+  }
+}
+
+function restoreSimpleSelectComments(target: SimpleSelectQuery, source: SimpleSelectQuery): void {
+  copyCommentMetadata(target.selectClause, source.selectClause);
+  copySelectItemComments(target.selectClause.items, source.selectClause.items);
+  copyCommentMetadata(target.fromClause, source.fromClause);
+  copyCommentMetadata(target.whereClause, source.whereClause);
+  copyCommentMetadata(target.groupByClause, source.groupByClause);
+  copyCommentMetadata(target.havingClause, source.havingClause);
+  copyCommentMetadata(target.orderByClause, source.orderByClause);
+  copyCommentMetadata(target.limitClause, source.limitClause);
+  copyCommentMetadata(target.offsetClause, source.offsetClause);
+  copyCteComments(target.withClause?.tables, source.withClause?.tables);
+}
+
+function copyCteComments(targetCtes: CommonTable[] | undefined | null, sourceCtes: CommonTable[] | undefined | null): void {
+  if (!targetCtes?.length || !sourceCtes?.length) {
+    return;
+  }
+
+  const sourceByName = new Map(sourceCtes.map((cte) => [cte.getSourceAliasName().toLowerCase(), cte]));
+  for (const targetCte of targetCtes) {
+    const sourceCte = sourceByName.get(targetCte.getSourceAliasName().toLowerCase());
+    if (!sourceCte) {
+      continue;
+    }
+    copyCommentMetadata(targetCte, sourceCte);
+    copyCommentMetadata(targetCte.aliasExpression, sourceCte.aliasExpression);
+    copyCommentMetadata(targetCte.aliasExpression?.table, sourceCte.aliasExpression?.table);
+    restoreLineageComments(targetCte.query, sourceCte.query);
+  }
+}
+
+function copySelectItemComments(targetItems: SimpleSelectQuery['selectClause']['items'], sourceItems: SimpleSelectQuery['selectClause']['items']): void {
+  for (let index = 0; index < targetItems.length && index < sourceItems.length; index += 1) {
+    const targetItem = targetItems[index] as CommentMetadataCarrier;
+    const sourceItem = sourceItems[index] as CommentMetadataCarrier;
+    copyCommentMetadata(targetItem, sourceItem);
+    copyCommentMetadata(targetItems[index].value, sourceItems[index].value);
+    copyCommentMetadata(targetItems[index].identifier, sourceItems[index].identifier);
+    copyCommentField(targetItem, sourceItem, 'aliasPositionedComments');
+  }
+}
+
+type CommentMetadataCarrier = {
+  comments?: unknown;
+  positionedComments?: unknown;
+  trailingComments?: unknown;
+  globalComments?: unknown;
+  headerComments?: unknown;
+  aliasPositionedComments?: unknown;
+};
+
+function copyCommentMetadata(target: unknown, source: unknown): void {
+  if (!target || !source || typeof target !== 'object' || typeof source !== 'object') {
+    return;
+  }
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'comments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'positionedComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'trailingComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'globalComments');
+  copyCommentField(target as CommentMetadataCarrier, source as CommentMetadataCarrier, 'headerComments');
+}
+
+function copyCommentField(target: CommentMetadataCarrier, source: CommentMetadataCarrier, field: keyof CommentMetadataCarrier): void {
+  const value = source[field];
+  if (value !== undefined && value !== null) {
+    target[field] = value;
+  }
 }
 
 function isSelectQuery(value: unknown): value is SelectQuery {
@@ -154,10 +528,14 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   const derivedCounter = { value: 0 };
   const scalarSubqueryCounter = { value: 0 };
   const scopeCounter = { value: 0 };
+  const optimizeConditions = options.optimizeConditions ?? true;
 
   let query: SelectQuery;
+  let conditionOptimization: ConditionOptimizationReport;
   try {
-    query = parseLineageSelectQuery(sql);
+    const parsed = parseLineageSelectQuery(sql, optimizeConditions);
+    query = parsed.query;
+    conditionOptimization = parsed.conditionOptimization;
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : String(error));
   }
@@ -243,6 +621,7 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   });
 
   return {
+    conditionOptimization,
     lineage,
     parserVersion,
   };
@@ -613,7 +992,7 @@ function formatCteExecutableSql(
         .map((dependency, index) => {
           const suffix = index === dependencySql.length - 1 ? '' : ',';
           const comments = cteCommentsByName.get(dependency.name)?.filter((comment) => !dependency.sql.includes(comment));
-          const commentSql = comments?.length ? `${comments.map((comment) => formatLineComment(comment, '  ')).join('\n')}\n` : '';
+          const commentSql = comments?.length ? `${formatSmartCommentBlock(comments, '  ')}\n` : '';
           return `${commentSql}  ${dependency.name} as (\n${indentSql(dependency.sql)}\n  )${suffix}`;
         })
         .join('\n');
@@ -668,7 +1047,7 @@ function prependHeaderCommentsIfMissing(sql: string | undefined, comments: strin
     return sql;
   }
   const missingComments = comments.filter((comment) => !sql.includes(comment));
-  return `${missingComments.map((comment) => formatLineComment(comment, '')).join('\n')}\n${sql}`;
+  return `${formatSmartCommentBlock(missingComments, '')}\n${sql}`;
 }
 
 function restoreCteHeaderComments(sql: string, cteCommentsByName: Map<string, string[] | undefined>): string {
@@ -682,18 +1061,23 @@ function restoreCteHeaderComments(sql: string, cteCommentsByName: Map<string, st
     }
     const declarationPattern = new RegExp(`^(\\s*)(${escapeRegExp(cteName)}\\s+as\\s*\\()`, 'im');
     restoredSql = restoredSql.replace(declarationPattern, (_match, indent: string, declaration: string) => {
-      const commentSql = comments.map((comment) => formatLineComment(comment, indent)).join('\n');
+      const commentSql = formatSmartCommentBlock(comments, indent);
       return `${commentSql}\n${indent}${declaration}`;
     });
   }
   return restoredSql;
 }
 
-function formatLineComment(comment: string, indent: string): string {
-  return comment
-    .split(/\r?\n/)
-    .map((line) => `${indent}-- ${line}`)
-    .join('\n');
+function formatSmartCommentBlock(comments: string[], indent: string): string {
+  const lines = comments.flatMap((comment) => comment.split(/\r?\n/).map((line) => line.trimEnd()));
+  if (lines.length === 1) {
+    return `${indent}-- ${lines[0]}`;
+  }
+  return [
+    `${indent}/*`,
+    ...lines.map((line) => `${indent}  ${line}`),
+    `${indent}*/`,
+  ].join('\n');
 }
 
 function escapeRegExp(value: string): string {

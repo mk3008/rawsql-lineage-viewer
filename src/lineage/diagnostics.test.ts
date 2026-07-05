@@ -248,9 +248,9 @@ describe('column diagnostics', () => {
     expect(packet.rowLineage.influences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          expressionSql: 'ro.customer_id = :customer_id',
+          expressionSql: 'o.customer_id = :customer_id',
           kind: 'where',
-          scopeId: 'scope_main_output',
+          scopeId: 'scope_cte_recent_orders',
         }),
         expect.objectContaining({
           expressionSql: 'o.status = :status',
@@ -397,7 +397,7 @@ describe('column diagnostics', () => {
       });
       expect(packet.target.columnName).toBe(column.name);
       expect(packet.kind).toBe('column-diagnostic-packet');
-      expect(packet.rowLineage.influences.map((influence) => influence.kind)).toEqual(expect.arrayContaining(['where', 'order_by', 'limit']));
+      expect(packet.rowLineage.influences.map((influence) => influence.kind)).toEqual(expect.arrayContaining(['order_by', 'limit']));
     }
   });
 
@@ -452,11 +452,18 @@ describe('column diagnostics', () => {
     expect(packet.rowLineage.nodeImpacts).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          effects: expect.arrayContaining(['row_filter', 'output_selection', 'output_cap']),
+          effects: expect.arrayContaining(['row_filter']),
+          influenceIds: expect.arrayContaining([whereExists?.id]),
+          nodeId: 'cte_customer_scope',
+          role: 'population_and_value',
+          signals: expect.arrayContaining(['where']),
+        }),
+        expect.objectContaining({
+          effects: expect.arrayContaining(['output_selection', 'output_cap']),
           influenceIds: expect.arrayContaining([limit?.id]),
           nodeId: 'main_output',
           role: 'population_and_value',
-          signals: expect.arrayContaining(['where', 'limit', 'order_by']),
+          signals: expect.arrayContaining(['limit', 'order_by']),
         }),
       ]),
     );
@@ -468,13 +475,18 @@ describe('column diagnostics', () => {
         }),
       ]),
     );
-    expect(packet.columnLineage.references).toEqual([
+    expect(packet.columnLineage.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        columnName: 'id',
+        nodeId: 'cte_customer_scope',
+        roles: ['column_lineage'],
+      }),
       expect.objectContaining({
         columnName: 'id',
         nodeId: 'table_customers',
         roles: ['column_lineage', 'row_lineage'],
       }),
-    ]);
+    ]));
   });
 
   it('drops multiply-row impact when a joined CTE is unique by its GROUP BY output key', () => {
@@ -483,8 +495,8 @@ describe('column diagnostics', () => {
       columnName: 'total_amount',
       nodeId: 'main_output',
     });
-    const orderTotalsJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ot.customer_id = c.id');
-    const paymentSummaryJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ps.customer_id = c.id');
+    const orderTotalsJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ot.customer_id = cs.id');
+    const paymentSummaryJoin = packet.rowLineage.influences.find((influence) => influence.expressionSql === 'on ps.customer_id = cs.id');
 
     expect(orderTotalsJoin).toMatchObject({
       effects: ['null_extension'],
@@ -526,7 +538,7 @@ describe('column diagnostics', () => {
 
     expect(customerIdReference?.roles).toEqual(['row_lineage']);
     expect(customerIdReference?.usages).toEqual([
-      { role: 'row_lineage', scopeId: 'scope_main_output', usageKind: 'where' },
+      { role: 'row_lineage', scopeId: 'scope_cte_customer_scope', usageKind: 'where' },
     ]);
   });
 
@@ -640,7 +652,7 @@ describe('column diagnostics', () => {
     expect(paymentStatus.rowLineage.influences).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          expressionSql: 'on ps.customer_id = c.id',
+          expressionSql: 'on ps.customer_id = cs.id',
           kind: 'join_on',
         }),
       ]),
@@ -648,7 +660,7 @@ describe('column diagnostics', () => {
     expect(paymentStatus.rowLineage.influences).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          expressionSql: 'on ot.customer_id = c.id',
+          expressionSql: 'on ot.customer_id = cs.id',
           kind: 'join_on',
         }),
       ]),
@@ -656,7 +668,7 @@ describe('column diagnostics', () => {
     expect(paymentStatus.candidateConcerns).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          evidence: ['on ps.customer_id = c.id'],
+          evidence: ['on ps.customer_id = cs.id'],
           kind: 'join_on',
         }),
       ]),
@@ -664,7 +676,7 @@ describe('column diagnostics', () => {
     expect(paymentStatus.candidateConcerns).not.toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          evidence: ['on ot.customer_id = c.id'],
+          evidence: ['on ot.customer_id = cs.id'],
           kind: 'join_on',
         }),
       ]),

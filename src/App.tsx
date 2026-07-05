@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
+import ReactDiffViewer from 'react-diff-viewer-continued';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Copy, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
 import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/buildGraphModel';
 import type { AnalysisWarning } from './domain/lineage';
+import { buildConditionOptimizationViewModel } from './lineage/conditionOptimizationViewModel';
 import type { ProblemIntent } from './lineage/problemIntent';
-import { analyzeSql } from './lineage/rawsqlAdapter';
+import { analyzeSql, type ConditionOptimizationReport } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
@@ -18,6 +20,9 @@ const mobileLineageViewportQuery = '(max-width: 860px)';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
 type SqlHistorySortMode = 'recent' | 'name';
+type PanelTab = 'history' | 'inspector' | 'new' | 'sql';
+type OptimizationSqlView = 'detail' | 'diff' | 'optimized' | 'original';
+type OptimizationTraceView = 'blocked' | 'moved';
 
 interface SqlHistoryItem {
   id: string;
@@ -47,8 +52,7 @@ export function App() {
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(() => !readIsMobileLineageViewport());
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
-  const [panelTab, setPanelTab] = useState<'sql' | 'inspector'>('sql');
-  const [sqlPanelTab, setSqlPanelTab] = useState<'open' | 'history'>('open');
+  const [panelTab, setPanelTab] = useState<PanelTab>('new');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
@@ -63,6 +67,8 @@ export function App() {
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
+  const [conditionOptimizationEnabled, setConditionOptimizationEnabled] = useState(true);
+  const [optimizationSqlView, setOptimizationSqlView] = useState<OptimizationSqlView>('diff');
   const flowDirection: GraphFlowDirection = 'upstream';
   const lastHandledAutoInspectOutputNonceRef = useRef(0);
   const pendingAutoInspectOutputNonceRef = useRef<number | null>(null);
@@ -73,7 +79,7 @@ export function App() {
   const analysis = useMemo(() => {
     try {
       return {
-        result: analyzeSql(lastAnalyzedSql),
+        result: analyzeSql(lastAnalyzedSql, { optimizeConditions: conditionOptimizationEnabled }),
         error: null,
       };
     } catch (caught) {
@@ -83,10 +89,19 @@ export function App() {
         error: message,
       };
     }
-  }, [lastAnalyzedSql]);
+  }, [conditionOptimizationEnabled, lastAnalyzedSql]);
+  const newSqlParse = useMemo(() => {
+    try {
+      analyzeSql(sql, { optimizeConditions: false });
+      return { error: null };
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      return { error: message };
+    }
+  }, [sql]);
 
-  const error = analysis.error;
   const adapterResult = analysis.result;
+  const newSqlParseError = newSqlParse.error;
   useEffect(() => {
     if (isMobileLineageViewport) {
       setIsPanelOpen(false);
@@ -119,7 +134,6 @@ export function App() {
     setInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
     if (!isMobileLineageViewport) {
       setIsPanelOpen(true);
-      setPanelTab('inspector');
     }
   }, [adapterResult, autoInspectOutputNonce, isMobileLineageViewport, outputTitle]);
   const shareMessage =
@@ -201,7 +215,7 @@ export function App() {
       return selection;
     });
     const shouldOpenInspector = selection && (
-      !isMobileLineageViewport ||
+      (!isMobileLineageViewport && reason !== 'sync') ||
       reason === 'graph-column-selection' ||
       reason === 'graph-node-inspection'
     );
@@ -300,7 +314,7 @@ export function App() {
     let nextInspectorSelection: InspectorSelection = null;
     suppressNullInspectorSelectionRef.current = true;
     try {
-      const nextAnalysis = analyzeSql(nextSql);
+      const nextAnalysis = analyzeSql(nextSql, { optimizeConditions: false });
       const outputNode = nextAnalysis.lineage.nodes.find((node) => node.type === 'output');
       if (outputNode) {
         nextInspectorSelection = { kind: 'node', node: { ...outputNode, label: resolvedOutputTitle } };
@@ -333,7 +347,7 @@ export function App() {
       setIsPanelOpen(false);
     } else if (nextInspectorSelection) {
       setIsPanelOpen(true);
-      setPanelTab('inspector');
+      setPanelTab('sql');
     }
   }, [isMobileLineageViewport, sqlHistory]);
   const openHistoryItem = useCallback((item: SqlHistoryItem) => {
@@ -436,13 +450,23 @@ export function App() {
           <div className="panel-heading">
             <div className="panel-tabs" role="tablist" aria-label="Side panel">
               <button
+                aria-selected={panelTab === 'new'}
+                className={panelTab === 'new' ? 'active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setPanelTab('new')}
+              >
+                <Code2 size={15} />
+                New
+              </button>
+              <button
                 aria-selected={panelTab === 'sql'}
                 className={panelTab === 'sql' ? 'active' : ''}
                 role="tab"
                 type="button"
                 onClick={() => setPanelTab('sql')}
               >
-                <Code2 size={15} />
+                <FileText size={15} />
                 SQL
               </button>
               <button
@@ -454,6 +478,16 @@ export function App() {
               >
                 <Info size={15} />
                 Inspector
+              </button>
+              <button
+                aria-selected={panelTab === 'history'}
+                className={panelTab === 'history' ? 'active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setPanelTab('history')}
+              >
+                <Clock3 size={15} />
+                History
               </button>
             </div>
             {isMobileInspectorActive ? (
@@ -470,102 +504,88 @@ export function App() {
               </div>
             ) : null}
           </div>
-          {panelTab === 'sql' ? (
-            <div className="sql-panel-tabs-layout">
-              <div className="panel-subtabs" role="tablist" aria-label="SQL tools">
-                <button
-                  aria-selected={sqlPanelTab === 'open'}
-                  className={sqlPanelTab === 'open' ? 'active' : ''}
-                  role="tab"
-                  type="button"
-                  onClick={() => setSqlPanelTab('open')}
-                >
-                  <Code2 size={15} />
-                  New
-                </button>
-                <button
-                  aria-selected={sqlPanelTab === 'history'}
-                  className={sqlPanelTab === 'history' ? 'active' : ''}
-                  role="tab"
-                  type="button"
-                  onClick={() => setSqlPanelTab('history')}
-                >
-                  <Clock3 size={15} />
-                  History
-                </button>
-              </div>
-              {sqlPanelTab === 'open' ? (
-                <div className="sql-tab-panel">
-                  <div className="sql-editor-actions">
-                    <button
-                      className="text-button"
-                      type="button"
-                      onClick={() => {
-                        openSql(salesSummarySql);
-                      }}
-                    >
-                      Demo
-                    </button>
-                    <button
-                      aria-label="Clear SQL editor"
-                      className="text-button"
-                      type="button"
-                      disabled={sql.length === 0}
-                      onClick={() => {
-                        setSql('');
-                        setShareStatus('idle');
-                      }}
-                    >
-                      <Eraser size={13} />
-                      Clear
-                    </button>
-                  </div>
-                  <div className="sql-editor-frame">
-                    <SqlCodeMirror
-                      ariaLabel="SQL editor"
-                      className="sql-editor"
-                      editable
-                      minHeight="340px"
-                      value={sql}
-                      onChange={(value) => {
-                        setSql(value);
-                        setShareStatus('idle');
-                      }}
-                    />
-                  </div>
-                  <div className="panel-actions">
-                    <button
-                      className="primary-button"
-                      type="button"
-                      onClick={() => {
-                        openSql(sql);
-                      }}
-                    >
-                      <Play size={15} fill="currentColor" />
-                      Analyze SQL
-                    </button>
-                  </div>
-                  <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
-                    {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                    <span>{error ? error : 'Parsed successfully'}</span>
+          {panelTab === 'new' ? (
+            <div className="sql-tab-panel new-sql-panel">
+              <div className="sql-editor-actions">
+                <div className="sql-editor-primary-actions">
+                  <button
+                    className="primary-button sql-editor-analyze-button"
+                    type="button"
+                    onClick={() => {
+                      openSql(sql);
+                    }}
+                  >
+                    <Play size={15} fill="currentColor" />
+                    Analyze
+                  </button>
+                  <div className={`analysis-status new-sql-parse-status ${newSqlParseError ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="new-sql-parse-status">
+                    {newSqlParseError ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                    <span>{newSqlParseError ? newSqlParseError : 'Parsed successfully'}</span>
                   </div>
                 </div>
-              ) : (
-                <SqlHistoryPanel
-                  history={sqlHistory}
-                  onClear={() => {
-                    setSqlHistory([]);
-                    writeSqlHistory([]);
-                  }}
-                  onOpen={openHistoryItem}
-                  onRemove={(id) => {
-                    setSqlHistory((current) => {
-                      const next = current.filter((item) => item.id !== id);
-                      writeSqlHistory(next);
-                      return next;
-                    });
+                <div className="sql-editor-secondary-actions">
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => {
+                      openSql(salesSummarySql);
+                    }}
+                  >
+                    Demo
+                  </button>
+                  <button
+                    aria-label="Clear SQL editor"
+                    className="text-button"
+                    type="button"
+                    disabled={sql.length === 0}
+                    onClick={() => {
+                      setSql('');
+                      setShareStatus('idle');
+                    }}
+                  >
+                    <Eraser size={13} />
+                    Clear
+                  </button>
+                </div>
+              </div>
+              <div className="sql-editor-frame">
+                <SqlCodeMirror
+                  ariaLabel="SQL editor"
+                  className="sql-editor"
+                  editable
+                  minHeight="340px"
+                  value={sql}
+                  onChange={(value) => {
+                    setSql(value);
+                    setShareStatus('idle');
                   }}
                 />
+              </div>
+              <div className="new-sql-panel-divider" aria-hidden="true" />
+            </div>
+          ) : panelTab === 'sql' ? (
+            <div className="sql-review-panel">
+              {adapterResult ? (
+                <CurrentSqlHeader outputTitle={outputTitle} onDelete={deleteOutputTitle} onRename={renameOutputTitle} />
+              ) : null}
+              <div className="sql-review-actions">
+                <label className="condition-optimization-toggle">
+                  <input
+                    checked={conditionOptimizationEnabled}
+                    type="checkbox"
+                    onChange={(event) => setConditionOptimizationEnabled(event.currentTarget.checked)}
+                  />
+                  Optimize conditions
+                </label>
+              </div>
+              {adapterResult ? (
+                <ConditionOptimizationReview
+                  activeSqlView={optimizationSqlView}
+                  report={adapterResult.conditionOptimization}
+                  onSqlViewChange={setOptimizationSqlView}
+                />
+              ) : (
+                <div className="lineage-inspector-empty">Analyze SQL to review the current SQL.</div>
               )}
             </div>
           ) : panelTab === 'inspector' ? (
@@ -591,6 +611,22 @@ export function App() {
             ) : (
               <div className="lineage-inspector-empty">Analyze SQL to inspect lineage details.</div>
             )
+          ) : panelTab === 'history' ? (
+            <SqlHistoryPanel
+              history={sqlHistory}
+              onClear={() => {
+                setSqlHistory([]);
+                writeSqlHistory([]);
+              }}
+              onOpen={openHistoryItem}
+              onRemove={(id) => {
+                setSqlHistory((current) => {
+                  const next = current.filter((item) => item.id !== id);
+                  writeSqlHistory(next);
+                  return next;
+                });
+              }}
+            />
           ) : null}
         </aside>
 
@@ -692,6 +728,234 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
     <span className="graph-info-warning" title={title}>
       {label} <strong>{value}</strong>
     </span>
+  );
+}
+
+function ConditionOptimizationReview({
+  activeSqlView,
+  report,
+  onSqlViewChange,
+}: {
+  activeSqlView: OptimizationSqlView;
+  report: ConditionOptimizationReport;
+  onSqlViewChange: (view: OptimizationSqlView) => void;
+}) {
+  const status = !report.enabled
+    ? 'Off'
+    : report.appliedCount > 0
+      ? `${report.appliedCount} moved`
+      : 'No changes';
+  const viewModel = buildConditionOptimizationViewModel(report);
+  const [activeTraceView, setActiveTraceView] = useState<OptimizationTraceView>('moved');
+  const activeTraceItems = activeTraceView === 'moved'
+    ? viewModel.moved
+    : viewModel.blocked;
+  const activeTraceDescription = activeTraceView === 'moved'
+    ? 'Predicates that were safely moved closer to the table or CTE where they can filter rows earlier.'
+    : 'Predicates that looked like candidates, but stayed in place because the optimizer could not prove the rewrite safe or valid.';
+  const sqlToShow = activeSqlView === 'optimized' ? report.optimizedSql : report.originalSql;
+  const isCopyableSqlView = activeSqlView === 'original' || activeSqlView === 'optimized';
+  const copySqlName = activeSqlView === 'optimized' ? 'Optimized' : 'Original';
+  const [copySqlState, setCopySqlState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    setCopySqlState('idle');
+  }, [activeSqlView, report.optimizedSql, report.originalSql]);
+
+  const copyCurrentSql = async () => {
+    try {
+      await copyText(sqlToShow);
+      setCopySqlState('copied');
+    } catch {
+      setCopySqlState('failed');
+    }
+  };
+  const sqlCopyAction = isCopyableSqlView ? (
+    <div className="condition-optimization-sql-actions">
+      <button className="lineage-copy-button" type="button" onClick={() => void copyCurrentSql()}>
+        {copySqlState === 'copied' ? <CheckCircle2 size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+        {copySqlState === 'copied' ? 'Copied' : copySqlState === 'failed' ? 'Copy failed' : `Copy ${copySqlName} SQL`}
+      </button>
+    </div>
+  ) : null;
+
+  return (
+    <section className={`condition-optimization-review ${report.enabled ? '' : 'condition-optimization-review-disabled'}`} aria-label="Condition optimization">
+      <div className="condition-optimization-summary-header">
+        <span>Condition optimization</span>
+        <strong>{status}</strong>
+      </div>
+      <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />
+      {report.enabled ? (
+        <>
+          <div className="condition-optimization-summary-meta">
+            {report.safety?.mode === 'safe_only' ? 'safe only' : 'safety unknown'}
+            {' · unsafe rewrite '}
+            {report.safety?.unsafeRewriteApplied ? 'applied' : 'not applied'}
+          </div>
+          {activeSqlView === 'diff' ? (
+            <div className="condition-optimization-diff" data-testid="condition-optimization-diff">
+              <ReactDiffViewer
+                oldValue={report.originalSql}
+                newValue={report.optimizedSql}
+                splitView={false}
+                showDiffOnly={false}
+                useDarkTheme={false}
+              />
+            </div>
+          ) : activeSqlView === 'detail' ? (
+            <div className="condition-optimization-detail">
+              <OptimizationTraceTabs
+                activeTraceView={activeTraceView}
+                blockedCount={report.blockedCount}
+                movedCount={report.appliedCount}
+                onTraceViewChange={setActiveTraceView}
+              />
+              <ConditionOptimizationTrace
+                emptyText={activeTraceView === 'moved'
+                  ? 'No predicates were moved.'
+                  : 'No blocked predicates were reported. No candidate was rejected as unsafe in this run.'}
+                description={activeTraceDescription}
+                items={activeTraceItems}
+                title={activeTraceView === 'moved' ? 'Moved' : 'Blocked'}
+              />
+              {viewModel.warnings.length > 0 ? (
+                <ConditionOptimizationTrace
+                  description="Non-blocking notes returned by the optimizer while planning or applying condition placement."
+                  emptyText=""
+                  items={viewModel.warnings}
+                  title="Warnings"
+                />
+              ) : null}
+            </div>
+          ) : (
+            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+              {sqlCopyAction}
+              <SqlCodeMirror
+                ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
+                className="condition-optimization-sql"
+                minHeight="100%"
+                value={sqlToShow}
+              />
+            </div>
+          )}
+        </>
+      ) : (
+        <>
+          <div className="condition-optimization-summary-meta">Original SQL is analyzed as-is.</div>
+          {activeSqlView === 'diff' ? (
+            <div className="condition-optimization-empty-diff">Optimization is off, so original and optimized SQL are identical.</div>
+          ) : activeSqlView === 'detail' ? (
+            <div className="condition-optimization-empty-diff">Optimization is off. No movement detail is available.</div>
+          ) : (
+            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+              {sqlCopyAction}
+              <SqlCodeMirror
+                ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
+                className="condition-optimization-sql"
+                minHeight="100%"
+                value={sqlToShow}
+              />
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function OptimizationTraceTabs({
+  activeTraceView,
+  blockedCount,
+  movedCount,
+  onTraceViewChange,
+}: {
+  activeTraceView: OptimizationTraceView;
+  blockedCount: number;
+  movedCount: number;
+  onTraceViewChange: (view: OptimizationTraceView) => void;
+}) {
+  const tabs: Array<{ count: number; label: string; view: OptimizationTraceView }> = [
+    { count: movedCount, label: 'Moved', view: 'moved' },
+    { count: blockedCount, label: 'Blocked', view: 'blocked' },
+  ];
+
+  return (
+    <div className="condition-optimization-trace-tabs" role="tablist" aria-label="Optimization trace summary">
+      {tabs.map((tab) => (
+        <button
+          key={tab.view}
+          aria-selected={activeTraceView === tab.view}
+          className={activeTraceView === tab.view ? 'condition-optimization-trace-tab-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => onTraceViewChange(tab.view)}
+        >
+          {tab.label} <strong>{tab.count}</strong>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function OptimizationSqlTabs({
+  activeSqlView,
+  onSqlViewChange,
+}: {
+  activeSqlView: OptimizationSqlView;
+  onSqlViewChange: (view: OptimizationSqlView) => void;
+}) {
+  return (
+    <div className="condition-optimization-tabs" role="tablist" aria-label="Optimization SQL view">
+      {(['original', 'optimized', 'diff', 'detail'] as const).map((view) => (
+        <button
+          key={view}
+          aria-selected={activeSqlView === view}
+          className={activeSqlView === view ? 'condition-optimization-tab-active' : ''}
+          role="tab"
+          type="button"
+          onClick={() => onSqlViewChange(view)}
+        >
+          {view === 'original' ? 'Original' : view === 'optimized' ? 'Optimized' : view === 'diff' ? 'Diff' : 'Detail'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function ConditionOptimizationTrace({
+  description,
+  emptyText,
+  items,
+  title,
+}: {
+  description: string;
+  emptyText: string;
+  items: ConditionOptimizationReport['applied'];
+  title: string;
+}) {
+  return (
+    <div className="condition-optimization-trace">
+      <div className="condition-optimization-trace-heading">
+        <div className="condition-optimization-trace-title">{title}</div>
+        <div className="condition-optimization-trace-description">{description}</div>
+      </div>
+      {items.length > 0 ? (
+        <ul>
+          {items.slice(0, 4).map((item, index) => (
+            <li key={`${title}:${item.phaseKind ?? 'phase'}:${item.displaySql ?? item.reason}:${index}`}>
+              {item.displaySql ? <code>{item.displaySql}</code> : null}
+              {item.from || item.to ? (
+                <span>{item.from ?? 'current scope'} {item.to ? `-> ${item.to}` : ''}</span>
+              ) : null}
+              {item.reason ? <small>{item.code ? `${item.code}: ` : ''}{item.reason}</small> : null}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <div className="condition-optimization-summary-meta">{emptyText}</div>
+      )}
+    </div>
   );
 }
 
@@ -908,7 +1172,7 @@ function LegendPanel() {
         <div className="legend-panel-list">
           <span><i className="legend-line data" />Inner join / Data flow</span>
           <span><i className="legend-line outer" />Outer join</span>
-          <span><i className="legend-line predicate-subquery" />Predicate subquery</span>
+          <span><i className="legend-line predicate-subquery" />Predicate / correlation condition</span>
         </div>
       </section>
       <section className="legend-panel-section">

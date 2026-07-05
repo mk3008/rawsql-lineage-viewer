@@ -134,7 +134,9 @@ export function graphReferenceLabelsForInfluence(
   allInfluences: PopulationInfluence[],
   intent: ProblemIntent,
 ): string[] {
-  return graphImpactBadgesForInfluence(influence, allInfluences, intent).map((badge) => `Ref: ${badge.label}`);
+  return graphImpactBadgesForInfluence(influence, allInfluences, intent)
+    .filter((badge) => badge.signal !== 'join_xn')
+    .map((badge) => `Ref: ${badge.label}`);
 }
 
 export function sourceDataValueLabelsByNodeIdForIntent(packet: ColumnDiagnosticPacket, _intent: ProblemIntent): Record<string, string[]> {

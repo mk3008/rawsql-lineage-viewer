@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { optimizeConditions } from 'rawsql-ts';
 import { salesSummarySql } from '../examples/salesSummarySql';
 import { analyzeSql } from './rawsqlAdapter';
 
@@ -376,20 +377,21 @@ describe('rawsqlAdapter', () => {
 
     expect(edgeIds).toEqual(
       expect.arrayContaining([
+        'table_customers-cte_customer_scope',
         'table_orders-cte_recent_orders',
         'table_order_items-cte_recent_orders',
         'cte_recent_orders-cte_order_totals',
         'table_payments-cte_payment_summary',
-        'table_customers-main_output',
+        'cte_customer_scope-main_output',
         'cte_order_totals-main_output',
         'cte_payment_summary-main_output',
-        'table_customer_favorites-main_output',
+        'table_customer_favorites-cte_customer_scope',
       ]),
     );
 
     const dataFlowEdges = lineage.edges.filter((edge) => edge.type === 'dataFlow');
 
-    expect(dataFlowEdges).toHaveLength(8);
+    expect(dataFlowEdges).toHaveLength(9);
     expect(lineage.edges.every((edge) => edge.type === 'dataFlow')).toBe(true);
     expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')).toMatchObject({
       label: 'JOIN',
@@ -411,12 +413,12 @@ describe('rawsqlAdapter', () => {
         joinType: 'left',
       },
     });
-    expect(dataFlowEdges.find((edge) => edge.id === 'table_customer_favorites-main_output')).toMatchObject({
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customer_favorites-cte_customer_scope')).toMatchObject({
       sourceAlias: 'cf',
       confidence: 'medium',
     });
-    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.sourceAlias).toBe('c');
-    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-main_output')?.joinNullability).toBeUndefined();
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-cte_customer_scope')?.sourceAlias).toBe('c');
+    expect(dataFlowEdges.find((edge) => edge.id === 'table_customers-cte_customer_scope')?.joinNullability).toBeUndefined();
     expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')?.joinNullability).toBeUndefined();
   });
 
@@ -446,7 +448,8 @@ describe('rawsqlAdapter', () => {
       'paid_amount',
       'payment_status',
     ]);
-    expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0]).toMatchObject({
+    expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where).toEqual([]);
+    expect(lineage.scopes.find((scope) => scope.nodeId === 'cte_customer_scope')?.where?.[2]).toMatchObject({
       expressionSql: expect.stringContaining('exists'),
       references: expect.arrayContaining([
         expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
@@ -1088,6 +1091,73 @@ describe('rawsqlAdapter', () => {
     expect(recentOrders?.columns.find((column) => column.name === 'created_at')?.usage).toEqual({ role: 'unused' });
   });
 
+  it('analyzes SQL after safe parameter condition placement optimization', () => {
+    const { conditionOptimization, lineage } = analyzeSql(`
+      WITH orders_base AS (
+        SELECT o.order_id, o.customer_id, o.status
+        FROM orders o
+      )
+      SELECT ob.order_id
+      FROM orders_base ob
+      WHERE ob.customer_id = :customer_id
+    `);
+    const cteScope = lineage.scopes.find((scope) => scope.nodeId === 'cte_orders_base');
+    const outputScope = lineage.scopes.find((scope) => scope.nodeId === 'main_output');
+    const orders = lineage.nodes.find((node) => node.id === 'table_orders');
+
+    expect(cteScope?.where?.map((condition) => condition.expressionSql)).toEqual(['o.customer_id = :customer_id']);
+    expect(cteScope?.where?.[0].references).toEqual([
+      expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id' }),
+    ]);
+    expect(outputScope?.where).toEqual([]);
+    expect(orders?.columns.map((column) => column.name)).toEqual(['order_id', 'customer_id', 'status']);
+    expect(conditionOptimization).toMatchObject({
+      appliedCount: 1,
+      blockedCount: 0,
+      changed: true,
+      enabled: true,
+      safety: {
+        mode: 'safe_only',
+        unsafeRewriteApplied: false,
+      },
+    });
+    expect(conditionOptimization.applied[0]).toMatchObject({
+      conditionSql: 'ob.customer_id = :customer_id',
+      from: 'final SELECT WHERE',
+      phaseKind: 'parameter_condition_placement',
+      status: 'moved',
+      to: 'orders_base CTE WHERE',
+    });
+    expect(conditionOptimization.originalSql).toContain('ob.customer_id = :customer_id');
+    expect(conditionOptimization.optimizedSql.replace(/"/g, '')).toContain('o.customer_id = :customer_id');
+  });
+
+  it('can analyze SQL without condition placement optimization', () => {
+    const { conditionOptimization, lineage } = analyzeSql(`
+      WITH orders_base AS (
+        SELECT o.order_id, o.customer_id, o.status
+        FROM orders o
+      )
+      SELECT ob.order_id
+      FROM orders_base ob
+      WHERE ob.customer_id = :customer_id
+    `, { optimizeConditions: false });
+    const cteScope = lineage.scopes.find((scope) => scope.nodeId === 'cte_orders_base');
+    const outputScope = lineage.scopes.find((scope) => scope.nodeId === 'main_output');
+
+    expect(cteScope?.where).toEqual([]);
+    expect(outputScope?.where?.map((condition) => condition.expressionSql)).toEqual(['ob.customer_id = :customer_id']);
+    expect(conditionOptimization).toMatchObject({
+      appliedCount: 0,
+      blockedCount: 0,
+      changed: false,
+      enabled: false,
+      ok: true,
+    });
+    expect(conditionOptimization.originalSql).toContain('ob.customer_id = :customer_id');
+    expect(conditionOptimization.optimizedSql).toBe(conditionOptimization.originalSql);
+  });
+
   it('classifies grouped output columns as GROUP BY usage before downstream joins', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const orderTotals = lineage.nodes.find((node) => node.id === 'cte_order_totals');
@@ -1406,15 +1476,61 @@ describe('rawsqlAdapter', () => {
     expect(outputSql.indexOf('-- Captures succeeded payment')).toBeLessThan(outputSql.indexOf('payment_summary as ('));
   });
 
+  it('receives optimized SQL with comments preserved from rawsql-ts', () => {
+    const result = optimizeConditions(salesSummarySql);
+
+    expect(result.ok).toBe(true);
+    expect(result.phases.some((phase) => phase.kind === 'static_predicate_placement' && phase.appliedCount > 0)).toBe(true);
+    expect(result.sql).toContain('Customer scope is intentionally simple so safe condition placement can move');
+    expect(result.sql).toContain('Extended line amount.');
+    expect(result.sql).toContain('Aggregates order metrics by customer.');
+  });
+
+  it('keeps comments in optimized output query SQL after condition placement', () => {
+    const { conditionOptimization, lineage } = analyzeSql(`
+      WITH
+      -- Customer scope is intentionally simple so safe condition placement can move
+      -- customer filters from the final SELECT into this CTE.
+      customer_scope AS (
+        SELECT
+          c.id,
+          c.name,
+          c.status,
+          c.id + 1 AS display_id -- Stable display id for debugging.
+        FROM customers c
+      )
+      SELECT
+        cs.id,
+        cs.display_id
+      FROM customer_scope cs
+      WHERE cs.status = :customer_status
+    `);
+    const customerScopeSql = lineage.nodes.find((node) => node.id === 'cte_customer_scope')?.querySql ?? '';
+    const outputSql = lineage.nodes.find((node) => node.id === 'main_output')?.querySql ?? '';
+
+    expect(customerScopeSql).toContain('/*\n  Customer scope is intentionally simple so safe condition placement can move');
+    expect(customerScopeSql).toContain('  customer filters from the final SELECT into this CTE.\n*/');
+    expect(customerScopeSql).toContain('-- Stable display id for debugging.');
+    expect(customerScopeSql).toContain('where');
+    expect(customerScopeSql).toContain('c.status = :customer_status');
+    expect(outputSql).toContain('  /*\n    Customer scope is intentionally simple so safe condition placement can move');
+    expect(outputSql).toContain('-- Stable display id for debugging.');
+    expect(conditionOptimization.applied.map((item) => item.displaySql)).toEqual(expect.arrayContaining([
+      'cs.status = :customer_status',
+    ]));
+  });
+
   it('records the owning SELECT SQL on column scopes without CTE definitions', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const outputColumn = lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === 'customer_id');
     const scopeSql = lineage.scopes.find((scope) => scope.id === outputColumn?.scopeId)?.querySql ?? '';
 
     expect(scopeSql).toMatch(/^select\b/i);
-    expect(scopeSql).toMatch(/from\s+customers as c/i);
-    expect(scopeSql).toMatch(/where\s+exists/i);
+    expect(scopeSql).toMatch(/from\s+customer_scope as cs/i);
     expect(scopeSql).toMatch(/limit\s+100/i);
+    expect(scopeSql).not.toMatch(/where\s+exists/i);
+    expect(scopeSql).not.toMatch(/cs\.region\s*=/i);
+    expect(scopeSql).not.toMatch(/cs\.status\s*=/i);
     expect(scopeSql).not.toMatch(/\brecent_orders\s+as\s*\(/i);
     expect(scopeSql).not.toMatch(/^with\b/i);
   });

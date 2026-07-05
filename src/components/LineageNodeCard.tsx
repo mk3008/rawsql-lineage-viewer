@@ -148,17 +148,13 @@ function formatNodeKind(type: GraphNode['data']['lineageNode']['type']) {
 }
 
 function PopulationImpactBadges({ labels }: { labels: string[] }) {
-  const visibleLabels = labels.slice(0, 3);
-  const overflowCount = labels.length - visibleLabels.length;
-
   return (
     <div className="lineage-node-impact-badges" aria-label={`Focus row-lineage signals to inspect: ${labels.join(', ')}`}>
-      {visibleLabels.map((label) => (
+      {labels.map((label) => (
         <span key={label} title="Focus symptom signal on the node that owns this row-lineage operation">
           {label}
         </span>
       ))}
-      {overflowCount > 0 ? <span>+{overflowCount}</span> : null}
     </div>
   );
 }
@@ -208,18 +204,16 @@ function GroupPopulationImpactBadges({
         ...uniqueStrings(group.helperNodeIds.flatMap((nodeId) => highlightedLabels.get(nodeId) ?? [])).map((label) => ({ label, origin: 'Hidden' as const })),
       ]
     : [];
-  const badges = highlightedBadges;
+  const badges = uniqueBadgesByLabel(highlightedBadges);
   if (badges.length === 0) {
     return null;
   }
 
-  const visibleBadges = badges.slice(0, 4);
-  const overflowCount = badges.length - visibleBadges.length;
   const ariaLabel = badges.map((badge) => `${badge.origin}: ${badge.label}`).join(', ');
 
   return (
     <div className="lineage-node-impact-badges" aria-label={`Population impacts: ${ariaLabel}`}>
-      {visibleBadges.map((badge) => {
+      {badges.map((badge) => {
         return (
           <span
             className={badge.origin === 'Self' ? 'lineage-node-impact-self' : 'lineage-node-impact-descendant'}
@@ -230,13 +224,22 @@ function GroupPopulationImpactBadges({
           </span>
         );
       })}
-      {overflowCount > 0 ? <span title={`${overflowCount} more population impacts`}>+{overflowCount}</span> : null}
     </div>
   );
 }
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function uniqueBadgesByLabel<T extends { label: string }>(badges: T[]) {
+  const uniqueBadges = new Map<string, T>();
+  for (const badge of badges) {
+    if (!uniqueBadges.has(badge.label)) {
+      uniqueBadges.set(badge.label, badge);
+    }
+  }
+  return [...uniqueBadges.values()];
 }
 
 function CollapsedGroupBody({ data, nodeId }: { data: GraphNode['data']; nodeId: string }) {
