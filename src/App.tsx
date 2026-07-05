@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import ReactDiffViewer from 'react-diff-viewer-continued';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Copy, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -754,6 +754,30 @@ function ConditionOptimizationReview({
     ? 'Predicates that were safely moved closer to the table or CTE where they can filter rows earlier.'
     : 'Predicates that looked like candidates, but stayed in place because the optimizer could not prove the rewrite safe or valid.';
   const sqlToShow = activeSqlView === 'optimized' ? report.optimizedSql : report.originalSql;
+  const isCopyableSqlView = activeSqlView === 'original' || activeSqlView === 'optimized';
+  const copySqlName = activeSqlView === 'optimized' ? 'Optimized' : 'Original';
+  const [copySqlState, setCopySqlState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  useEffect(() => {
+    setCopySqlState('idle');
+  }, [activeSqlView, report.optimizedSql, report.originalSql]);
+
+  const copyCurrentSql = async () => {
+    try {
+      await copyText(sqlToShow);
+      setCopySqlState('copied');
+    } catch {
+      setCopySqlState('failed');
+    }
+  };
+  const sqlCopyAction = isCopyableSqlView ? (
+    <div className="condition-optimization-sql-actions">
+      <button className="lineage-copy-button" type="button" onClick={() => void copyCurrentSql()}>
+        {copySqlState === 'copied' ? <CheckCircle2 size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+        {copySqlState === 'copied' ? 'Copied' : copySqlState === 'failed' ? 'Copy failed' : `Copy ${copySqlName} SQL`}
+      </button>
+    </div>
+  ) : null;
 
   return (
     <section className={`condition-optimization-review ${report.enabled ? '' : 'condition-optimization-review-disabled'}`} aria-label="Condition optimization">
@@ -806,6 +830,7 @@ function ConditionOptimizationReview({
             </div>
           ) : (
             <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+              {sqlCopyAction}
               <SqlCodeMirror
                 ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
@@ -824,6 +849,7 @@ function ConditionOptimizationReview({
             <div className="condition-optimization-empty-diff">Optimization is off. No movement detail is available.</div>
           ) : (
             <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+              {sqlCopyAction}
               <SqlCodeMirror
                 ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
@@ -1146,7 +1172,7 @@ function LegendPanel() {
         <div className="legend-panel-list">
           <span><i className="legend-line data" />Inner join / Data flow</span>
           <span><i className="legend-line outer" />Outer join</span>
-          <span><i className="legend-line predicate-subquery" />Predicate subquery</span>
+          <span><i className="legend-line predicate-subquery" />Predicate / correlation condition</span>
         </div>
       </section>
       <section className="legend-panel-section">

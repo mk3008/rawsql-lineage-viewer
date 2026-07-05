@@ -198,6 +198,13 @@ describe('problem intent view model', () => {
     expect(rankCandidateConcernsForIntent(packet.candidateConcerns, 'value_missing').map((item) => item.kind)).toEqual(['coalesce']);
     expect(JSON.stringify(packet)).toBe(before);
   });
+
+  it('does not render JOIN multiplication as blue reference badges', () => {
+    const packet = createPacket();
+
+    expect(graphReferenceLabelsForInfluence(packet.rowLineage.influences.find((item) => item.id === 'join-nx')!, packet.rowLineage.influences, 'all_signals')).toEqual([]);
+    expect(graphReferenceLabelsForInfluence(packet.rowLineage.influences.find((item) => item.id === 'where-filter')!, packet.rowLineage.influences, 'all_signals')).toEqual(['Ref: Where']);
+  });
 });
 
 function createPacket(): ColumnDiagnosticPacket {

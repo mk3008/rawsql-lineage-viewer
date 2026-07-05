@@ -86,7 +86,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(legendPanel).toContainText('Data flow');
   await expect(legendPanel).toContainText('Inner join');
   await expect(legendPanel).toContainText('Outer join');
-  await expect(legendPanel).toContainText('Predicate subquery');
+  await expect(legendPanel).toContainText('Predicate / correlation condition');
   await expect(legendPanel).toContainText('Row Lineage badges');
   await expect(legendPanel).toContainText('WHERE / EXISTS may filter rows');
   await expect(legendPanel).toContainText('JOIN may drop or multiply rows');
