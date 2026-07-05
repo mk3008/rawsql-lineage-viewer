@@ -272,6 +272,35 @@ textarea {
   overflow: hidden;
 }
 
+.new-sql-panel .sql-editor-actions {
+  justify-content: flex-start;
+}
+
+.new-sql-panel-divider {
+  margin: 0 16px 12px;
+  border-top: 1px solid #e8edf5;
+}
+
+.sql-review-panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.sql-review-panel > .current-sql-header {
+  margin: 10px 16px 0;
+  box-shadow: none;
+}
+
+.sql-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-bottom: 1px solid #e8edf5;
+}
+
 .sql-editor-frame {
   display: grid;
   width: 100%;
@@ -318,11 +347,25 @@ textarea {
 .sql-editor-actions {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-end;
-  align-items: center;
+  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
   padding: 10px 16px;
   border-bottom: 1px solid #e8edf5;
+}
+
+.sql-editor-primary-actions {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.sql-editor-secondary-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .condition-optimization-toggle {
@@ -376,6 +419,11 @@ textarea {
   font-size: 12px;
 }
 
+.new-sql-parse-status {
+  min-height: 20px;
+  padding: 0;
+}
+
 .analysis-status-ok {
   color: #047857;
 }
@@ -386,6 +434,7 @@ textarea {
 
 .condition-optimization-review {
   display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
   gap: 9px;
   margin: 0 16px 12px;
   border: 1px solid #bfdbfe;
@@ -394,6 +443,8 @@ textarea {
   background: #eff6ff;
   color: #1e3a8a;
   font-size: 12px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .condition-optimization-review-disabled {
@@ -473,7 +524,15 @@ textarea {
 
 .condition-optimization-trace {
   display: grid;
-  gap: 5px;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 6px;
+  min-height: 0;
+}
+
+.condition-optimization-trace-heading {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .condition-optimization-trace-title {
@@ -484,10 +543,18 @@ textarea {
   text-transform: uppercase;
 }
 
+.condition-optimization-trace-description {
+  max-width: 62ch;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .condition-optimization-trace ul {
   display: grid;
+  align-content: start;
   gap: 5px;
-  max-height: 150px;
+  min-height: 0;
   margin: 0;
   padding: 0;
   overflow: auto;
@@ -521,7 +588,8 @@ textarea {
 
 .condition-optimization-tabs {
   display: inline-flex;
-  width: fit-content;
+  flex: 0 0 auto;
+  width: 100%;
   max-width: 100%;
   overflow: hidden;
   border: 1px solid #bfdbfe;
@@ -530,6 +598,8 @@ textarea {
 }
 
 .condition-optimization-tabs button {
+  flex: 1 1 0;
+  height: 28px;
   min-height: 28px;
   border: 0;
   padding: 0 10px;
@@ -538,6 +608,15 @@ textarea {
   cursor: pointer;
   font-size: 11px;
   font-weight: 850;
+}
+
+.condition-optimization-detail {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .condition-optimization-tabs button + button {
@@ -552,7 +631,7 @@ textarea {
 .condition-optimization-sql-frame,
 .condition-optimization-diff {
   min-width: 0;
-  max-height: 280px;
+  min-height: 0;
   overflow: auto;
   border: 1px solid #dbeafe;
   border-radius: 7px;
@@ -569,11 +648,14 @@ textarea {
 }
 
 .condition-optimization-sql .cm-editor {
-  min-height: 180px;
+  height: 100%;
+  min-height: 0;
   padding: 10px 12px;
 }
 
 .condition-optimization-sql .cm-scroller {
+  height: 100%;
+  min-height: 0;
   overflow: auto;
 }
 

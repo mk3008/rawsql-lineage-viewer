@@ -4,7 +4,6 @@ export interface ConditionOptimizationViewModel {
   blocked: ConditionOptimizationReportItem[];
   changed: boolean;
   moved: ConditionOptimizationReportItem[];
-  unchangedLabel: string;
   warnings: ConditionOptimizationReportItem[];
 }
 
@@ -13,7 +12,6 @@ export function buildConditionOptimizationViewModel(report: ConditionOptimizatio
     blocked: [...report.skipped, ...report.errors].filter(hasDisplayableOptimizationItem),
     changed: report.changed,
     moved: report.applied.filter(hasDisplayableOptimizationItem),
-    unchangedLabel: report.unchangedAvailable ? String(report.unchangedCount) : '-',
     warnings: report.warnings.filter(hasDisplayableOptimizationItem),
   };
 }

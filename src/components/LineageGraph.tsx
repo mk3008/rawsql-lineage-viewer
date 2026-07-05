@@ -11,7 +11,7 @@ import {
   type EdgeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Copy, ExternalLink, Eye, EyeOff, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
@@ -281,7 +281,6 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
-  const allColumnsHidden = hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => hiddenColumnNodeIds.has(nodeId));
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
@@ -304,15 +303,6 @@ export function LineageGraph({
       setShowUnreachableCtes(false);
     }
   }, [hasUnreachableCtes]);
-  const toggleAllColumns = useCallback(() => {
-    setHiddenColumnNodeIds((current) => {
-      if (hideableColumnNodeIds.size > 0 && [...hideableColumnNodeIds].every((nodeId) => current.has(nodeId))) {
-        return new Set();
-      }
-
-      return new Set(hideableColumnNodeIds);
-    });
-  }, [hideableColumnNodeIds]);
   const togglePassthroughColumns = useCallback((nodeId: string) => {
     setExpandedPassthroughNodeIds((current) => {
       const next = new Set(current);
@@ -1132,10 +1122,6 @@ export function LineageGraph({
         <ProblemIntentSelector intent={problemIntent} onChange={onProblemIntentChange} />
         {isMobileGraphDisplayMode ? null : (
           <>
-            <button className="graph-column-toggle" type="button" onClick={toggleAllColumns}>
-              {allColumnsHidden ? <Eye size={15} /> : <EyeOff size={15} />}
-              {allColumnsHidden ? 'Always show columns' : 'Minimize columns'}
-            </button>
             <label className="graph-alias-toggle">
               <input aria-label="Show aliases" type="checkbox" checked={showEdgeAliases} onChange={(event) => setShowEdgeAliases(event.target.checked)} />
               Aliases

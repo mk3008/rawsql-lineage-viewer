@@ -37,17 +37,6 @@ describe('conditionOptimizationViewModel', () => {
       reason: expect.stringContaining('WINDOW boundary'),
     });
   });
-
-  it('keeps unchanged count honest when rawsql-ts does not report unchanged predicates', () => {
-    const viewModel = buildConditionOptimizationViewModel(report({
-      unchangedAvailable: false,
-      unchangedCount: 0,
-    }));
-
-    expect(viewModel.unchangedLabel).toBe('-');
-    expect(viewModel.moved).toEqual([]);
-    expect(viewModel.blocked).toEqual([]);
-  });
 });
 
 function report(overrides: Partial<ConditionOptimizationReport>): ConditionOptimizationReport {

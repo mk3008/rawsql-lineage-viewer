@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import ReactDiffViewer from 'react-diff-viewer-continued';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Clock3, Code2, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -20,8 +20,9 @@ const mobileLineageViewportQuery = '(max-width: 860px)';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
 type SqlHistorySortMode = 'recent' | 'name';
-type OptimizationSqlView = 'diff' | 'optimized' | 'original';
-type OptimizationTraceView = 'blocked' | 'moved' | 'unchanged';
+type PanelTab = 'history' | 'inspector' | 'new' | 'sql';
+type OptimizationSqlView = 'detail' | 'diff' | 'optimized' | 'original';
+type OptimizationTraceView = 'blocked' | 'moved';
 
 interface SqlHistoryItem {
   id: string;
@@ -51,7 +52,7 @@ export function App() {
   const [sql, setSql] = useState(initialSql);
   const [isPanelOpen, setIsPanelOpen] = useState(() => !readIsMobileLineageViewport());
   const [isLegendPanelOpen, setIsLegendPanelOpen] = useState(readLegendPanelOpen);
-  const [panelTab, setPanelTab] = useState<'sql' | 'inspector' | 'history'>('sql');
+  const [panelTab, setPanelTab] = useState<PanelTab>('new');
   const [inspectorSelection, setInspectorSelection] = useState<InspectorSelection>(null);
   const [forcedInspectorSelection, setForcedInspectorSelection] = useState<InspectorSelection>(null);
   const [activeInspectorCardId, setActiveInspectorCardId] = useState<string | null>(null);
@@ -89,9 +90,18 @@ export function App() {
       };
     }
   }, [conditionOptimizationEnabled, lastAnalyzedSql]);
+  const newSqlParse = useMemo(() => {
+    try {
+      analyzeSql(sql, { optimizeConditions: false });
+      return { error: null };
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : String(caught);
+      return { error: message };
+    }
+  }, [sql]);
 
-  const error = analysis.error;
   const adapterResult = analysis.result;
+  const newSqlParseError = newSqlParse.error;
   useEffect(() => {
     if (isMobileLineageViewport) {
       setIsPanelOpen(false);
@@ -124,7 +134,6 @@ export function App() {
     setInspectorSelection({ kind: 'node', node: { ...outputNode, label: outputTitle } });
     if (!isMobileLineageViewport) {
       setIsPanelOpen(true);
-      setPanelTab('inspector');
     }
   }, [adapterResult, autoInspectOutputNonce, isMobileLineageViewport, outputTitle]);
   const shareMessage =
@@ -206,7 +215,7 @@ export function App() {
       return selection;
     });
     const shouldOpenInspector = selection && (
-      !isMobileLineageViewport ||
+      (!isMobileLineageViewport && reason !== 'sync') ||
       reason === 'graph-column-selection' ||
       reason === 'graph-node-inspection'
     );
@@ -305,7 +314,7 @@ export function App() {
     let nextInspectorSelection: InspectorSelection = null;
     suppressNullInspectorSelectionRef.current = true;
     try {
-      const nextAnalysis = analyzeSql(nextSql, { optimizeConditions: conditionOptimizationEnabled });
+      const nextAnalysis = analyzeSql(nextSql, { optimizeConditions: false });
       const outputNode = nextAnalysis.lineage.nodes.find((node) => node.type === 'output');
       if (outputNode) {
         nextInspectorSelection = { kind: 'node', node: { ...outputNode, label: resolvedOutputTitle } };
@@ -338,9 +347,9 @@ export function App() {
       setIsPanelOpen(false);
     } else if (nextInspectorSelection) {
       setIsPanelOpen(true);
-      setPanelTab('inspector');
+      setPanelTab('sql');
     }
-  }, [conditionOptimizationEnabled, isMobileLineageViewport, sqlHistory]);
+  }, [isMobileLineageViewport, sqlHistory]);
   const openHistoryItem = useCallback((item: SqlHistoryItem) => {
     openSql(item.sql, item.outputTitle ?? defaultOutputTitle);
   }, [openSql]);
@@ -441,13 +450,23 @@ export function App() {
           <div className="panel-heading">
             <div className="panel-tabs" role="tablist" aria-label="Side panel">
               <button
+                aria-selected={panelTab === 'new'}
+                className={panelTab === 'new' ? 'active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setPanelTab('new')}
+              >
+                <Code2 size={15} />
+                New
+              </button>
+              <button
                 aria-selected={panelTab === 'sql'}
                 className={panelTab === 'sql' ? 'active' : ''}
                 role="tab"
                 type="button"
                 onClick={() => setPanelTab('sql')}
               >
-                <Code2 size={15} />
+                <FileText size={15} />
                 SQL
               </button>
               <button
@@ -485,49 +504,49 @@ export function App() {
               </div>
             ) : null}
           </div>
-          {panelTab === 'sql' ? (
-            <div className="sql-tab-panel">
+          {panelTab === 'new' ? (
+            <div className="sql-tab-panel new-sql-panel">
               <div className="sql-editor-actions">
-                <label className="condition-optimization-toggle">
-                  <input
-                    checked={conditionOptimizationEnabled}
-                    type="checkbox"
-                    onChange={(event) => setConditionOptimizationEnabled(event.currentTarget.checked)}
-                  />
-                  Optimize conditions
-                </label>
-                <button
-                  className="primary-button sql-editor-analyze-button"
-                  type="button"
-                  onClick={() => {
-                    openSql(sql);
-                  }}
-                >
-                  <Play size={15} fill="currentColor" />
-                  Analyze SQL
-                </button>
-                <button
-                  className="text-button"
-                  type="button"
-                  onClick={() => {
-                    openSql(salesSummarySql);
-                  }}
-                >
-                  Demo
-                </button>
-                <button
-                  aria-label="Clear SQL editor"
-                  className="text-button"
-                  type="button"
-                  disabled={sql.length === 0}
-                  onClick={() => {
-                    setSql('');
-                    setShareStatus('idle');
-                  }}
-                >
-                  <Eraser size={13} />
-                  Clear
-                </button>
+                <div className="sql-editor-primary-actions">
+                  <button
+                    className="primary-button sql-editor-analyze-button"
+                    type="button"
+                    onClick={() => {
+                      openSql(sql);
+                    }}
+                  >
+                    <Play size={15} fill="currentColor" />
+                    Analyze
+                  </button>
+                  <div className={`analysis-status new-sql-parse-status ${newSqlParseError ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="new-sql-parse-status">
+                    {newSqlParseError ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
+                    <span>{newSqlParseError ? newSqlParseError : 'Parsed successfully'}</span>
+                  </div>
+                </div>
+                <div className="sql-editor-secondary-actions">
+                  <button
+                    className="text-button"
+                    type="button"
+                    onClick={() => {
+                      openSql(salesSummarySql);
+                    }}
+                  >
+                    Demo
+                  </button>
+                  <button
+                    aria-label="Clear SQL editor"
+                    className="text-button"
+                    type="button"
+                    disabled={sql.length === 0}
+                    onClick={() => {
+                      setSql('');
+                      setShareStatus('idle');
+                    }}
+                  >
+                    <Eraser size={13} />
+                    Clear
+                  </button>
+                </div>
               </div>
               <div className="sql-editor-frame">
                 <SqlCodeMirror
@@ -542,17 +561,32 @@ export function App() {
                   }}
                 />
               </div>
-              <div className={`analysis-status ${error ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="analysis-status">
-                {error ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                <span>{error ? error : formatAnalysisStatus(adapterResult?.conditionOptimization)}</span>
+              <div className="new-sql-panel-divider" aria-hidden="true" />
+            </div>
+          ) : panelTab === 'sql' ? (
+            <div className="sql-review-panel">
+              {adapterResult ? (
+                <CurrentSqlHeader outputTitle={outputTitle} onDelete={deleteOutputTitle} onRename={renameOutputTitle} />
+              ) : null}
+              <div className="sql-review-actions">
+                <label className="condition-optimization-toggle">
+                  <input
+                    checked={conditionOptimizationEnabled}
+                    type="checkbox"
+                    onChange={(event) => setConditionOptimizationEnabled(event.currentTarget.checked)}
+                  />
+                  Optimize conditions
+                </label>
               </div>
-              {adapterResult?.conditionOptimization.enabled ? (
+              {adapterResult ? (
                 <ConditionOptimizationReview
                   activeSqlView={optimizationSqlView}
                   report={adapterResult.conditionOptimization}
                   onSqlViewChange={setOptimizationSqlView}
                 />
-              ) : null}
+              ) : (
+                <div className="lineage-inspector-empty">Analyze SQL to review the current SQL.</div>
+              )}
             </div>
           ) : panelTab === 'inspector' ? (
             adapterResult ? (
@@ -697,22 +731,6 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
   );
 }
 
-function formatAnalysisStatus(report?: ConditionOptimizationReport) {
-  if (!report) {
-    return 'Parsed successfully';
-  }
-  if (!report.enabled) {
-    return 'Parsed successfully - condition optimization off';
-  }
-  if (!report.ok) {
-    return `Parsed successfully - optimization reported ${report.errorCount} errors`;
-  }
-  if (report.appliedCount > 0) {
-    return `Parsed successfully - ${report.appliedCount} conditions optimized`;
-  }
-  return 'Parsed successfully - no condition moves';
-}
-
 function ConditionOptimizationReview({
   activeSqlView,
   report,
@@ -731,9 +749,10 @@ function ConditionOptimizationReview({
   const [activeTraceView, setActiveTraceView] = useState<OptimizationTraceView>('moved');
   const activeTraceItems = activeTraceView === 'moved'
     ? viewModel.moved
-    : activeTraceView === 'blocked'
-      ? viewModel.blocked
-      : [];
+    : viewModel.blocked;
+  const activeTraceDescription = activeTraceView === 'moved'
+    ? 'Predicates that were safely moved closer to the table or CTE where they can filter rows earlier.'
+    : 'Predicates that looked like candidates, but stayed in place because the optimizer could not prove the rewrite safe or valid.';
   const sqlToShow = activeSqlView === 'optimized' ? report.optimizedSql : report.originalSql;
 
   return (
@@ -742,34 +761,14 @@ function ConditionOptimizationReview({
         <span>Condition optimization</span>
         <strong>{status}</strong>
       </div>
+      <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />
       {report.enabled ? (
         <>
-          <OptimizationTraceTabs
-            activeTraceView={activeTraceView}
-            blockedCount={report.blockedCount}
-            movedCount={report.appliedCount}
-            unchangedCount={report.unchangedCount}
-            onTraceViewChange={setActiveTraceView}
-          />
           <div className="condition-optimization-summary-meta">
             {report.safety?.mode === 'safe_only' ? 'safe only' : 'safety unknown'}
             {' · unsafe rewrite '}
             {report.safety?.unsafeRewriteApplied ? 'applied' : 'not applied'}
-            {report.unchangedAvailable ? '' : ' · unchanged predicates not reported'}
           </div>
-          <ConditionOptimizationTrace
-            emptyText={activeTraceView === 'moved'
-              ? 'No predicates were moved.'
-              : activeTraceView === 'blocked'
-                ? 'No blocked predicates were reported.'
-                : report.unchangedAvailable
-                  ? 'No unchanged predicates were reported.'
-                  : 'Unchanged predicates are not reported yet.'}
-            items={activeTraceItems}
-            title={activeTraceView === 'moved' ? 'Moved' : activeTraceView === 'blocked' ? 'Blocked' : 'Unchanged'}
-          />
-          {viewModel.warnings.length > 0 ? <ConditionOptimizationTrace title="Warnings" items={viewModel.warnings} emptyText="" /> : null}
-          <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />
           {activeSqlView === 'diff' ? (
             <div className="condition-optimization-diff" data-testid="condition-optimization-diff">
               <ReactDiffViewer
@@ -780,12 +779,37 @@ function ConditionOptimizationReview({
                 useDarkTheme={false}
               />
             </div>
+          ) : activeSqlView === 'detail' ? (
+            <div className="condition-optimization-detail">
+              <OptimizationTraceTabs
+                activeTraceView={activeTraceView}
+                blockedCount={report.blockedCount}
+                movedCount={report.appliedCount}
+                onTraceViewChange={setActiveTraceView}
+              />
+              <ConditionOptimizationTrace
+                emptyText={activeTraceView === 'moved'
+                  ? 'No predicates were moved.'
+                  : 'No blocked predicates were reported. No candidate was rejected as unsafe in this run.'}
+                description={activeTraceDescription}
+                items={activeTraceItems}
+                title={activeTraceView === 'moved' ? 'Moved' : 'Blocked'}
+              />
+              {viewModel.warnings.length > 0 ? (
+                <ConditionOptimizationTrace
+                  description="Non-blocking notes returned by the optimizer while planning or applying condition placement."
+                  emptyText=""
+                  items={viewModel.warnings}
+                  title="Warnings"
+                />
+              ) : null}
+            </div>
           ) : (
             <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
               <SqlCodeMirror
                 ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
-                minHeight="220px"
+                minHeight="100%"
                 value={sqlToShow}
               />
             </div>
@@ -794,15 +818,16 @@ function ConditionOptimizationReview({
       ) : (
         <>
           <div className="condition-optimization-summary-meta">Original SQL is analyzed as-is.</div>
-          <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />
           {activeSqlView === 'diff' ? (
             <div className="condition-optimization-empty-diff">Optimization is off, so original and optimized SQL are identical.</div>
+          ) : activeSqlView === 'detail' ? (
+            <div className="condition-optimization-empty-diff">Optimization is off. No movement detail is available.</div>
           ) : (
             <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
               <SqlCodeMirror
                 ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
-                minHeight="160px"
+                minHeight="100%"
                 value={sqlToShow}
               />
             </div>
@@ -818,18 +843,15 @@ function OptimizationTraceTabs({
   blockedCount,
   movedCount,
   onTraceViewChange,
-  unchangedCount,
 }: {
   activeTraceView: OptimizationTraceView;
   blockedCount: number;
   movedCount: number;
   onTraceViewChange: (view: OptimizationTraceView) => void;
-  unchangedCount: number;
 }) {
   const tabs: Array<{ count: number; label: string; view: OptimizationTraceView }> = [
     { count: movedCount, label: 'Moved', view: 'moved' },
     { count: blockedCount, label: 'Blocked', view: 'blocked' },
-    { count: unchangedCount, label: 'Unchanged', view: 'unchanged' },
   ];
 
   return (
@@ -859,7 +881,7 @@ function OptimizationSqlTabs({
 }) {
   return (
     <div className="condition-optimization-tabs" role="tablist" aria-label="Optimization SQL view">
-      {(['original', 'optimized', 'diff'] as const).map((view) => (
+      {(['original', 'optimized', 'diff', 'detail'] as const).map((view) => (
         <button
           key={view}
           aria-selected={activeSqlView === view}
@@ -868,7 +890,7 @@ function OptimizationSqlTabs({
           type="button"
           onClick={() => onSqlViewChange(view)}
         >
-          {view === 'original' ? 'Original' : view === 'optimized' ? 'Optimized' : 'Diff'}
+          {view === 'original' ? 'Original' : view === 'optimized' ? 'Optimized' : view === 'diff' ? 'Diff' : 'Detail'}
         </button>
       ))}
     </div>
@@ -876,17 +898,22 @@ function OptimizationSqlTabs({
 }
 
 function ConditionOptimizationTrace({
+  description,
   emptyText,
   items,
   title,
 }: {
+  description: string;
   emptyText: string;
   items: ConditionOptimizationReport['applied'];
   title: string;
 }) {
   return (
     <div className="condition-optimization-trace">
-      <div className="condition-optimization-trace-title">{title}</div>
+      <div className="condition-optimization-trace-heading">
+        <div className="condition-optimization-trace-title">{title}</div>
+        <div className="condition-optimization-trace-description">{description}</div>
+      </div>
       {items.length > 0 ? (
         <ul>
           {items.slice(0, 4).map((item, index) => (

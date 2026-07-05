@@ -105,7 +105,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByRole('checkbox', { name: 'Unused columns' })).toHaveCount(0);
   await expect(page.getByRole('checkbox', { name: 'Auto group' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Collapse groups' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Always show columns' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Always show columns' })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByText('Passthrough')).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').getByRole('button', { name: 'customer_name', exact: true })).toBeVisible();
   await expect(page.getByTestId('rf__node-main_output').getByText('Filter')).toHaveCount(0);
@@ -1477,29 +1477,6 @@ test('does not copy a share URL when the SQL is too long', async ({ page }) => {
   await expect.poll(() => page.evaluate(() => (window as Window & { __copiedText?: string }).__copiedText ?? '')).toBe('');
 });
 
-test('can hide and show columns for all nodes', async ({ page }) => {
-  await page.goto('/');
-
-  const ordersNode = page.getByTestId('rf__node-table_orders');
-  const outputNode = page.getByTestId('rf__node-main_output');
-
-  await expect(page.getByRole('button', { name: 'Always show columns' })).toBeVisible();
-  await expect(ordersNode.getByText('order_date')).toHaveCount(0);
-  await expect(outputNode.getByText('customer_name')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Always show columns' }).click();
-
-  await expect(page.getByRole('button', { name: 'Minimize columns' })).toBeVisible();
-  await expect(ordersNode.getByText('order_date')).toBeVisible();
-  await expect(outputNode.getByText('customer_name')).toBeVisible();
-
-  await page.getByRole('button', { name: 'Minimize columns' }).click();
-
-  await expect(page.getByRole('button', { name: 'Always show columns' })).toBeVisible();
-  await expect(ordersNode.getByText('order_date')).not.toBeVisible();
-  await expect(outputNode.getByText('customer_name')).toBeVisible();
-});
-
 test('reveals selected lineage columns even while nodes are hidden', async ({ page }) => {
   await page.goto('/');
 
@@ -1508,7 +1485,7 @@ test('reveals selected lineage columns even while nodes are hidden', async ({ pa
   const orderItemsNode = page.getByTestId('rf__node-table_order_items');
   const ordersNode = page.getByTestId('rf__node-table_orders');
 
-  await expect(page.getByRole('button', { name: 'Always show columns' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Always show columns' })).toHaveCount(0);
   await expect(recentOrdersNode.getByRole('button', { name: 'amount', exact: true })).toHaveCount(0);
   await expect(orderItemsNode.getByRole('button', { name: 'quantity', exact: true })).toHaveCount(0);
 
