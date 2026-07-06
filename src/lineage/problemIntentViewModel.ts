@@ -1,5 +1,5 @@
 import type { CandidateConcern, ColumnDiagnosticPacket, PopulationEffect, PopulationInfluence } from './diagnostics';
-import { populationSignalOrder, symptomEffectMap, symptomMechanismMap, type DiagnosticConcernEffect, type PopulationSignal, type ProblemIntent } from './problemIntent';
+import { populationSignalOrder, symptomEffectMap, symptomMechanismMap, type DiagnosticConcernEffect, type PopulationMechanism, type PopulationSignal, type ProblemIntent } from './problemIntent';
 
 export type ProblemIntentMatchStrength = 'matched' | 'related' | 'unmatched';
 
@@ -161,11 +161,7 @@ export function filterPopulationInfluencesForIntent(influences: PopulationInflue
 
   const expectedEffects = symptomEffectMap[intent];
   const expectedMechanisms = symptomMechanismMap[intent];
-  return influences.filter((influence) =>
-    influence.effects.some((effect) => expectedEffects.includes(effect))
-    || influence.signals.some((signal) => populationSignalMatchesIntent(signal, influence.effects, intent))
-    || expectedMechanisms.includes(influence.mechanism),
-  );
+  return influences.filter((influence) => populationInfluenceMatchesIntent(influence, intent, expectedEffects, expectedMechanisms));
 }
 
 export function rankCandidateConcernsForIntent(concerns: CandidateConcern[], intent: ProblemIntent): ProblemIntentConcern[] {
@@ -213,6 +209,24 @@ function populationEffectMatchesIntent(effect: PopulationEffect, intent: Problem
 
 function populationSignalMatchesIntent(signal: PopulationSignal, effects: PopulationEffect[], intent: ProblemIntent): boolean {
   return signalEffects(signal).some((effect) => effects.includes(effect) && populationEffectMatchesIntent(effect, intent));
+}
+
+function populationInfluenceMatchesIntent(
+  influence: PopulationInfluence,
+  intent: ProblemIntent,
+  expectedEffects: DiagnosticConcernEffect[],
+  expectedMechanisms: PopulationMechanism[],
+): boolean {
+  if (influence.effects.some((effect) => expectedEffects.includes(effect))) {
+    return true;
+  }
+  if (influence.signals.some((signal) => populationSignalMatchesIntent(signal, influence.effects, intent))) {
+    return true;
+  }
+  if (intent === 'duplicate_rows' && influence.mechanism === 'join') {
+    return false;
+  }
+  return expectedMechanisms.includes(influence.mechanism);
 }
 
 function signalEffects(signal: PopulationSignal): PopulationEffect[] {

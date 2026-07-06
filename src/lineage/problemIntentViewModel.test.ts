@@ -192,9 +192,10 @@ describe('problem intent view model', () => {
     const packet = createPacket();
     const before = JSON.stringify(packet);
 
-    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'all_signals').map((item) => item.id)).toEqual(['join-nx', 'where-filter']);
+    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'all_signals').map((item) => item.id)).toEqual(['join-nx', 'where-filter', 'left-null']);
     expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'logic_review')).toEqual([]);
     expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'duplicate_rows').map((item) => item.id)).toEqual(['join-nx']);
+    expect(filterPopulationInfluencesForIntent(packet.rowLineage.influences, 'value_missing').map((item) => item.id)).toEqual(['join-nx', 'where-filter', 'left-null']);
     expect(rankCandidateConcernsForIntent(packet.candidateConcerns, 'value_missing').map((item) => item.kind)).toEqual(['coalesce']);
     expect(JSON.stringify(packet)).toBe(before);
   });
@@ -266,6 +267,16 @@ function createPacket(): ColumnDiagnosticPacket {
           scopeId: 'scope_main',
           signals: ['where'],
           sourceNodeId: 'table_customers',
+        },
+        {
+          effects: ['null_extension'],
+          id: 'left-null',
+          kind: 'join_on',
+          mechanism: 'join',
+          references: [],
+          scopeId: 'scope_main',
+          signals: ['outer_join'],
+          sourceNodeId: 'cte_payment_summary',
         },
       ],
       nodeImpacts: [

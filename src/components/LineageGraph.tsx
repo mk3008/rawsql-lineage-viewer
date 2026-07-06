@@ -11,7 +11,7 @@ import {
   type EdgeProps,
   type ReactFlowInstance,
 } from '@xyflow/react';
-import { Copy, ExternalLink, Pencil, RotateCcw, Rows3, Trash2 } from 'lucide-react';
+import { Copy, ExternalLink, Pencil, RefreshCw, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
@@ -80,7 +80,7 @@ type GraphOriginSelection =
 
 type InspectorCommentMode = 'all' | 'none' | 'smart';
 const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
-type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse';
+type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse' | 'manual';
 
 interface GraphDisplaySnapshot {
   highlightTarget: GraphHighlightTarget;
@@ -205,6 +205,7 @@ export function LineageGraph({
   const previousAutoLayoutEnabledRef = useRef(true);
   const pendingAutoLayoutFrameRef = useRef<number | null>(null);
   const pendingAutoLayoutReasonRef = useRef<AutoLayoutReason | null>(null);
+  const autoLayoutRequestReasonRef = useRef<AutoLayoutReason | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
@@ -267,6 +268,8 @@ export function LineageGraph({
     }
     pendingAutoLayoutFrameRef.current = window.requestAnimationFrame(() => {
       pendingAutoLayoutFrameRef.current = null;
+      autoLayoutRequestReasonRef.current = pendingAutoLayoutReasonRef.current;
+      pendingAutoLayoutReasonRef.current = null;
       setAutoLayoutRequestId((current) => current + 1);
     });
   }, [effectiveAutoLayoutEnabled]);
@@ -281,6 +284,9 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
+  const requestAutoArrange = useCallback(() => {
+    scheduleAutoLayout('manual');
+  }, [scheduleAutoLayout]);
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
@@ -975,64 +981,88 @@ export function LineageGraph({
       previousNodeLayoutKeyRef.current !== null && previousNodeLayoutKeyRef.current !== graphLayoutKey;
     const autoLayoutJustEnabled = effectiveAutoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
     const autoLayoutRequested = effectiveAutoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
+    const autoLayoutRequestReason = autoLayoutRequested ? autoLayoutRequestReasonRef.current : null;
+    const shouldResetDraggedPositions = autoLayoutRequestReason === 'manual';
+    if (shouldResetDraggedPositions) {
+      draggedNodeIdsRef.current = new Set();
+      nodePositionsRef.current = new Map();
+    }
     previousNodeStructureKeyRef.current = graphStructureKey;
     previousNodeLayoutKeyRef.current = graphLayoutKey;
     previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
     previousAutoLayoutEnabledRef.current = effectiveAutoLayoutEnabled;
+    autoLayoutRequestReasonRef.current = null;
 
     setNodes((currentNodes) => {
       const currentById = new Map(currentNodes.map((node) => [node.id, node]));
       const originNodeId = getGraphOriginNodeId(graphDisplaySnapshot.originSelection);
       const visibleOriginNodeId = mapToVisibleNodeId(originNodeId, visibleNodeIdBySourceNodeId);
-      const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
-      const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
-      const autoLayoutOffset =
-        effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested) && currentOriginNode && nextOriginNode
-          ? {
-              x: currentOriginNode.position.x - nextOriginNode.position.x,
-              y: currentOriginNode.position.y - nextOriginNode.position.y,
-            }
-          : null;
-      return graphNodes.map((node) => {
-        const current = currentById.get(node.id);
-        if (effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested)) {
-          const savedPosition = nodePositionsRef.current.get(node.id);
-          const shouldKeepDraggedPosition = draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
+      const shouldRunAutoLayout =
+        effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested);
+      const buildNextNodes = (options: { preserveOriginPosition: boolean; resetDraggedPositions: boolean }) => {
+        const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
+        const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
+        const autoLayoutOffset =
+          shouldRunAutoLayout && options.preserveOriginPosition && currentOriginNode && nextOriginNode
+            ? {
+                x: currentOriginNode.position.x - nextOriginNode.position.x,
+                y: currentOriginNode.position.y - nextOriginNode.position.y,
+              }
+            : null;
+
+        return graphNodes.map((node) => {
+          const current = currentById.get(node.id);
+          if (shouldRunAutoLayout) {
+            const savedPosition = nodePositionsRef.current.get(node.id);
+            const shouldKeepDraggedPosition = !options.resetDraggedPositions && draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
+            return {
+              ...node,
+              dragging: current?.dragging,
+              measured: current?.measured,
+              position: shouldKeepDraggedPosition
+                ? current?.position ?? savedPosition!
+                : current || !savedPosition
+                ? autoLayoutOffset
+                  ? {
+                      x: node.position.x + autoLayoutOffset.x,
+                      y: node.position.y + autoLayoutOffset.y,
+                    }
+                  : node.position
+                : savedPosition,
+              selected: current?.selected,
+            };
+          }
+
+          if (!current) {
+            return {
+              ...node,
+              position: nodePositionsRef.current.get(node.id) ?? node.position,
+            };
+          }
+
           return {
             ...node,
-            dragging: current?.dragging,
-            measured: current?.measured,
-            position: shouldKeepDraggedPosition
-              ? current?.position ?? savedPosition!
-              : current || !savedPosition
-              ? autoLayoutOffset
-                ? {
-                    x: node.position.x + autoLayoutOffset.x,
-                    y: node.position.y + autoLayoutOffset.y,
-                  }
-                : node.position
-              : savedPosition,
-            selected: current?.selected,
+            dragging: current.dragging,
+            measured: current.measured,
+            position: current.position,
+            selected: current.selected,
           };
-        }
+        });
+      };
 
-        if (!current) {
-          return {
-            ...node,
-            position: nodePositionsRef.current.get(node.id) ?? node.position,
-          };
-        }
-
-        return {
-          ...node,
-          dragging: current.dragging,
-          measured: current.measured,
-          position: current.position,
-          selected: current.selected,
-        };
+      const nextNodes = buildNextNodes({
+        preserveOriginPosition: !shouldResetDraggedPositions,
+        resetDraggedPositions: shouldResetDraggedPositions,
       });
+      if (autoLayoutRequestReason === 'group-expand' && hasBackwardFlowEdges(nextNodes, graphEdges)) {
+        draggedNodeIdsRef.current = new Set();
+        nodePositionsRef.current = new Map();
+        return buildNextNodes({ preserveOriginPosition: false, resetDraggedPositions: true });
+      }
+
+      return nextNodes;
     });
-  }, [effectiveAutoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphLayoutKey, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
+  }, [effectiveAutoLayoutEnabled, autoLayoutRequestId, flowDirection, graphDisplaySnapshot.originSelection, graphEdges, graphLayoutKey, graphNodes, graphStructureKey, lineage, setNodes, visibleNodeIdBySourceNodeId]);
 
   useEffect(() => {
     for (const node of nodes) {
@@ -1180,7 +1210,11 @@ export function LineageGraph({
         ) : null}
         <button className="graph-column-toggle" type="button" onClick={resetCollapsedGroups}>
           <Rows3 size={15} />
-          Collapse groups
+          Collapse
+        </button>
+        <button className="graph-column-toggle" type="button" aria-label="Recalculate layout" onClick={requestAutoArrange}>
+          <RefreshCw size={15} />
+          Layout
         </button>
         <button className="graph-zoom-indicator" type="button" aria-label="Reset zoom to 100%" data-testid="graph-zoom" onClick={resetZoom}>
           <RotateCcw size={14} />
@@ -1310,6 +1344,15 @@ function isGraphNodeFullyInView(
   const right = left + width * viewport.zoom;
   const bottom = top + height * viewport.zoom;
   return left >= -tolerance && top >= -tolerance && right <= shellRect.width + tolerance && bottom <= shellRect.height + tolerance;
+}
+
+function hasBackwardFlowEdges(nodes: GraphNode[], edges: GraphEdge[]) {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return edges.some((edge) => {
+    const source = nodeById.get(edge.source);
+    const target = nodeById.get(edge.target);
+    return Boolean(source && target && source.position.x >= target.position.x);
+  });
 }
 
 function mapToVisibleNodeId(nodeId: string | null | undefined, visibleNodeIdBySourceNodeId: Map<string, string>) {
