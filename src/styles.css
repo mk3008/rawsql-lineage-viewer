@@ -2676,6 +2676,10 @@ textarea {
     0 14px 30px rgb(15 23 42 / 16%);
 }
 
+.lineage-node-collapsed-group .lineage-node-handle {
+  top: 20px;
+}
+
 .lineage-node-highlighted.lineage-node-collapsed-group,
 .lineage-node-highlighted-value.lineage-node-collapsed-group {
   box-shadow:

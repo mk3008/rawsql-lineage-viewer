@@ -14,6 +14,8 @@ const nodeSize = {
   height: 120,
 };
 
+const nodeConnectionYOffset = 21;
+
 const layoutSpacing = {
   x: 280,
   y: 180,
@@ -885,11 +887,11 @@ function scoreEdgeCorridorIntersections(
 
     const sourcePoint = {
       x: sourceDepth * layoutSpacing.x + nodeSize.width,
-      y: sourceY + nodeSize.height / 2,
+      y: sourceY + nodeConnectionYOffset,
     };
     const targetPoint = {
       x: targetDepth * layoutSpacing.x,
-      y: targetY + nodeSize.height / 2,
+      y: targetY + nodeConnectionYOffset,
     };
     if (segmentIntersectsRect(sourcePoint, targetPoint, rect)) {
       penalty += edgeCorridorPenalty;
