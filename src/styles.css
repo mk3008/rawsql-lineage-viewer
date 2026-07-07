@@ -2518,10 +2518,6 @@ textarea {
   right: -5px;
 }
 
-.lineage-node-expanded {
-  min-height: 118px;
-}
-
 .lineage-node-expanded.lineage-node-passthrough-only {
   min-height: 0;
 }
@@ -2826,6 +2822,7 @@ textarea {
 .lineage-node-body {
   display: grid;
   align-items: start;
+  align-content: start;
   flex: 1 1 auto;
   gap: 3px;
   min-height: 0;
@@ -3165,7 +3162,7 @@ textarea {
 
 .lineage-group-summary {
   display: grid;
-  gap: 9px;
+  gap: 3px;
   color: #334155;
   font-size: 12px;
   line-height: 1.45;

@@ -9,7 +9,7 @@ describe('source-references boundary', () => {
       FROM customers c
       JOIN orders o ON o.customer_id = c.id
       WHERE o.status = 'open'
-    `);
+    `, { optimizeConditions: false });
 
     const customers = lineage.nodes.find((node) => node.id === 'table_customers');
     const orders = lineage.nodes.find((node) => node.id === 'table_orders');
