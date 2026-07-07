@@ -67,7 +67,7 @@ export function App() {
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
-  const [conditionOptimizationEnabled, setConditionOptimizationEnabled] = useState(true);
+  const [conditionOptimizationEnabled, setConditionOptimizationEnabled] = useState(false);
   const [optimizationSqlView, setOptimizationSqlView] = useState<OptimizationSqlView>('diff');
   const flowDirection: GraphFlowDirection = 'upstream';
   const lastHandledAutoInspectOutputNonceRef = useRef(0);
