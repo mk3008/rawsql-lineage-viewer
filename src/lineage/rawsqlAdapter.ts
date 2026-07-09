@@ -1,6 +1,7 @@
 import {
   BinarySelectQuery,
   CTECollector,
+  CTEDependencyAnalyzer,
   CTEQueryDecomposer,
   ColumnReference,
   CreateTableQuery,
@@ -16,9 +17,10 @@ import {
   SqlFormatter,
   SubQuerySource,
   TableSource,
+  TableSourceCollector,
   ValuesQuery,
 } from 'rawsql-ts';
-import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
+import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression, SqlComponent } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
@@ -30,6 +32,7 @@ import type {
   LineageExpressionTree,
   LineageModel,
   LineageNode,
+  LineageNodeQueryDependencies,
   LineageScope,
   LineageSourceReference,
 } from '../domain/lineage';
@@ -628,6 +631,9 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
   const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
   const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings, cteCommentsByName);
+  const queryDependencyMap = collectRawsqlQueryDependencies(query, ctes);
+
+  nodes.get('main_output')!.queryDependencies = queryDependencyMap.get('main_output');
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -639,6 +645,7 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
       columns: [],
       comments: cteCommentsByName.get(cteName),
       cteExecutableSql: cteExecutableSqlByName.get(cteName),
+      queryDependencies: queryDependencyMap.get(nodeId),
       materializationHint: isParameterSelectQuery(cte.query) ? undefined : normalizeMaterializationHint(cte.materialized),
       querySql: cteExecutableSqlByName.get(cteName),
     });
@@ -701,6 +708,42 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
     lineage,
     parserVersion,
   };
+}
+
+function collectRawsqlQueryDependencies(query: SelectQuery, ctes: CommonTable[]): Map<string, LineageNodeQueryDependencies> {
+  const dependencies = new Map<string, LineageNodeQueryDependencies>();
+  const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
+  const cteDependencyGraph = query instanceof SimpleSelectQuery ? new CTEDependencyAnalyzer().analyzeDependencies(query) : undefined;
+  const cteDependenciesByName = new Map(cteDependencyGraph?.nodes.filter((node) => node.type === 'CTE').map((node) => [node.name, node.dependencies]) ?? []);
+  const mainCteDependencies = cteDependencyGraph?.nodes.find((node) => node.type === 'ROOT')?.dependencies ?? [];
+
+  dependencies.set('main_output', {
+    directCteNames: uniqueStrings(mainCteDependencies),
+    directTableNames: query instanceof SimpleSelectQuery ? collectPhysicalTableNames(cloneSelectQueryWithoutCtes(query), cteNames) : collectPhysicalTableNames(query, cteNames),
+  });
+
+  for (const cte of ctes) {
+    const cteName = cte.getSourceAliasName();
+    dependencies.set(isParameterSelectQuery(cte.query) ? toParameterTableId(cteName) : toCteId(cteName), {
+      directCteNames: uniqueStrings(cteDependenciesByName.get(cteName) ?? []),
+      directTableNames: collectPhysicalTableNames(cte.query, cteNames),
+    });
+  }
+
+  return dependencies;
+}
+
+function collectPhysicalTableNames(query: SqlComponent, cteNames: Set<string>): string[] {
+  return uniqueStrings(
+    new TableSourceCollector(false)
+      .collect(query)
+      .map((table) => table.getSourceName())
+      .filter((tableName) => !cteNames.has(tableName)),
+  );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function resolveSqlAnalysisMode(options: AnalyzeSqlOptions): SqlAnalysisMode {

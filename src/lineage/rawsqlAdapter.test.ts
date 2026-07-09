@@ -422,6 +422,28 @@ describe('rawsqlAdapter', () => {
     expect(dataFlowEdges.find((edge) => edge.id === 'table_order_items-cte_recent_orders')?.joinNullability).toBeUndefined();
   });
 
+  it('records rawsql query dependencies for inspector table and CTE summaries', () => {
+    const { lineage } = analyzeSql(salesSummarySql);
+    const nodesById = new Map(lineage.nodes.map((node) => [node.id, node]));
+
+    expect(nodesById.get('main_output')?.queryDependencies).toEqual({
+      directCteNames: ['customer_scope', 'order_totals', 'payment_summary'],
+      directTableNames: [],
+    });
+    expect(nodesById.get('cte_customer_scope')?.queryDependencies).toEqual({
+      directCteNames: [],
+      directTableNames: ['customers', 'customer_favorites'],
+    });
+    expect(nodesById.get('cte_order_totals')?.queryDependencies).toEqual({
+      directCteNames: ['recent_orders'],
+      directTableNames: [],
+    });
+    expect(nodesById.get('cte_recent_orders')?.queryDependencies).toEqual({
+      directCteNames: [],
+      directTableNames: ['orders', 'order_items'],
+    });
+  });
+
   it('populates output and referenced source columns', () => {
     const { lineage } = analyzeSql(salesSummarySql);
     const columnsByNodeId = new Map(lineage.nodes.map((node) => [node.id, node.columns.map((column) => column.name)]));

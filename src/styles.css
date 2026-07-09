@@ -1856,6 +1856,83 @@ textarea {
   line-height: 1.4;
 }
 
+.lineage-inspector-dependencies {
+  display: grid;
+  gap: 8px;
+}
+
+.lineage-inspector-dependency-group {
+  display: grid;
+  gap: 6px;
+}
+
+.lineage-inspector-dependency-group + .lineage-inspector-dependency-group {
+  border-top: 1px solid #e8edf5;
+  padding-top: 8px;
+}
+
+.lineage-inspector-dependency-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lineage-inspector-dependency-title {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.lineage-inspector-dependency-list {
+  display: grid;
+  gap: 4px;
+}
+
+.lineage-inspector-dependency-item {
+  display: block;
+  min-width: 0;
+  padding: 1px 0;
+}
+
+.lineage-inspector-dependency-name {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-family: "Cascadia Code", Consolas, monospace;
+  font-size: 12px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lineage-inspector-analyze-button {
+  flex: 0 0 auto;
+}
+
+.lineage-inspector-node-sql-actions {
+  justify-content: flex-end;
+}
+
+.lineage-inspector-sql-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.lineage-inspector-sql-caption {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
 .lineage-inspector-comment-block {
   display: grid;
   gap: 4px;
