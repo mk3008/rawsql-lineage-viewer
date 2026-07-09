@@ -377,7 +377,7 @@ describe('buildGraphModel', () => {
   });
 
   it('keeps correlated scalar row sources and primary grouped sources on readable lanes', () => {
-    const { lineage } = analyzeSql(rankedCustomerHealthSql);
+    const { lineage } = analyzeSql(rankedCustomerHealthSql, { analysisMode: 'original' });
     const collapsed = collapseLineageGroups(lineage, collectDefaultCollapsedGroupRootIds(lineage));
     const graph = buildGraphModel(collapsed.lineage, 'upstream', collapsed.lineage);
     const recentOrderCount = graph.nodes.find((node) => node.id === 'scalar_subquery_recent_order_count_1');
@@ -395,7 +395,7 @@ describe('buildGraphModel', () => {
   });
 
   it('keeps expanded helper CTE source order from crossing sibling support edges', () => {
-    const { lineage } = analyzeSql(rankedCustomerHealthSql);
+    const { lineage } = analyzeSql(rankedCustomerHealthSql, { analysisMode: 'original' });
     const visibleNodeIds = new Set([
       'main_output',
       'cte_ranked_customers',

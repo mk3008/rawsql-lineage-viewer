@@ -8,7 +8,7 @@ import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/b
 import type { AnalysisWarning } from './domain/lineage';
 import { buildConditionOptimizationViewModel } from './lineage/conditionOptimizationViewModel';
 import type { ProblemIntent } from './lineage/problemIntent';
-import { analyzeSql, type ConditionOptimizationReport } from './lineage/rawsqlAdapter';
+import { analyzeSql, type ConditionOptimizationReport, type SqlAnalysisMode } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
@@ -22,7 +22,8 @@ const defaultOutputTitle = 'Final Result';
 type SqlHistorySortMode = 'recent' | 'name';
 type PanelTab = 'history' | 'inspector' | 'new' | 'sql';
 type OptimizationSqlView = 'detail' | 'diff' | 'optimized' | 'original';
-type OptimizationTraceView = 'blocked' | 'moved';
+type OptimizationTraceView = 'blocked' | 'moved' | 'probes' | 'skipped_probes';
+type AnalysisModeAvailability = Record<SqlAnalysisMode, boolean>;
 
 interface SqlHistoryItem {
   id: string;
@@ -67,7 +68,8 @@ export function App() {
   const [sqlHistory, setSqlHistory] = useState<SqlHistoryItem[]>(initialHistory);
   const [outputTitle, setOutputTitle] = useState(() => findSqlHistoryOutputTitle(initialSql, initialHistory) ?? defaultOutputTitle);
   const [shareStatus, setShareStatus] = useState<'idle' | 'copied' | 'too-long' | 'failed'>('idle');
-  const [conditionOptimizationEnabled, setConditionOptimizationEnabled] = useState(false);
+  const [newSqlParseErrorDetailOpen, setNewSqlParseErrorDetailOpen] = useState(false);
+  const [sqlAnalysisMode, setSqlAnalysisMode] = useState<SqlAnalysisMode>('original');
   const [optimizationSqlView, setOptimizationSqlView] = useState<OptimizationSqlView>('diff');
   const flowDirection: GraphFlowDirection = 'upstream';
   const lastHandledAutoInspectOutputNonceRef = useRef(0);
@@ -79,7 +81,7 @@ export function App() {
   const analysis = useMemo(() => {
     try {
       return {
-        result: analyzeSql(lastAnalyzedSql, { optimizeConditions: conditionOptimizationEnabled }),
+        result: analyzeSql(lastAnalyzedSql, { analysisMode: sqlAnalysisMode }),
         error: null,
       };
     } catch (caught) {
@@ -89,7 +91,24 @@ export function App() {
         error: message,
       };
     }
-  }, [conditionOptimizationEnabled, lastAnalyzedSql]);
+  }, [lastAnalyzedSql, sqlAnalysisMode]);
+  const analysisModeAvailability = useMemo<AnalysisModeAvailability>(() => {
+    try {
+      const optimized = analyzeSql(lastAnalyzedSql, { analysisMode: 'optimized' }).conditionOptimization;
+      const debugProbes = analyzeSql(lastAnalyzedSql, { analysisMode: 'debug_probes' }).conditionOptimization;
+      return {
+        original: true,
+        optimized: optimized.changed || optimized.appliedCount > 0,
+        debug_probes: debugProbes.debugProbeCount > 0,
+      };
+    } catch {
+      return {
+        original: true,
+        optimized: false,
+        debug_probes: false,
+      };
+    }
+  }, [lastAnalyzedSql]);
   const newSqlParse = useMemo(() => {
     try {
       analyzeSql(sql, { optimizeConditions: false });
@@ -102,6 +121,14 @@ export function App() {
 
   const adapterResult = analysis.result;
   const newSqlParseError = newSqlParse.error;
+  useEffect(() => {
+    if (!analysisModeAvailability[sqlAnalysisMode]) {
+      setSqlAnalysisMode('original');
+    }
+  }, [analysisModeAvailability, sqlAnalysisMode]);
+  useEffect(() => {
+    setNewSqlParseErrorDetailOpen(false);
+  }, [newSqlParseError]);
   useEffect(() => {
     if (isMobileLineageViewport) {
       setIsPanelOpen(false);
@@ -518,9 +545,16 @@ export function App() {
                     <Play size={15} fill="currentColor" />
                     Analyze
                   </button>
-                  <div className={`analysis-status new-sql-parse-status ${newSqlParseError ? 'analysis-status-error' : 'analysis-status-ok'}`} data-testid="new-sql-parse-status">
-                    {newSqlParseError ? <AlertTriangle size={16} /> : <CheckCircle2 size={16} />}
-                    <span>{newSqlParseError ? newSqlParseError : 'Parsed successfully'}</span>
+                  <div
+                    className={`analysis-status new-sql-parse-status ${newSqlParseError ? 'analysis-status-empty' : 'analysis-status-ok'}`}
+                    data-testid="analysis-status"
+                  >
+                    {newSqlParseError ? null : (
+                      <>
+                        <CheckCircle2 size={16} />
+                        <span>Parsed successfully</span>
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="sql-editor-secondary-actions">
@@ -553,7 +587,7 @@ export function App() {
                   ariaLabel="SQL editor"
                   className="sql-editor"
                   editable
-                  minHeight="340px"
+                  minHeight="100%"
                   value={sql}
                   onChange={(value) => {
                     setSql(value);
@@ -561,6 +595,27 @@ export function App() {
                   }}
                 />
               </div>
+              <div
+                className={`analysis-status new-sql-error-status ${newSqlParseError ? 'analysis-status-error' : 'analysis-status-empty'}`}
+                data-testid="new-sql-error-status"
+              >
+                {newSqlParseError ? (
+                  <>
+                    <AlertTriangle size={14} />
+                    <span>{newSqlParseError}</span>
+                    <button
+                      className="new-sql-error-detail-button"
+                      type="button"
+                      onClick={() => setNewSqlParseErrorDetailOpen((isOpen) => !isOpen)}
+                    >
+                      {newSqlParseErrorDetailOpen ? 'Hide detail' : 'Detail'}
+                    </button>
+                  </>
+                ) : null}
+              </div>
+              {newSqlParseError && newSqlParseErrorDetailOpen ? (
+                <pre className="new-sql-error-detail">{newSqlParseError}</pre>
+              ) : null}
               <div className="new-sql-panel-divider" aria-hidden="true" />
             </div>
           ) : panelTab === 'sql' ? (
@@ -568,20 +623,13 @@ export function App() {
               {adapterResult ? (
                 <CurrentSqlHeader outputTitle={outputTitle} onDelete={deleteOutputTitle} onRename={renameOutputTitle} />
               ) : null}
-              <div className="sql-review-actions">
-                <label className="condition-optimization-toggle">
-                  <input
-                    checked={conditionOptimizationEnabled}
-                    type="checkbox"
-                    onChange={(event) => setConditionOptimizationEnabled(event.currentTarget.checked)}
-                  />
-                  Optimize conditions
-                </label>
-              </div>
               {adapterResult ? (
                 <ConditionOptimizationReview
                   activeSqlView={optimizationSqlView}
+                  analysisMode={sqlAnalysisMode}
+                  analysisModeAvailability={analysisModeAvailability}
                   report={adapterResult.conditionOptimization}
+                  onAnalysisModeChange={setSqlAnalysisMode}
                   onSqlViewChange={setOptimizationSqlView}
                 />
               ) : (
@@ -733,34 +781,61 @@ function GraphInfoWarningCount({ label, title, value }: { label: string; title: 
 
 function ConditionOptimizationReview({
   activeSqlView,
+  analysisMode,
+  analysisModeAvailability,
   report,
+  onAnalysisModeChange,
   onSqlViewChange,
 }: {
   activeSqlView: OptimizationSqlView;
+  analysisMode: SqlAnalysisMode;
+  analysisModeAvailability: AnalysisModeAvailability;
   report: ConditionOptimizationReport;
+  onAnalysisModeChange: (mode: SqlAnalysisMode) => void;
   onSqlViewChange: (view: OptimizationSqlView) => void;
 }) {
-  const status = !report.enabled
+  const status = report.mode === 'debug_probes'
+    ? report.debugProbeCount > 0
+      ? `${report.debugProbeCount} probes`
+      : 'No probes'
+    : !report.enabled
     ? 'Off'
     : report.appliedCount > 0
       ? `${report.appliedCount} moved`
       : 'No changes';
   const viewModel = buildConditionOptimizationViewModel(report);
-  const [activeTraceView, setActiveTraceView] = useState<OptimizationTraceView>('moved');
+  const [activeTraceView, setActiveTraceView] = useState<OptimizationTraceView>(report.mode === 'debug_probes' ? 'probes' : 'moved');
   const activeTraceItems = activeTraceView === 'moved'
     ? viewModel.moved
-    : viewModel.blocked;
+    : activeTraceView === 'probes'
+      ? viewModel.probes
+      : activeTraceView === 'skipped_probes'
+        ? viewModel.skippedProbes
+      : viewModel.blocked;
   const activeTraceDescription = activeTraceView === 'moved'
     ? 'Predicates that were safely moved closer to the table or CTE where they can filter rows earlier.'
-    : 'Predicates that looked like candidates, but stayed in place because the optimizer could not prove the rewrite safe or valid.';
-  const sqlToShow = activeSqlView === 'optimized' ? report.optimizedSql : report.originalSql;
-  const isCopyableSqlView = activeSqlView === 'original' || activeSqlView === 'optimized';
-  const copySqlName = activeSqlView === 'optimized' ? 'Optimized' : 'Original';
+    : activeTraceView === 'probes'
+      ? 'Investigation-only predicate probes derived from safe rewrites or JOIN equivalence. Use them to inspect upstream data, not as production SQL.'
+      : activeTraceView === 'skipped_probes'
+        ? 'Debug probe metadata that was intentionally skipped. These predicates may still have been moved by optimization.'
+      : 'Predicates that looked like candidates, but stayed in place because the optimizer could not prove the rewrite safe or valid.';
+  const effectiveSqlView = report.mode === 'original' ? 'original' : activeSqlView;
+  const sqlToShow = effectiveSqlView === 'optimized' ? report.optimizedSql : report.originalSql;
+  const isCopyableSqlView = effectiveSqlView === 'original' || effectiveSqlView === 'optimized';
+  const copySqlName = effectiveSqlView === 'optimized' ? 'Optimized' : 'Original';
   const [copySqlState, setCopySqlState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => {
     setCopySqlState('idle');
-  }, [activeSqlView, report.optimizedSql, report.originalSql]);
+  }, [effectiveSqlView, report.optimizedSql, report.originalSql]);
+  useEffect(() => {
+    setActiveTraceView((currentView) => {
+      if (report.mode === 'debug_probes') {
+        return currentView === 'probes' || currentView === 'skipped_probes' ? currentView : 'probes';
+      }
+      return currentView === 'probes' || currentView === 'skipped_probes' ? 'moved' : currentView;
+    });
+  }, [report.mode]);
 
   const copyCurrentSql = async () => {
     try {
@@ -782,18 +857,15 @@ function ConditionOptimizationReview({
   return (
     <section className={`condition-optimization-review ${report.enabled ? '' : 'condition-optimization-review-disabled'}`} aria-label="Condition optimization">
       <div className="condition-optimization-summary-header">
-        <span>Condition optimization</span>
+        <span>Analysis mode</span>
         <strong>{status}</strong>
       </div>
-      <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />
+      <AnalysisModeTabs activeMode={analysisMode} availability={analysisModeAvailability} onModeChange={onAnalysisModeChange} />
+      <div className="condition-optimization-summary-meta">{describeAnalysisMode(report)}</div>
+      {report.mode === 'original' ? null : <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />}
       {report.enabled ? (
         <>
-          <div className="condition-optimization-summary-meta">
-            {report.safety?.mode === 'safe_only' ? 'safe only' : 'safety unknown'}
-            {' · unsafe rewrite '}
-            {report.safety?.unsafeRewriteApplied ? 'applied' : 'not applied'}
-          </div>
-          {activeSqlView === 'diff' ? (
+          {effectiveSqlView === 'diff' ? (
             <div className="condition-optimization-diff" data-testid="condition-optimization-diff">
               <ReactDiffViewer
                 oldValue={report.originalSql}
@@ -803,21 +875,28 @@ function ConditionOptimizationReview({
                 useDarkTheme={false}
               />
             </div>
-          ) : activeSqlView === 'detail' ? (
+          ) : effectiveSqlView === 'detail' ? (
             <div className="condition-optimization-detail">
               <OptimizationTraceTabs
                 activeTraceView={activeTraceView}
                 blockedCount={report.blockedCount}
+                mode={report.mode}
                 movedCount={report.appliedCount}
+                probeCount={report.debugProbeCount}
+                skippedProbeCount={report.debugProbeSkippedCount}
                 onTraceViewChange={setActiveTraceView}
               />
               <ConditionOptimizationTrace
                 emptyText={activeTraceView === 'moved'
                   ? 'No predicates were moved.'
+                  : activeTraceView === 'probes'
+                    ? 'No debug probes were reported. No JOIN-equivalence investigation target was found in this run.'
+                    : activeTraceView === 'skipped_probes'
+                      ? 'No debug probe metadata was skipped.'
                   : 'No blocked predicates were reported. No candidate was rejected as unsafe in this run.'}
                 description={activeTraceDescription}
                 items={activeTraceItems}
-                title={activeTraceView === 'moved' ? 'Moved' : 'Blocked'}
+                title={activeTraceView === 'moved' ? 'Moved' : activeTraceView === 'probes' ? 'Debug probes' : activeTraceView === 'skipped_probes' ? 'Skipped probes' : 'Blocked'}
               />
               {viewModel.warnings.length > 0 ? (
                 <ConditionOptimizationTrace
@@ -829,10 +908,10 @@ function ConditionOptimizationReview({
               ) : null}
             </div>
           ) : (
-            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${effectiveSqlView}-sql`}>
               {sqlCopyAction}
               <SqlCodeMirror
-                ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
+                ariaLabel={effectiveSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
                 minHeight="100%"
                 value={sqlToShow}
@@ -842,16 +921,11 @@ function ConditionOptimizationReview({
         </>
       ) : (
         <>
-          <div className="condition-optimization-summary-meta">Original SQL is analyzed as-is.</div>
-          {activeSqlView === 'diff' ? (
-            <div className="condition-optimization-empty-diff">Optimization is off, so original and optimized SQL are identical.</div>
-          ) : activeSqlView === 'detail' ? (
-            <div className="condition-optimization-empty-diff">Optimization is off. No movement detail is available.</div>
-          ) : (
-            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${activeSqlView}-sql`}>
+          {(
+            <div className="condition-optimization-sql-frame" data-testid={`condition-optimization-${effectiveSqlView}-sql`}>
               {sqlCopyAction}
               <SqlCodeMirror
-                ariaLabel={activeSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
+                ariaLabel={effectiveSqlView === 'optimized' ? 'Optimized SQL' : 'Original SQL'}
                 className="condition-optimization-sql"
                 minHeight="100%"
                 value={sqlToShow}
@@ -864,19 +938,37 @@ function ConditionOptimizationReview({
   );
 }
 
+function describeAnalysisMode(report: ConditionOptimizationReport): string {
+  if (report.mode === 'debug_probes') {
+    return 'Condition optimization that prioritizes debugging efficiency.';
+  }
+  if (report.mode === 'optimized') {
+    return 'Condition optimization that prioritizes search efficiency.';
+  }
+  return 'Formats the SQL without condition optimization.';
+}
+
 function OptimizationTraceTabs({
   activeTraceView,
   blockedCount,
+  mode,
   movedCount,
+  probeCount,
+  skippedProbeCount,
   onTraceViewChange,
 }: {
   activeTraceView: OptimizationTraceView;
   blockedCount: number;
+  mode: SqlAnalysisMode;
   movedCount: number;
+  probeCount: number;
+  skippedProbeCount: number;
   onTraceViewChange: (view: OptimizationTraceView) => void;
 }) {
   const tabs: Array<{ count: number; label: string; view: OptimizationTraceView }> = [
     { count: movedCount, label: 'Moved', view: 'moved' },
+    ...(mode === 'debug_probes' ? [{ count: probeCount, label: 'Probes', view: 'probes' as const }] : []),
+    ...(mode === 'debug_probes' ? [{ count: skippedProbeCount, label: 'Skipped', view: 'skipped_probes' as const }] : []),
     { count: blockedCount, label: 'Blocked', view: 'blocked' },
   ];
 
@@ -892,6 +984,41 @@ function OptimizationTraceTabs({
           onClick={() => onTraceViewChange(tab.view)}
         >
           {tab.label} <strong>{tab.count}</strong>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AnalysisModeTabs({
+  activeMode,
+  availability,
+  onModeChange,
+}: {
+  activeMode: SqlAnalysisMode;
+  availability: AnalysisModeAvailability;
+  onModeChange: (mode: SqlAnalysisMode) => void;
+}) {
+  const tabs: Array<{ label: string; mode: SqlAnalysisMode; title: string }> = [
+    { label: 'As-is', mode: 'original', title: 'Analyze the SQL exactly as written.' },
+    { label: 'Optimize', mode: 'optimized', title: 'Apply safe condition placement before analyzing lineage.' },
+    { label: 'Debug probes', mode: 'debug_probes', title: 'Apply safe condition placement and show investigation-only JOIN upstream probes.' },
+  ];
+
+  return (
+    <div className="analysis-mode-tabs" role="tablist" aria-label="Analysis mode">
+      {tabs.map((tab) => (
+        <button
+          key={tab.mode}
+          aria-selected={activeMode === tab.mode}
+          disabled={!availability[tab.mode]}
+          className={activeMode === tab.mode ? 'analysis-mode-tab-active' : ''}
+          role="tab"
+          title={tab.title}
+          type="button"
+          onClick={() => onModeChange(tab.mode)}
+        >
+          {tab.label}
         </button>
       ))}
     </div>
@@ -916,7 +1043,7 @@ function OptimizationSqlTabs({
           type="button"
           onClick={() => onSqlViewChange(view)}
         >
-          {view === 'original' ? 'Original' : view === 'optimized' ? 'Optimized' : view === 'diff' ? 'Diff' : 'Detail'}
+          {view === 'original' ? 'Input SQL' : view === 'optimized' ? 'Output SQL' : view === 'diff' ? 'Diff' : 'Trace'}
         </button>
       ))}
     </div>
@@ -948,6 +1075,8 @@ function ConditionOptimizationTrace({
               {item.from || item.to ? (
                 <span>{item.from ?? 'current scope'} {item.to ? `-> ${item.to}` : ''}</span>
               ) : null}
+              {item.target && !item.to ? <span>target: {item.target}</span> : null}
+              {item.suggestedSql ? <code>{item.suggestedSql}</code> : null}
               {item.reason ? <small>{item.code ? `${item.code}: ` : ''}{item.reason}</small> : null}
             </li>
           ))}

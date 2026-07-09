@@ -778,7 +778,7 @@ end",
   "omittedContext": {
     "message": "Unrelated nodes and expressions were omitted.",
     "omittedColumnCount": 21,
-    "omittedInfluenceCount": 8,
+    "omittedInfluenceCount": 9,
     "omittedNodeCount": 6
   },
   "rowLineage": {
@@ -1835,7 +1835,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "row_filter",
         ],
         "evidence": [
-          "c.region = :region",
+          "c.id = :customer_id",
         ],
         "impact": [
           "may_filter_rows",
@@ -1863,13 +1863,41 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "row_filter",
         ],
         "evidence": [
-          "c.status = :customer_status",
+          "c.region = :region",
         ],
         "impact": [
           "may_filter_rows",
         ],
         "influenceIds": [
           "scope_cte_customer_scope_where_2",
+        ],
+        "kind": "where",
+        "mechanisms": [
+          "where",
+        ],
+        "reason": "where may influence the row population used to compute this column.",
+        "scopeId": "scope_cte_customer_scope",
+        "signals": [
+          "where",
+        ],
+      },
+      {
+        "checkDomains": [
+          "program_logic",
+          "data_condition",
+        ],
+        "confidence": "possible",
+        "effects": [
+          "row_filter",
+        ],
+        "evidence": [
+          "c.status = :customer_status",
+        ],
+        "impact": [
+          "may_filter_rows",
+        ],
+        "influenceIds": [
+          "scope_cte_customer_scope_where_3",
         ],
         "kind": "where",
         "mechanisms": [
@@ -1906,7 +1934,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "may_filter_rows",
         ],
         "influenceIds": [
-          "scope_cte_customer_scope_where_3",
+          "scope_cte_customer_scope_where_4",
         ],
         "kind": "where_exists",
         "mechanisms": [
@@ -2137,8 +2165,44 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           "effects": [
             "row_filter",
           ],
-          "expressionSql": "c.region = :region",
+          "expressionSql": "c.id = :customer_id",
           "id": "scope_cte_customer_scope_where_1",
+          "kind": "where",
+          "mechanism": "where",
+          "references": [
+            {
+              "columnName": "id",
+              "definedInScopeId": undefined,
+              "id": "ref:table_customers:id",
+              "nodeId": "table_customers",
+              "nodeLabel": "customers",
+              "roles": [
+                "row_lineage",
+              ],
+              "scopeId": "scope_cte_customer_scope",
+              "usages": [
+                {
+                  "role": "row_lineage",
+                  "scopeId": "scope_cte_customer_scope",
+                  "usageKind": "where",
+                },
+              ],
+              "usedInScopeIds": [
+                "scope_cte_customer_scope",
+              ],
+            },
+          ],
+          "scopeId": "scope_cte_customer_scope",
+          "signals": [
+            "where",
+          ],
+        },
+        {
+          "effects": [
+            "row_filter",
+          ],
+          "expressionSql": "c.region = :region",
+          "id": "scope_cte_customer_scope_where_2",
           "kind": "where",
           "mechanism": "where",
           "references": [
@@ -2174,7 +2238,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             "row_filter",
           ],
           "expressionSql": "c.status = :customer_status",
-          "id": "scope_cte_customer_scope_where_2",
+          "id": "scope_cte_customer_scope_where_3",
           "kind": "where",
           "mechanism": "where",
           "references": [
@@ -2218,7 +2282,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     cf.customer_id = c.id
     and cf.is_active = true
 )",
-          "id": "scope_cte_customer_scope_where_3",
+          "id": "scope_cte_customer_scope_where_4",
           "kind": "where",
           "mechanism": "exists",
           "references": [
@@ -2352,6 +2416,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
             "scope_cte_customer_scope_where_1",
             "scope_cte_customer_scope_where_2",
             "scope_cte_customer_scope_where_3",
+            "scope_cte_customer_scope_where_4",
           ],
           "nodeId": "cte_customer_scope",
           "nodeLabel": "customer_scope",
@@ -2380,7 +2445,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
           ],
         },
       ],
-      "summary": "5 row lineage influence(s) were found on the column lineage route.",
+      "summary": "6 row lineage influence(s) were found on the column lineage route.",
     },
     "target": {
       "columnName": "customer_id",
@@ -2735,7 +2800,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
       "omittedColumnCount": 17,
-      "omittedInfluenceCount": 9,
+      "omittedInfluenceCount": 10,
       "omittedNodeCount": 6,
     },
     "rowLineage": {
@@ -3349,7 +3414,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
       "omittedColumnCount": 21,
-      "omittedInfluenceCount": 8,
+      "omittedInfluenceCount": 9,
       "omittedNodeCount": 6,
     },
     "rowLineage": {
@@ -4134,7 +4199,7 @@ end",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
       "omittedColumnCount": 21,
-      "omittedInfluenceCount": 8,
+      "omittedInfluenceCount": 9,
       "omittedNodeCount": 6,
     },
     "rowLineage": {
@@ -5145,7 +5210,7 @@ end",
     "omittedContext": {
       "message": "Unrelated nodes and expressions were omitted.",
       "omittedColumnCount": 11,
-      "omittedInfluenceCount": 6,
+      "omittedInfluenceCount": 7,
       "omittedNodeCount": 4,
     },
     "rowLineage": {

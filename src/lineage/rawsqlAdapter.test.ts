@@ -449,7 +449,10 @@ describe('rawsqlAdapter', () => {
       'payment_status',
     ]);
     expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where).toEqual([]);
-    expect(lineage.scopes.find((scope) => scope.nodeId === 'cte_customer_scope')?.where?.[2]).toMatchObject({
+    const customerScopeExists = lineage.scopes
+      .find((scope) => scope.nodeId === 'cte_customer_scope')
+      ?.where?.find((condition) => condition.expressionSql.includes('exists'));
+    expect(customerScopeExists).toMatchObject({
       expressionSql: expect.stringContaining('exists'),
       references: expect.arrayContaining([
         expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
@@ -457,6 +460,28 @@ describe('rawsqlAdapter', () => {
         expect.objectContaining({ nodeId: 'table_customer_favorites', columnName: 'is_active' }),
       ]),
     });
+  });
+
+  it('keeps non-ASCII derived column ids distinct for column highlighting', () => {
+    const { lineage } = analyzeSql(`
+      SELECT tmp.入金額 AS 入金額
+      FROM (
+        SELECT
+          payment_id,
+          paid_amount AS 入金額,
+          bad_debt_amount AS 貸倒額
+        FROM payment_lines
+      ) AS tmp
+    `);
+    const derived = lineage.nodes.find((node) => node.id === 'derived_tmp_1');
+    const outputPaid = lineage.nodes.find((node) => node.id === 'main_output')?.columns.find((column) => column.name === '入金額');
+
+    expect(derived?.columns.map((column) => column.name)).toEqual(['payment_id', '入金額', '貸倒額']);
+    expect(new Set(derived?.columns.map((column) => column.id)).size).toBe(derived?.columns.length ?? 0);
+    expect(derived?.columns.find((column) => column.name === '入金額')?.id).not.toBe(
+      derived?.columns.find((column) => column.name === '貸倒額')?.id,
+    );
+    expect(outputPaid?.upstream).toEqual([{ nodeId: 'derived_tmp_1', columnName: '入金額' }]);
   });
 
   it('keeps condition-only WHERE columns out of graph columns', () => {
@@ -1156,6 +1181,73 @@ describe('rawsqlAdapter', () => {
     });
     expect(conditionOptimization.originalSql).toContain('ob.customer_id = :customer_id');
     expect(conditionOptimization.optimizedSql).toBe(conditionOptimization.originalSql);
+  });
+
+  it('uses rawsql-ts debug SQL and LEFT JOIN preserved-side probes for debug probes', () => {
+    const { conditionOptimization } = analyzeSql(`
+      WITH customer_scope AS (
+        SELECT c.id, c.name
+        FROM customers c
+      ),
+      order_totals AS (
+        SELECT customer_id, count(*) AS order_count
+        FROM orders
+        GROUP BY customer_id
+      ),
+      payment_summary AS (
+        SELECT customer_id, sum(amount) AS paid_amount
+        FROM payments
+        GROUP BY customer_id
+      )
+      SELECT cs.id, ot.order_count, ps.paid_amount
+      FROM customer_scope cs
+      LEFT JOIN order_totals ot
+        ON cs.id = ot.customer_id
+      LEFT JOIN payment_summary ps
+        ON cs.id = ps.customer_id
+      WHERE cs.id = 1000
+    `, { analysisMode: 'debug_probes' });
+
+    expect(conditionOptimization.applied).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displaySql: 'cs.id = 1000',
+        status: 'moved',
+        to: 'customer_scope CTE WHERE',
+      }),
+    ]));
+    expect(conditionOptimization.debugProbes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displaySql: 'ot.customer_id = 1000',
+        probeKind: 'join_equivalence',
+        to: 'order_totals',
+      }),
+      expect.objectContaining({
+        displaySql: 'ps.customer_id = 1000',
+        probeKind: 'join_equivalence',
+        to: 'payment_summary',
+      }),
+    ]));
+    expect(conditionOptimization.debugSkippedProbes).toEqual([]);
+    expect(conditionOptimization.optimizedSql).toContain('order_totals as (');
+    expect(conditionOptimization.optimizedSql).toContain('where\n      customer_id = 1000\n    group by');
+    expect(conditionOptimization.optimizedSql).toContain('payment_summary as (');
+  });
+
+  it('keeps the bundled demo useful for debug probes', () => {
+    const { conditionOptimization } = analyzeSql(salesSummarySql, { analysisMode: 'debug_probes' });
+
+    expect(conditionOptimization.appliedCount).toBeGreaterThan(0);
+    expect(conditionOptimization.debugProbes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        displaySql: 'ot.customer_id = :customer_id',
+        target: 'order_totals',
+      }),
+      expect.objectContaining({
+        displaySql: 'ps.customer_id = :customer_id',
+        target: 'payment_summary',
+      }),
+    ]));
+    expect(conditionOptimization.debugSkippedProbes).toEqual([]);
   });
 
   it('classifies grouped output columns as GROUP BY usage before downstream joins', () => {

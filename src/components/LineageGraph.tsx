@@ -284,9 +284,18 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
+  const resetViewportToLayoutOrigin = useCallback(() => {
+    const zoom = flowInstanceRef.current?.toObject().viewport.zoom ?? viewportZoom;
+    void flowInstanceRef.current?.setViewport({ x: defaultViewport.x, y: defaultViewport.y, zoom }, { duration: 120 });
+    setViewportZoom(zoom);
+  }, [viewportZoom]);
   const requestAutoArrange = useCallback(() => {
+    draggedNodeIdsRef.current = new Set();
+    nodePositionsRef.current = new Map();
+    outputViewportCorrectionPendingRef.current = true;
     scheduleAutoLayout('manual');
-  }, [scheduleAutoLayout]);
+    resetViewportToLayoutOrigin();
+  }, [resetViewportToLayoutOrigin, scheduleAutoLayout]);
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);

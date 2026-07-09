@@ -272,6 +272,10 @@ textarea {
   overflow: hidden;
 }
 
+.new-sql-panel {
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+}
+
 .new-sql-panel .sql-editor-actions {
   justify-content: flex-start;
 }
@@ -289,7 +293,7 @@ textarea {
 }
 
 .sql-review-panel > .current-sql-header {
-  margin: 10px 16px 0;
+  margin: 10px 16px 8px;
   box-shadow: none;
 }
 
@@ -424,6 +428,53 @@ textarea {
   padding: 0;
 }
 
+.new-sql-error-status {
+  flex-shrink: 0;
+  min-height: 28px;
+  padding: 4px 16px;
+  border-top: 1px solid #e8edf5;
+  white-space: nowrap;
+}
+
+.new-sql-error-status span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analysis-status-empty {
+  visibility: hidden;
+}
+
+.new-sql-error-detail-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  border: 1px solid #fed7aa;
+  border-radius: 7px;
+  padding: 2px 8px;
+  background: #fff7ed;
+  color: #b45309;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+}
+
+.new-sql-error-detail {
+  min-width: 0;
+  max-height: 104px;
+  margin: 0 16px 8px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  padding: 9px 11px;
+  overflow: auto;
+  background: #fff7ed;
+  color: #9a3412;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+}
+
 .analysis-status-ok {
   color: #047857;
 }
@@ -434,7 +485,7 @@ textarea {
 
 .condition-optimization-review {
   display: grid;
-  grid-template-rows: auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
   gap: 9px;
   margin: 0 16px 12px;
   border: 1px solid #bfdbfe;
@@ -451,6 +502,46 @@ textarea {
   border-color: #e2e8f0;
   background: #f8fafc;
   color: #475569;
+}
+
+.analysis-mode-tabs {
+  display: inline-flex;
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid #bfdbfe;
+  border-radius: 7px;
+  background: #f8fafc;
+}
+
+.analysis-mode-tabs button {
+  flex: 1 1 0;
+  height: 30px;
+  min-height: 30px;
+  border: 0;
+  padding: 0 9px;
+  background: transparent;
+  color: #475569;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 850;
+  white-space: nowrap;
+}
+
+.analysis-mode-tabs button + button {
+  border-left: 1px solid #bfdbfe;
+}
+
+.analysis-mode-tabs button:disabled {
+  color: #94a3b8;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.analysis-mode-tabs .analysis-mode-tab-active {
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .condition-optimization-summary-header {
@@ -624,8 +715,8 @@ textarea {
 }
 
 .condition-optimization-tabs .condition-optimization-tab-active {
-  background: #1d4ed8;
-  color: #fff;
+  background: #dbeafe;
+  color: #1d4ed8;
 }
 
 .condition-optimization-sql-frame,

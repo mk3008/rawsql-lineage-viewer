@@ -4,6 +4,8 @@ export interface ConditionOptimizationViewModel {
   blocked: ConditionOptimizationReportItem[];
   changed: boolean;
   moved: ConditionOptimizationReportItem[];
+  probes: ConditionOptimizationReportItem[];
+  skippedProbes: ConditionOptimizationReportItem[];
   warnings: ConditionOptimizationReportItem[];
 }
 
@@ -12,6 +14,8 @@ export function buildConditionOptimizationViewModel(report: ConditionOptimizatio
     blocked: [...report.skipped, ...report.errors].filter(hasDisplayableOptimizationItem),
     changed: report.changed,
     moved: report.applied.filter(hasDisplayableOptimizationItem),
+    probes: report.debugProbes.filter(hasDisplayableOptimizationItem),
+    skippedProbes: report.debugSkippedProbes.filter(hasDisplayableOptimizationItem),
     warnings: report.warnings.filter(hasDisplayableOptimizationItem),
   };
 }

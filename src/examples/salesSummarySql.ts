@@ -59,7 +59,8 @@ SELECT
 FROM customer_scope cs
 LEFT JOIN order_totals ot ON ot.customer_id = cs.id
 LEFT JOIN payment_summary ps ON ps.customer_id = cs.id
-WHERE cs.region = :region
+WHERE cs.id = :customer_id
+  AND cs.region = :region
   AND cs.status = :customer_status
   AND EXISTS (
     SELECT 1

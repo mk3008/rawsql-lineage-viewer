@@ -21,7 +21,7 @@
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
     "tsx": "^4.22.4",
-    "typescript": "~6.0.2",
+    "typescript": "~7.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.8"
   },
@@ -31,7 +31,7 @@
     "@xyflow/react": "^12.11.0",
     "elkjs": "^0.11.1",
     "lucide-react": "^1.18.0",
-    "rawsql-ts": "^0.29.0",
+    "rawsql-ts": "0.30.1",
     "react": "^19.2.7",
     "react-diff-viewer-continued": "4.2.2",
     "react-dom": "^19.2.7"
