@@ -1,5 +1,6 @@
 import { sql } from '@codemirror/lang-sql';
-import { EditorView } from '@codemirror/view';
+import { Prec } from '@codemirror/state';
+import { EditorView, keymap } from '@codemirror/view';
 import CodeMirror from '@uiw/react-codemirror';
 import { useMemo } from 'react';
 
@@ -9,13 +10,34 @@ interface SqlCodeMirrorProps {
   editable?: boolean;
   minHeight?: string;
   onChange?: (value: string) => void;
+  onRun?: () => void;
   value: string;
 }
 
-export function SqlCodeMirror({ ariaLabel, className, editable = false, minHeight, onChange, value }: SqlCodeMirrorProps) {
+export function SqlCodeMirror({ ariaLabel, className, editable = false, minHeight, onChange, onRun, value }: SqlCodeMirrorProps) {
   const extensions = useMemo(
     () => [
       sql(),
+      ...(onRun ? [
+        Prec.highest(keymap.of([{
+          key: 'Mod-Enter',
+          run: () => {
+            onRun();
+            return true;
+          },
+        }])),
+        Prec.highest(EditorView.domEventHandlers({
+          keydown: (event) => {
+            if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !event.isComposing) {
+              event.preventDefault();
+              event.stopPropagation();
+              onRun();
+              return true;
+            }
+            return false;
+          },
+        })),
+      ] : []),
       EditorView.theme({
         '&': {
           backgroundColor: 'transparent',
@@ -47,7 +69,7 @@ export function SqlCodeMirror({ ariaLabel, className, editable = false, minHeigh
       }),
       ...(ariaLabel ? [EditorView.contentAttributes.of({ 'aria-label': ariaLabel })] : []),
     ],
-    [ariaLabel, minHeight],
+    [ariaLabel, minHeight, onRun],
   );
 
   return (

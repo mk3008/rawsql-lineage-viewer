@@ -1,6 +1,7 @@
 import {
   BinarySelectQuery,
   CTECollector,
+  CTEDependencyAnalyzer,
   CTEQueryDecomposer,
   ColumnReference,
   CreateTableQuery,
@@ -16,9 +17,10 @@ import {
   SqlFormatter,
   SubQuerySource,
   TableSource,
+  TableSourceCollector,
   ValuesQuery,
 } from 'rawsql-ts';
-import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression } from 'rawsql-ts';
+import type { CommonTable, ConditionOptimizationResult, JoinClause, SelectQuery, SourceExpression, SqlComponent } from 'rawsql-ts';
 import type {
   AnalysisWarning,
   LineageColumn,
@@ -30,6 +32,7 @@ import type {
   LineageExpressionTree,
   LineageModel,
   LineageNode,
+  LineageNodeQueryDependencies,
   LineageScope,
   LineageSourceReference,
 } from '../domain/lineage';
@@ -50,18 +53,26 @@ export interface ParserAdapterResult {
 }
 
 export interface AnalyzeSqlOptions {
+  analysisMode?: SqlAnalysisMode;
   optimizeConditions?: boolean;
   schemaFacts?: SchemaFacts;
 }
+
+export type SqlAnalysisMode = 'debug_probes' | 'optimized' | 'original';
 
 export interface ConditionOptimizationReport {
   applied: ConditionOptimizationReportItem[];
   appliedCount: number;
   blockedCount: number;
   changed: boolean;
+  debugProbeCount: number;
+  debugProbeSkippedCount: number;
+  debugProbes: ConditionOptimizationReportItem[];
+  debugSkippedProbes: ConditionOptimizationReportItem[];
   enabled: boolean;
   errorCount: number;
   errors: ConditionOptimizationReportItem[];
+  mode: SqlAnalysisMode;
   ok: boolean;
   optimizedSql: string;
   originalSql: string;
@@ -97,8 +108,11 @@ export interface ConditionOptimizationReportItem {
   parameterName?: string;
   phaseKind?: string;
   predicateSql?: string;
+  probeKind?: string;
   reason?: string;
-  status: 'blocked' | 'moved' | 'warning';
+  status: 'blocked' | 'moved' | 'probe' | 'warning';
+  suggestedSql?: string;
+  target?: string;
   to?: string;
 }
 
@@ -157,14 +171,14 @@ const nodeSqlFormatter = new SqlFormatter({
   withClauseStyle: 'standard',
 } as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
-function parseLineageSelectQuery(sql: string, optimizeConditions: boolean): ParsedLineageSelectQuery {
+function parseLineageSelectQuery(sql: string, analysisMode: SqlAnalysisMode): ParsedLineageSelectQuery {
   const wrappedSelectSql = extractWrappedSelectSql(sql);
   if (wrappedSelectSql) {
-    return parseLineageSelectQuery(wrappedSelectSql, optimizeConditions);
+    return parseLineageSelectQuery(wrappedSelectSql, analysisMode);
   }
 
   const originalStatement = parseSqlOrUndefined(sql);
-  const optimization = optimizeLineageSelectSql(sql, optimizeConditions);
+  const optimization = optimizeLineageSelectSql(sql, analysisMode);
   let statement: unknown;
   try {
     statement = SqlParser.parse(optimization.sql);
@@ -194,7 +208,7 @@ function parseLineageSelectQuery(sql: string, optimizeConditions: boolean): Pars
     const originalSelectQuery = originalStatement instanceof InsertQuery && isSelectQuery(originalStatement.selectQuery)
       ? originalStatement.selectQuery
       : statement.selectQuery;
-    const optimizedSelect = optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery, optimizeConditions);
+    const optimizedSelect = optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery, analysisMode);
     return {
       conditionOptimization: mergeConditionOptimizationReports(report, optimizedSelect.conditionOptimization),
       query: optimizedSelect.query,
@@ -208,35 +222,41 @@ function parseLineageSelectQuery(sql: string, optimizeConditions: boolean): Pars
   throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
 }
 
-function optimizeLineageSelectSql(sql: string, enabled: boolean): { report: ConditionOptimizationReport; sql: string } {
-  if (!enabled) {
+function optimizeLineageSelectSql(sql: string, analysisMode: SqlAnalysisMode): { report: ConditionOptimizationReport; sql: string } {
+  if (analysisMode === 'original') {
     return { report: createDisabledConditionOptimizationReport(sql), sql };
   }
   const result = optimizeRawsqlConditions(sql);
   const optimizedSql = result.ok ? result.sql : sql;
+  const analysisSql = analysisMode === 'debug_probes' && result.ok
+    ? result.diagnostics?.debugSql ?? optimizedSql
+    : optimizedSql;
   return {
-    report: toConditionOptimizationReport(true, result, sql, optimizedSql),
-    sql: optimizedSql,
+    report: toConditionOptimizationReport(analysisMode, result, sql, analysisSql),
+    sql: analysisSql,
   };
 }
 
 function optimizeLineageSelectQuery(
   query: SelectQuery,
   commentSource: SelectQuery,
-  enabled: boolean,
+  analysisMode: SqlAnalysisMode,
 ): ParsedLineageSelectQuery {
-  if (!enabled) {
+  if (analysisMode === 'original') {
     return { conditionOptimization: createDisabledConditionOptimizationReport(), query };
   }
   const result = optimizeRawsqlConditions(query);
   if (!result.ok) {
-    return { conditionOptimization: toConditionOptimizationReport(true, result, '', result.sql), query };
+    return { conditionOptimization: toConditionOptimizationReport(analysisMode, result, '', result.sql), query };
   }
 
-  const optimized = SqlParser.parse(result.sql);
+  const analysisSql = analysisMode === 'debug_probes'
+    ? result.diagnostics?.debugSql ?? result.sql
+    : result.sql;
+  const optimized = SqlParser.parse(analysisSql);
   restoreLineageComments(optimized, commentSource);
   return {
-    conditionOptimization: toConditionOptimizationReport(true, result, '', result.sql),
+    conditionOptimization: toConditionOptimizationReport(analysisMode, result, '', analysisSql),
     query: isSelectQuery(optimized) ? optimized : query,
   };
 }
@@ -261,9 +281,14 @@ function createDisabledConditionOptimizationReport(sql = ''): ConditionOptimizat
     appliedCount: 0,
     blockedCount: 0,
     changed: false,
+    debugProbeCount: 0,
+    debugProbeSkippedCount: 0,
+    debugProbes: [],
+    debugSkippedProbes: [],
     enabled: false,
     errorCount: 0,
     errors: [],
+    mode: 'original',
     ok: true,
     optimizedSql: sql,
     originalSql: sql,
@@ -278,19 +303,26 @@ function createDisabledConditionOptimizationReport(sql = ''): ConditionOptimizat
 }
 
 function toConditionOptimizationReport(
-  enabled: boolean,
+  mode: Exclude<SqlAnalysisMode, 'original'>,
   result: ConditionOptimizationResult,
   originalSql: string,
   optimizedSql: string,
 ): ConditionOptimizationReport {
+  const sourceFilterProbes = result.diagnostics?.probes.map(toSourceFilterProbeReportItem) ?? [];
+  const skippedSourceFilterProbes = result.diagnostics?.skippedProbes.map(toSkippedSourceFilterProbeReportItem) ?? [];
   return {
     applied: result.applied.map((item) => toConditionOptimizationReportItem(item, 'moved')),
     appliedCount: result.applied.length,
     blockedCount: result.skipped.length + result.errors.length,
     changed: normalizedSqlForCompare(originalSql) !== normalizedSqlForCompare(optimizedSql),
-    enabled,
+    debugProbeCount: sourceFilterProbes.length,
+    debugProbeSkippedCount: skippedSourceFilterProbes.length,
+    debugProbes: sourceFilterProbes,
+    debugSkippedProbes: skippedSourceFilterProbes,
+    enabled: true,
     errorCount: result.errors.length,
     errors: result.errors.map((item) => toConditionOptimizationReportItem(item, 'blocked')),
+    mode,
     ok: result.ok,
     optimizedSql,
     originalSql,
@@ -331,9 +363,14 @@ function mergeConditionOptimizationReports(
     appliedCount: left.appliedCount + right.appliedCount,
     blockedCount: left.blockedCount + right.blockedCount,
     changed: left.changed || right.changed,
+    debugProbeCount: left.debugProbeCount + right.debugProbeCount,
+    debugProbeSkippedCount: left.debugProbeSkippedCount + right.debugProbeSkippedCount,
+    debugProbes: [...left.debugProbes, ...right.debugProbes],
+    debugSkippedProbes: [...left.debugSkippedProbes, ...right.debugSkippedProbes],
     enabled: true,
     errorCount: left.errorCount + right.errorCount,
     errors: [...left.errors, ...right.errors],
+    mode: left.mode === 'debug_probes' || right.mode === 'debug_probes' ? 'debug_probes' : 'optimized',
     ok: left.ok && right.ok,
     optimizedSql: right.optimizedSql || left.optimizedSql,
     originalSql: left.originalSql || right.originalSql,
@@ -373,6 +410,45 @@ function toConditionOptimizationReportItem(
   };
 }
 
+function toSourceFilterProbeReportItem(item: {
+  predicate: string;
+  reason: string;
+  relation?: string;
+  source: string;
+  sourceAlias: string;
+  suggestedSql: string;
+}): ConditionOptimizationReportItem {
+  return {
+    displaySql: normalizeDisplaySql(item.predicate),
+    predicateSql: normalizeDisplaySql(item.predicate),
+    probeKind: item.relation ?? 'source_filter',
+    reason: item.reason,
+    status: 'probe',
+    suggestedSql: item.suggestedSql.trim(),
+    target: item.sourceAlias || item.source,
+    to: item.sourceAlias || item.source,
+  };
+}
+
+function toSkippedSourceFilterProbeReportItem(item: {
+  code: string;
+  predicate: string;
+  reason: string;
+  source?: string;
+  sourceAlias?: string;
+}): ConditionOptimizationReportItem {
+  return {
+    code: item.code,
+    displaySql: normalizeDisplaySql(item.predicate),
+    predicateSql: normalizeDisplaySql(item.predicate),
+    probeKind: 'source_filter',
+    reason: item.reason,
+    status: 'blocked',
+    target: item.sourceAlias ?? item.source,
+    to: item.sourceAlias ?? item.source,
+  };
+}
+
 function withConditionOptimizationSql(
   report: ConditionOptimizationReport,
   originalSql: string,
@@ -393,6 +469,9 @@ function normalizeDisplaySql(sql: string): string {
 function normalizeOptimizationScope(scopeId: string): string {
   if (scopeId === 'scope:root') {
     return 'final SELECT WHERE';
+  }
+  if (scopeId.startsWith('table:')) {
+    return scopeId.slice('table:'.length);
   }
   if (scopeId.startsWith('cte:')) {
     return `${scopeId.slice('cte:'.length)} CTE WHERE`;
@@ -528,12 +607,12 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   const derivedCounter = { value: 0 };
   const scalarSubqueryCounter = { value: 0 };
   const scopeCounter = { value: 0 };
-  const optimizeConditions = options.optimizeConditions ?? true;
+  const analysisMode = resolveSqlAnalysisMode(options);
 
   let query: SelectQuery;
   let conditionOptimization: ConditionOptimizationReport;
   try {
-    const parsed = parseLineageSelectQuery(sql, optimizeConditions);
+    const parsed = parseLineageSelectQuery(sql, analysisMode);
     query = parsed.query;
     conditionOptimization = parsed.conditionOptimization;
   } catch (error) {
@@ -552,6 +631,9 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
   const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
   const cteCommentsByName = new Map(ctes.map((cte) => [cte.getSourceAliasName(), extractCteComments(cte)]));
   const cteExecutableSqlByName = collectCteExecutableSql(query, ctes, warnings, cteCommentsByName);
+  const queryDependencyMap = collectRawsqlQueryDependencies(query, ctes);
+
+  nodes.get('main_output')!.queryDependencies = queryDependencyMap.get('main_output');
 
   for (const cte of ctes) {
     const cteName = cte.getSourceAliasName();
@@ -563,6 +645,7 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
       columns: [],
       comments: cteCommentsByName.get(cteName),
       cteExecutableSql: cteExecutableSqlByName.get(cteName),
+      queryDependencies: queryDependencyMap.get(nodeId),
       materializationHint: isParameterSelectQuery(cte.query) ? undefined : normalizeMaterializationHint(cte.materialized),
       querySql: cteExecutableSqlByName.get(cteName),
     });
@@ -625,6 +708,55 @@ export function analyzeSql(sql: string, options: AnalyzeSqlOptions = {}): Parser
     lineage,
     parserVersion,
   };
+}
+
+function collectRawsqlQueryDependencies(query: SelectQuery, ctes: CommonTable[]): Map<string, LineageNodeQueryDependencies> {
+  const dependencies = new Map<string, LineageNodeQueryDependencies>();
+  const cteNames = new Set(ctes.map((cte) => cte.getSourceAliasName()));
+  const cteDependencyGraph = query instanceof SimpleSelectQuery ? new CTEDependencyAnalyzer().analyzeDependencies(query) : undefined;
+  const cteDependenciesByName = new Map(cteDependencyGraph?.nodes.filter((node) => node.type === 'CTE').map((node) => [node.name, node.dependencies]) ?? []);
+  const mainCteDependencies = cteDependencyGraph?.nodes.find((node) => node.type === 'ROOT')?.dependencies ?? [];
+
+  dependencies.set('main_output', {
+    directCteNames: uniqueStrings(mainCteDependencies),
+    directTableNames: query instanceof SimpleSelectQuery ? collectPhysicalTableNames(cloneSelectQueryWithoutCtes(query), cteNames) : collectPhysicalTableNames(query, cteNames),
+  });
+
+  for (const cte of ctes) {
+    const cteName = cte.getSourceAliasName();
+    dependencies.set(isParameterSelectQuery(cte.query) ? toParameterTableId(cteName) : toCteId(cteName), {
+      directCteNames: uniqueStrings(cteDependenciesByName.get(cteName) ?? []),
+      directTableNames: collectPhysicalTableNames(cte.query, cteNames),
+    });
+  }
+
+  return dependencies;
+}
+
+function collectPhysicalTableNames(query: SqlComponent, cteNames: Set<string>): string[] {
+  return uniqueStrings(
+    new TableSourceCollector(false)
+      .collect(query)
+      .map((table) => table.getSourceName())
+      .filter((tableName) => !cteNames.has(tableName)),
+  );
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
+}
+
+function resolveSqlAnalysisMode(options: AnalyzeSqlOptions): SqlAnalysisMode {
+  if (options.analysisMode) {
+    return options.analysisMode;
+  }
+  if (options.optimizeConditions === false) {
+    return 'original';
+  }
+  if (options.optimizeConditions === true) {
+    return 'optimized';
+  }
+  return 'optimized';
 }
 
 function collectUnusedCteWarnings(nodes: LineageNode[], edges: LineageEdge[]): AnalysisWarning[] {
@@ -2297,8 +2429,24 @@ function setNodeColumns(nodes: Map<string, LineageNode>, nodeId: string, columns
 }
 
 function createColumnId(nodeId: string, name: string, outputIndex?: number): string {
-  const baseId = `${nodeId}.${sanitizeId(name)}`;
+  const baseId = `${nodeId}.${sanitizeColumnIdFragment(name)}`;
   return outputIndex === undefined ? baseId : `${baseId}.${outputIndex + 1}`;
+}
+
+function sanitizeColumnIdFragment(value: string): string {
+  const sanitized = sanitizeId(value);
+  if (sanitized !== 'unnamed' || value.trim().toLowerCase() === 'unnamed') {
+    return sanitized;
+  }
+  return `u_${hashString(value)}`;
+}
+
+function hashString(value: string): string {
+  let hash = 5381;
+  for (const character of value) {
+    hash = ((hash << 5) + hash) ^ character.codePointAt(0)!;
+  }
+  return (hash >>> 0).toString(36);
 }
 
 function collectDuplicateOutputColumnNames(columns: Array<string | LineageColumn>): Set<string> {

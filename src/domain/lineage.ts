@@ -63,6 +63,11 @@ export interface LineageNodeDependencyProfile {
   scopeIds: string[];
 }
 
+export interface LineageNodeQueryDependencies {
+  directCteNames: string[];
+  directTableNames: string[];
+}
+
 export interface SourceSpan {
   end?: number;
   start?: number;
@@ -191,6 +196,7 @@ export interface LineageNode {
   cteExecutableSql?: string;
   dependencyProfile?: LineageNodeDependencyProfile;
   materializationHint?: 'MATERIALIZED' | 'NOT MATERIALIZED' | 'none';
+  queryDependencies?: LineageNodeQueryDependencies;
   querySql?: string;
   recursive?: boolean;
   scalarSubquery?: {

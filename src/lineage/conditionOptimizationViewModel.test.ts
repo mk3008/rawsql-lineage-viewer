@@ -37,6 +37,48 @@ describe('conditionOptimizationViewModel', () => {
       reason: expect.stringContaining('WINDOW boundary'),
     });
   });
+
+  it('groups debug probes for investigation mode', () => {
+    const viewModel = buildConditionOptimizationViewModel(report({
+      debugProbes: [
+        {
+          displaySql: 'o.customer_id = :customer_id',
+          probeKind: 'join_equivalence',
+          reason: 'JOIN equivalence can be used as an investigation-only source filter probe.',
+          status: 'probe',
+          target: 'orders',
+          to: 'orders',
+        },
+      ],
+    }));
+
+    expect(viewModel.probes).toHaveLength(1);
+    expect(viewModel.probes[0]).toMatchObject({
+      displaySql: 'o.customer_id = :customer_id',
+      probeKind: 'join_equivalence',
+      target: 'orders',
+    });
+  });
+
+  it('keeps skipped debug probes separate from optimization blocks', () => {
+    const viewModel = buildConditionOptimizationViewModel(report({
+      debugSkippedProbes: [
+        {
+          code: 'NESTED_QUERY_UNSUPPORTED',
+          displaySql: 'exists (select 1 from customer_favorites)',
+          reason: 'Probe metadata skips predicates containing nested queries.',
+          status: 'blocked',
+        },
+      ],
+    }));
+
+    expect(viewModel.blocked).toHaveLength(0);
+    expect(viewModel.skippedProbes).toHaveLength(1);
+    expect(viewModel.skippedProbes[0]).toMatchObject({
+      code: 'NESTED_QUERY_UNSUPPORTED',
+      displaySql: 'exists (select 1 from customer_favorites)',
+    });
+  });
 });
 
 function report(overrides: Partial<ConditionOptimizationReport>): ConditionOptimizationReport {
@@ -45,9 +87,14 @@ function report(overrides: Partial<ConditionOptimizationReport>): ConditionOptim
     appliedCount: overrides.applied?.length ?? 0,
     blockedCount: (overrides.skipped?.length ?? 0) + (overrides.errors?.length ?? 0),
     changed: false,
+    debugProbeCount: overrides.debugProbes?.length ?? 0,
+    debugProbeSkippedCount: overrides.debugSkippedProbes?.length ?? 0,
+    debugProbes: [],
+    debugSkippedProbes: [],
     enabled: true,
     errorCount: overrides.errors?.length ?? 0,
     errors: [],
+    mode: 'optimized',
     ok: true,
     optimizedSql: 'select 1',
     originalSql: 'select 1',

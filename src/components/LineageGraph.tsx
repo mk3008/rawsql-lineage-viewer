@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react';
 import { Copy, ExternalLink, Pencil, RefreshCw, RotateCcw, Rows3, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { CSSProperties, KeyboardEvent, MouseEvent } from 'react';
+import type { CSSProperties, KeyboardEvent, MouseEvent, ReactNode } from 'react';
 import type { GraphEdge, GraphNode } from '../domain/graph';
 import type { LineageCaseRule, LineageColumn, LineageColumnRef, LineageEdge, LineageExpressionTree, LineageModel, LineageNode } from '../domain/lineage';
 import { buildGraphModel, collectUnreachableCteNodeIds, type GraphFlowDirection } from '../graph/buildGraphModel';
@@ -81,6 +81,12 @@ type GraphOriginSelection =
 type InspectorCommentMode = 'all' | 'none' | 'smart';
 const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
 type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse' | 'manual';
+
+interface AutoLayoutAnchor {
+  nodeId: string;
+  position: { x: number; y: number };
+  reason: AutoLayoutReason;
+}
 
 interface GraphDisplaySnapshot {
   highlightTarget: GraphHighlightTarget;
@@ -206,6 +212,7 @@ export function LineageGraph({
   const pendingAutoLayoutFrameRef = useRef<number | null>(null);
   const pendingAutoLayoutReasonRef = useRef<AutoLayoutReason | null>(null);
   const autoLayoutRequestReasonRef = useRef<AutoLayoutReason | null>(null);
+  const pendingAutoLayoutAnchorRef = useRef<AutoLayoutAnchor | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
@@ -284,9 +291,18 @@ export function LineageGraph({
     void flowInstanceRef.current?.setViewport(defaultViewport, { duration: 120 });
     setViewportZoom(1);
   }, []);
+  const resetViewportToLayoutOrigin = useCallback(() => {
+    const zoom = flowInstanceRef.current?.toObject().viewport.zoom ?? viewportZoom;
+    void flowInstanceRef.current?.setViewport({ x: defaultViewport.x, y: defaultViewport.y, zoom }, { duration: 120 });
+    setViewportZoom(zoom);
+  }, [viewportZoom]);
   const requestAutoArrange = useCallback(() => {
+    draggedNodeIdsRef.current = new Set();
+    nodePositionsRef.current = new Map();
+    outputViewportCorrectionPendingRef.current = true;
     scheduleAutoLayout('manual');
-  }, [scheduleAutoLayout]);
+    resetViewportToLayoutOrigin();
+  }, [resetViewportToLayoutOrigin, scheduleAutoLayout]);
   useEffect(() => {
     problemIntentRef.current = problemIntent;
   }, [problemIntent]);
@@ -320,8 +336,22 @@ export function LineageGraph({
       return next;
     });
   }, []);
+  const captureAutoLayoutAnchor = useCallback((nodeId: string, reason: AutoLayoutReason) => {
+    const renderedPosition = readRenderedNodePosition(graphShellRef.current, nodeId);
+    if (!renderedPosition) {
+      return;
+    }
+    pendingAutoLayoutAnchorRef.current = {
+      nodeId,
+      position: renderedPosition,
+      reason,
+    };
+  }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
     const shouldRelayout = !collapsedGroupRootIds.has(nodeId);
+    if (shouldRelayout) {
+      captureAutoLayoutAnchor(nodeId, 'group-collapse');
+    }
     for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
       const renderedPosition = readRenderedNodePosition(graphShellRef.current, helperNodeId);
       if (renderedPosition) {
@@ -333,9 +363,12 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-collapse');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroup = useCallback((nodeId: string) => {
     const shouldRelayout = collapsedGroupRootIds.has(nodeId);
+    if (shouldRelayout) {
+      captureAutoLayoutAnchor(nodeId, 'group-expand');
+    }
     setCollapsedGroupRootIds((current) => {
       if (!current.has(nodeId)) {
         return current;
@@ -350,11 +383,15 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-expand');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroupForNode = useCallback((nodeId: string) => {
-    const shouldRelayout = [...collapsibleGroups].some(
+    const expandedGroup = [...collapsibleGroups].find(
       ([rootNodeId, group]) => collapsedGroupRootIds.has(rootNodeId) && (rootNodeId === nodeId || group.helperNodeIds.includes(nodeId)),
     );
+    const shouldRelayout = Boolean(expandedGroup);
+    if (expandedGroup) {
+      captureAutoLayoutAnchor(expandedGroup[0], 'group-expand');
+    }
     setCollapsedGroupRootIds((current) => {
       const next = new Set(current);
       let changed = false;
@@ -369,7 +406,7 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-expand');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const resetCollapsedGroups = useCallback(() => {
     const nextCollapsedGroupRootIds = createInitialCollapsedGroupRootIds(collapsibleGroups);
     if (!areStringSetsEqual(collapsedGroupRootIds, nextCollapsedGroupRootIds)) {
@@ -613,21 +650,15 @@ export function LineageGraph({
       return activeNodeIds.size > 0 ? { activeEdgeIds, activeNodeIds } : null;
     }
 
-    if (visibleSelectedNodeId) {
-      return collectLineageSelectionWithDownstream(visibleSelectedNodeId, displayLineage.edges);
-    }
-
     return null;
   }, [
     columnHighlights.highlightedEdgeIds,
     columnHighlights.highlightedNodeIds,
     columnHighlights.relatedNodeIds,
     columnHighlights.highlightedSourceDataNodeIds,
-    displayLineage.edges,
     baseGraph.edges,
     selectedColumn,
     visibleNodeIdBySourceNodeId,
-    visibleSelectedNodeId,
   ]);
   useEffect(() => {
     setGraphDisplaySnapshot((current) => {
@@ -982,6 +1013,8 @@ export function LineageGraph({
     const autoLayoutJustEnabled = effectiveAutoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
     const autoLayoutRequested = effectiveAutoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
     const autoLayoutRequestReason = autoLayoutRequested ? autoLayoutRequestReasonRef.current : null;
+    const autoLayoutAnchor =
+      autoLayoutRequested || graphStructureChanged || graphLayoutChanged ? pendingAutoLayoutAnchorRef.current : null;
     const shouldResetDraggedPositions = autoLayoutRequestReason === 'manual';
     if (shouldResetDraggedPositions) {
       draggedNodeIdsRef.current = new Set();
@@ -992,6 +1025,9 @@ export function LineageGraph({
     previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
     previousAutoLayoutEnabledRef.current = effectiveAutoLayoutEnabled;
     autoLayoutRequestReasonRef.current = null;
+    if (autoLayoutRequested) {
+      pendingAutoLayoutAnchorRef.current = null;
+    }
 
     setNodes((currentNodes) => {
       const currentById = new Map(currentNodes.map((node) => [node.id, node]));
@@ -999,11 +1035,21 @@ export function LineageGraph({
       const visibleOriginNodeId = mapToVisibleNodeId(originNodeId, visibleNodeIdBySourceNodeId);
       const shouldRunAutoLayout =
         effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested);
+      const expandedBranchNodeIds =
+        autoLayoutAnchor?.reason === 'group-expand'
+          ? collectGraphDownstreamNodeIds(autoLayoutAnchor.nodeId, graphEdges)
+          : null;
       const buildNextNodes = (options: { preserveOriginPosition: boolean; resetDraggedPositions: boolean }) => {
         const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
         const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
+        const nextAnchorNode = autoLayoutAnchor ? graphNodes.find((node) => node.id === autoLayoutAnchor.nodeId) : undefined;
         const autoLayoutOffset =
-          shouldRunAutoLayout && options.preserveOriginPosition && currentOriginNode && nextOriginNode
+          shouldRunAutoLayout && autoLayoutAnchor && nextAnchorNode
+            ? {
+                x: autoLayoutAnchor.position.x - nextAnchorNode.position.x,
+                y: autoLayoutAnchor.position.y - nextAnchorNode.position.y,
+              }
+            : shouldRunAutoLayout && options.preserveOriginPosition && currentOriginNode && nextOriginNode
             ? {
                 x: currentOriginNode.position.x - nextOriginNode.position.x,
                 y: currentOriginNode.position.y - nextOriginNode.position.y,
@@ -1015,6 +1061,17 @@ export function LineageGraph({
           if (shouldRunAutoLayout) {
             const savedPosition = nodePositionsRef.current.get(node.id);
             const shouldKeepDraggedPosition = !options.resetDraggedPositions && draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
+            const shouldKeepStableExistingPosition =
+              !options.resetDraggedPositions && expandedBranchNodeIds !== null && current && !expandedBranchNodeIds.has(node.id);
+            if (shouldKeepStableExistingPosition) {
+              return {
+                ...node,
+                dragging: current.dragging,
+                measured: current.measured,
+                position: current.position,
+                selected: current.selected,
+              };
+            }
             return {
               ...node,
               dragging: current?.dragging,
@@ -1269,57 +1326,6 @@ export function LineageGraph({
   );
 }
 
-function collectLineageSelectionWithDownstream(rootNodeId: string, edges: LineageEdge[]) {
-  const activeNodeIds = new Set<string>([rootNodeId]);
-  const activeEdgeIds = new Set<string>();
-  const upstreamQueue = [rootNodeId];
-  const downstreamQueue = [rootNodeId];
-
-  while (upstreamQueue.length > 0) {
-    const currentNodeId = upstreamQueue.shift();
-    if (!currentNodeId) {
-      continue;
-    }
-
-    for (const edge of edges) {
-      if (edge.type !== 'dataFlow' || edge.target !== currentNodeId) {
-        continue;
-      }
-
-      activeEdgeIds.add(edge.id);
-
-      const nextNodeId = edge.source;
-      if (!activeNodeIds.has(nextNodeId)) {
-        activeNodeIds.add(nextNodeId);
-        upstreamQueue.push(nextNodeId);
-      }
-    }
-  }
-
-  while (downstreamQueue.length > 0) {
-    const currentNodeId = downstreamQueue.shift();
-    if (!currentNodeId) {
-      continue;
-    }
-
-    for (const edge of edges) {
-      if (edge.type !== 'dataFlow' || edge.source !== currentNodeId) {
-        continue;
-      }
-
-      activeEdgeIds.add(edge.id);
-
-      const nextNodeId = edge.target;
-      if (!activeNodeIds.has(nextNodeId)) {
-        activeNodeIds.add(nextNodeId);
-        downstreamQueue.push(nextNodeId);
-      }
-    }
-  }
-
-  return { activeEdgeIds, activeNodeIds };
-}
-
 function createVisibleNodeIdBySourceNodeId(groups: Map<string, { helperNodeIds: string[] }>) {
   const visibleNodeIdBySourceNodeId = new Map<string, string>();
   for (const [rootNodeId, group] of groups) {
@@ -1353,6 +1359,28 @@ function hasBackwardFlowEdges(nodes: GraphNode[], edges: GraphEdge[]) {
     const target = nodeById.get(edge.target);
     return Boolean(source && target && source.position.x >= target.position.x);
   });
+}
+
+function collectGraphDownstreamNodeIds(rootNodeId: string, edges: GraphEdge[]) {
+  const nodeIds = new Set<string>([rootNodeId]);
+  const queue = [rootNodeId];
+
+  while (queue.length > 0) {
+    const sourceId = queue.shift();
+    if (!sourceId) {
+      continue;
+    }
+
+    for (const edge of edges) {
+      if (edge.source !== sourceId || nodeIds.has(edge.target)) {
+        continue;
+      }
+      nodeIds.add(edge.target);
+      queue.push(edge.target);
+    }
+  }
+
+  return nodeIds;
 }
 
 function mapToVisibleNodeId(nodeId: string | null | undefined, visibleNodeIdBySourceNodeId: Map<string, string>) {
@@ -1600,7 +1628,13 @@ export function LineageInspector({
             hideDetailTabs={hideColumnDetailTabs}
           />
         ) : (
-          <NodeInspector commentMode={commentMode} copyState={copyState} node={selection.node} onCopySql={() => void copyCteSql()} />
+          <NodeInspector
+            commentMode={commentMode}
+            copyState={copyState}
+            lineage={lineage}
+            node={selection.node}
+            onCopySql={() => void copyCteSql()}
+          />
         )
       ) : (
         <div className="lineage-inspector-empty">Select a column or node title to inspect lineage details.</div>
@@ -2044,14 +2078,18 @@ function writeInspectorCommentMode(mode: InspectorCommentMode) {
 function NodeInspector({
   commentMode,
   copyState,
+  lineage,
   node,
   onCopySql,
 }: {
   commentMode: InspectorCommentMode;
   copyState: 'idle' | 'copied' | 'failed';
+  lineage: LineageModel;
   node: LineageNode;
   onCopySql: () => void;
 }) {
+  const dependencies = collectQueryDependencies(lineage, node);
+
   return (
     <div className="lineage-inspector-body lineage-inspector-node-body">
       <section className="lineage-inspector-section">
@@ -2066,21 +2104,202 @@ function NodeInspector({
           <InspectorCommentBlock label="Comments" toggleLabel="Show detail" values={node.comments} variant="node" />
         </section>
       ) : null}
+      <NodeDependencySummary dependencies={dependencies} />
       {getNodeSql(node) ? (
         <section className="lineage-inspector-section lineage-inspector-sql-section">
-          <div className="lineage-inspector-actions">
-            <a className="lineage-open-link nodrag" href={buildViewerSqlUrl(getNodeSql(node) ?? '')} target="_blank" rel="noreferrer">
-              <ExternalLink size={12} aria-hidden="true" />
-              Open in viewer
-            </a>
-            <button className="lineage-copy-button nodrag" type="button" onClick={onCopySql}>
-              <Copy size={12} aria-hidden="true" />
-              {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy SQL'}
-            </button>
+          <div className="lineage-inspector-sql-heading">
+            <div className="lineage-inspector-sql-caption">SQL</div>
+            <div className="lineage-inspector-actions lineage-inspector-node-sql-actions">
+              <a className="lineage-open-link nodrag" href={buildViewerSqlUrl(getNodeSql(node) ?? '')} target="_blank" rel="noreferrer">
+                <ExternalLink size={12} aria-hidden="true" />
+                Open in viewer
+              </a>
+              <button className="lineage-copy-button nodrag" type="button" onClick={onCopySql}>
+                <Copy size={12} aria-hidden="true" />
+                {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy'}
+              </button>
+            </div>
           </div>
           <SqlCodeMirror className="lineage-inspector-code" value={getNodeSql(node) ?? ''} />
         </section>
       ) : null}
+    </div>
+  );
+}
+
+interface QueryDependencies {
+  ctes: InspectorDependency[];
+  tables: InspectorDependency[];
+}
+
+interface InspectorDependency {
+  id: string;
+  label: string;
+}
+
+function collectQueryDependencies(lineage: LineageModel, node: LineageNode): QueryDependencies {
+  if (node.queryDependencies) {
+    return collectRawsqlQueryDependencies(lineage, node);
+  }
+
+  const reachableNodeIds = new Set<string>();
+  const visitedNodeIds = new Set<string>([node.id]);
+  const queue = [node.id];
+
+  while (queue.length > 0) {
+    const currentNodeId = queue.shift();
+    if (!currentNodeId) {
+      continue;
+    }
+
+    for (const edge of lineage.edges) {
+      if (edge.type !== 'dataFlow' || edge.target !== currentNodeId || edge.source === currentNodeId) {
+        continue;
+      }
+
+      reachableNodeIds.add(edge.source);
+      if (!visitedNodeIds.has(edge.source)) {
+        visitedNodeIds.add(edge.source);
+        queue.push(edge.source);
+      }
+    }
+  }
+
+  const reachableNodes = lineage.nodes.filter((candidate) => reachableNodeIds.has(candidate.id));
+  return {
+    ctes: reachableNodes.filter((candidate) => candidate.type === 'cte' && candidate.id !== node.id).map(toInspectorDependency),
+    tables: reachableNodes.filter((candidate) => candidate.type === 'table').map(toInspectorDependency),
+  };
+}
+
+function collectRawsqlQueryDependencies(lineage: LineageModel, node: LineageNode): QueryDependencies {
+  const cteByName = indexNodesByLabel(lineage.nodes.filter((candidate) => candidate.type === 'cte'));
+  const tableByName = indexNodesByLabel(lineage.nodes.filter((candidate) => candidate.type === 'table'));
+  const cteNames = new Set<string>();
+  const tableNames = new Set<string>(node.queryDependencies?.directTableNames ?? []);
+  const queue = [...(node.queryDependencies?.directCteNames ?? [])];
+
+  while (queue.length > 0) {
+    const cteName = queue.shift();
+    if (!cteName || cteNames.has(cteName)) {
+      continue;
+    }
+    cteNames.add(cteName);
+    const cteNode = findNodeByDependencyName(cteByName, cteName);
+    if (!cteNode) {
+      continue;
+    }
+    for (const tableName of cteNode.queryDependencies?.directTableNames ?? []) {
+      tableNames.add(tableName);
+    }
+    for (const upstreamCteName of cteNode.queryDependencies?.directCteNames ?? []) {
+      if (!cteNames.has(upstreamCteName)) {
+        queue.push(upstreamCteName);
+      }
+    }
+  }
+
+  return {
+    ctes: [...cteNames].map((name) => toNamedInspectorDependency(name, cteByName)),
+    tables: [...tableNames].map((name) => toNamedInspectorDependency(name, tableByName)),
+  };
+}
+
+function indexNodesByLabel(nodes: LineageNode[]): Map<string, LineageNode> {
+  const indexed = new Map<string, LineageNode>();
+  for (const node of nodes) {
+    indexed.set(normalizeDependencyName(node.label), node);
+  }
+  return indexed;
+}
+
+function toNamedInspectorDependency(name: string, nodesByName: Map<string, LineageNode>): InspectorDependency {
+  const node = findNodeByDependencyName(nodesByName, name);
+  return node ? toInspectorDependency(node) : { id: name, label: name };
+}
+
+function findNodeByDependencyName(nodesByName: Map<string, LineageNode>, name: string): LineageNode | undefined {
+  return nodesByName.get(normalizeDependencyName(name)) ?? nodesByName.get(normalizeDependencyName(name.split('.').at(-1) ?? name));
+}
+
+function toInspectorDependency(node: LineageNode): InspectorDependency {
+  return { id: node.id, label: node.label };
+}
+
+function normalizeDependencyName(name: string): string {
+  return name.trim().toLowerCase();
+}
+
+function NodeDependencySummary({ dependencies }: { dependencies: QueryDependencies }) {
+  const [analyzeCopyState, setAnalyzeCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const hasDependencies = dependencies.tables.length > 0 || dependencies.ctes.length > 0;
+
+  if (!hasDependencies) {
+    return null;
+  }
+
+  const copyAnalyzeSql = async () => {
+    if (dependencies.tables.length === 0) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(dependencies.tables.map((table) => `analyze ${table.label};`).join('\n'));
+      setAnalyzeCopyState('copied');
+      window.setTimeout(() => setAnalyzeCopyState('idle'), 1600);
+    } catch {
+      setAnalyzeCopyState('failed');
+      window.setTimeout(() => setAnalyzeCopyState('idle'), 2200);
+    }
+  };
+
+  return (
+    <section className="lineage-inspector-section lineage-inspector-dependencies">
+      <InspectorDependencyList
+        emptyText="No physical tables."
+        items={dependencies.tables}
+        title="Tables"
+        headerAction={
+          dependencies.tables.length > 0 ? (
+          <button className="lineage-copy-button nodrag lineage-inspector-analyze-button" type="button" onClick={() => void copyAnalyzeSql()}>
+            <Copy size={12} aria-hidden="true" />
+            {analyzeCopyState === 'copied' ? 'Copied' : analyzeCopyState === 'failed' ? 'Copy failed' : 'Copy as ANALYZE'}
+          </button>
+          ) : null
+        }
+      />
+      <InspectorDependencyList emptyText="No dependent CTEs." items={dependencies.ctes} title="CTEs" />
+    </section>
+  );
+}
+
+function InspectorDependencyList({
+  emptyText,
+  headerAction,
+  items,
+  title,
+}: {
+  emptyText: string;
+  headerAction?: ReactNode;
+  items: InspectorDependency[];
+  title: string;
+}) {
+  return (
+    <div className="lineage-inspector-dependency-group">
+      <div className="lineage-inspector-dependency-heading">
+        <div className="lineage-inspector-dependency-title">{title}</div>
+        {headerAction}
+      </div>
+      {items.length > 0 ? (
+        <div className="lineage-inspector-dependency-list">
+          {items.map((item) => (
+            <div className="lineage-inspector-dependency-item" key={item.id}>
+              <span className="lineage-inspector-dependency-name">{item.label}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="lineage-inspector-muted">{emptyText}</div>
+      )}
     </div>
   );
 }
