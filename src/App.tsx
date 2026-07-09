@@ -536,6 +536,7 @@ export function App() {
               <div className="sql-editor-actions">
                 <div className="sql-editor-primary-actions">
                   <button
+                    aria-label="Analyze SQL"
                     className="primary-button sql-editor-analyze-button"
                     type="button"
                     onClick={() => {
@@ -543,7 +544,8 @@ export function App() {
                     }}
                   >
                     <Play size={15} fill="currentColor" />
-                    Analyze
+                    <span>Analyze</span>
+                    <span className="analyze-shortcut">(Ctrl+Enter)</span>
                   </button>
                   <div
                     className={`analysis-status new-sql-parse-status ${newSqlParseError ? 'analysis-status-empty' : 'analysis-status-ok'}`}
@@ -592,6 +594,9 @@ export function App() {
                   onChange={(value) => {
                     setSql(value);
                     setShareStatus('idle');
+                  }}
+                  onRun={() => {
+                    openSql(sql);
                   }}
                 />
               </div>

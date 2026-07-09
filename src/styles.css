@@ -414,6 +414,11 @@ textarea {
   white-space: nowrap;
 }
 
+.analyze-shortcut {
+  font-size: inherit;
+  opacity: 0.86;
+}
+
 .analysis-status {
   display: flex;
   align-items: center;
@@ -791,6 +796,10 @@ textarea {
 }
 
 @media (max-width: 960px) {
+  .analyze-shortcut {
+    display: none;
+  }
+
   .sql-tab-panel {
     grid-template-rows: auto minmax(0, 1fr) auto auto;
   }
