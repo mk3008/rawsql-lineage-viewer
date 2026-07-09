@@ -1062,7 +1062,7 @@ export function LineageGraph({
             const savedPosition = nodePositionsRef.current.get(node.id);
             const shouldKeepDraggedPosition = !options.resetDraggedPositions && draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
             const shouldKeepStableExistingPosition =
-              expandedBranchNodeIds !== null && current && !expandedBranchNodeIds.has(node.id);
+              !options.resetDraggedPositions && expandedBranchNodeIds !== null && current && !expandedBranchNodeIds.has(node.id);
             if (shouldKeepStableExistingPosition) {
               return {
                 ...node,

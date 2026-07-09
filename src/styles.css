@@ -442,6 +442,7 @@ textarea {
 }
 
 .new-sql-error-status span {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

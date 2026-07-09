@@ -1262,11 +1262,11 @@ describe('rawsqlAdapter', () => {
     expect(conditionOptimization.debugProbes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         displaySql: 'ot.customer_id = :customer_id',
-        target: 'order_totals',
+        to: 'order_totals',
       }),
       expect.objectContaining({
         displaySql: 'ps.customer_id = :customer_id',
-        target: 'payment_summary',
+        to: 'payment_summary',
       }),
     ]));
     expect(conditionOptimization.debugSkippedProbes).toEqual([]);

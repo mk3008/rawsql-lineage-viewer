@@ -8,7 +8,7 @@ import { collectUnreachableCteNodeIds, type GraphFlowDirection } from './graph/b
 import type { AnalysisWarning } from './domain/lineage';
 import { buildConditionOptimizationViewModel } from './lineage/conditionOptimizationViewModel';
 import type { ProblemIntent } from './lineage/problemIntent';
-import { analyzeSql, type ConditionOptimizationReport, type SqlAnalysisMode } from './lineage/rawsqlAdapter';
+import { analyzeSql, type ConditionOptimizationReport, type ParserAdapterResult, type SqlAnalysisMode } from './lineage/rawsqlAdapter';
 
 const maxShareUrlLength = 8000;
 const sqlHistoryStorageKey = 'rawsql-lineage-viewer:sql-history';
@@ -24,6 +24,9 @@ type PanelTab = 'history' | 'inspector' | 'new' | 'sql';
 type OptimizationSqlView = 'detail' | 'diff' | 'optimized' | 'original';
 type OptimizationTraceView = 'blocked' | 'moved' | 'probes' | 'skipped_probes';
 type AnalysisModeAvailability = Record<SqlAnalysisMode, boolean>;
+type AnalysisModeReports = Record<SqlAnalysisMode, { error: string | null; result: ParserAdapterResult | null }>;
+
+const sqlAnalysisModes: SqlAnalysisMode[] = ['original', 'optimized', 'debug_probes'];
 
 interface SqlHistoryItem {
   id: string;
@@ -78,37 +81,34 @@ export function App() {
   const lastCommittedInspectorCardRef = useRef<InspectorCardSelection | null>(null);
   const lastCommittedMobileInspectorOpenRef = useRef(false);
 
-  const analysis = useMemo(() => {
-    try {
-      return {
-        result: analyzeSql(lastAnalyzedSql, { analysisMode: sqlAnalysisMode }),
-        error: null,
-      };
-    } catch (caught) {
-      const message = caught instanceof Error ? caught.message : String(caught);
-      return {
-        result: null,
-        error: message,
-      };
+  const analysisReports = useMemo<AnalysisModeReports>(() => {
+    const reports = {} as AnalysisModeReports;
+    for (const mode of sqlAnalysisModes) {
+      try {
+        reports[mode] = {
+          result: analyzeSql(lastAnalyzedSql, { analysisMode: mode }),
+          error: null,
+        };
+      } catch (caught) {
+        const message = caught instanceof Error ? caught.message : String(caught);
+        reports[mode] = {
+          result: null,
+          error: message,
+        };
+      }
     }
-  }, [lastAnalyzedSql, sqlAnalysisMode]);
-  const analysisModeAvailability = useMemo<AnalysisModeAvailability>(() => {
-    try {
-      const optimized = analyzeSql(lastAnalyzedSql, { analysisMode: 'optimized' }).conditionOptimization;
-      const debugProbes = analyzeSql(lastAnalyzedSql, { analysisMode: 'debug_probes' }).conditionOptimization;
-      return {
-        original: true,
-        optimized: optimized.changed || optimized.appliedCount > 0,
-        debug_probes: debugProbes.debugProbeCount > 0,
-      };
-    } catch {
-      return {
-        original: true,
-        optimized: false,
-        debug_probes: false,
-      };
-    }
+    return reports;
   }, [lastAnalyzedSql]);
+  const analysis = analysisReports[sqlAnalysisMode];
+  const analysisModeAvailability = useMemo<AnalysisModeAvailability>(() => {
+    const optimized = analysisReports.optimized.result?.conditionOptimization;
+    const debugProbes = analysisReports.debug_probes.result?.conditionOptimization;
+    return {
+      original: analysisReports.original.error === null,
+      optimized: Boolean(optimized && (optimized.changed || optimized.appliedCount > 0)),
+      debug_probes: Boolean(debugProbes && debugProbes.debugProbeCount > 0),
+    };
+  }, [analysisReports]);
   const newSqlParse = useMemo(() => {
     try {
       analyzeSql(sql, { optimizeConditions: false });
