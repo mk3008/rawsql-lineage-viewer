@@ -650,21 +650,15 @@ export function LineageGraph({
       return activeNodeIds.size > 0 ? { activeEdgeIds, activeNodeIds } : null;
     }
 
-    if (visibleSelectedNodeId) {
-      return collectLineageSelectionWithDownstream(visibleSelectedNodeId, displayLineage.edges);
-    }
-
     return null;
   }, [
     columnHighlights.highlightedEdgeIds,
     columnHighlights.highlightedNodeIds,
     columnHighlights.relatedNodeIds,
     columnHighlights.highlightedSourceDataNodeIds,
-    displayLineage.edges,
     baseGraph.edges,
     selectedColumn,
     visibleNodeIdBySourceNodeId,
-    visibleSelectedNodeId,
   ]);
   useEffect(() => {
     setGraphDisplaySnapshot((current) => {
@@ -1330,57 +1324,6 @@ export function LineageGraph({
       </ReactFlowProvider>
     </div>
   );
-}
-
-function collectLineageSelectionWithDownstream(rootNodeId: string, edges: LineageEdge[]) {
-  const activeNodeIds = new Set<string>([rootNodeId]);
-  const activeEdgeIds = new Set<string>();
-  const upstreamQueue = [rootNodeId];
-  const downstreamQueue = [rootNodeId];
-
-  while (upstreamQueue.length > 0) {
-    const currentNodeId = upstreamQueue.shift();
-    if (!currentNodeId) {
-      continue;
-    }
-
-    for (const edge of edges) {
-      if (edge.type !== 'dataFlow' || edge.target !== currentNodeId) {
-        continue;
-      }
-
-      activeEdgeIds.add(edge.id);
-
-      const nextNodeId = edge.source;
-      if (!activeNodeIds.has(nextNodeId)) {
-        activeNodeIds.add(nextNodeId);
-        upstreamQueue.push(nextNodeId);
-      }
-    }
-  }
-
-  while (downstreamQueue.length > 0) {
-    const currentNodeId = downstreamQueue.shift();
-    if (!currentNodeId) {
-      continue;
-    }
-
-    for (const edge of edges) {
-      if (edge.type !== 'dataFlow' || edge.source !== currentNodeId) {
-        continue;
-      }
-
-      activeEdgeIds.add(edge.id);
-
-      const nextNodeId = edge.target;
-      if (!activeNodeIds.has(nextNodeId)) {
-        activeNodeIds.add(nextNodeId);
-        downstreamQueue.push(nextNodeId);
-      }
-    }
-  }
-
-  return { activeEdgeIds, activeNodeIds };
 }
 
 function createVisibleNodeIdBySourceNodeId(groups: Map<string, { helperNodeIds: string[] }>) {
