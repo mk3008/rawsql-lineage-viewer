@@ -82,6 +82,12 @@ type InspectorCommentMode = 'all' | 'none' | 'smart';
 const inspectorCommentModeStorageKey = 'lineage-inspector-comment-mode';
 type AutoLayoutReason = 'focus-change' | 'group-expand' | 'group-collapse' | 'manual';
 
+interface AutoLayoutAnchor {
+  nodeId: string;
+  position: { x: number; y: number };
+  reason: AutoLayoutReason;
+}
+
 interface GraphDisplaySnapshot {
   highlightTarget: GraphHighlightTarget;
   originSelection: GraphOriginSelection;
@@ -206,6 +212,7 @@ export function LineageGraph({
   const pendingAutoLayoutFrameRef = useRef<number | null>(null);
   const pendingAutoLayoutReasonRef = useRef<AutoLayoutReason | null>(null);
   const autoLayoutRequestReasonRef = useRef<AutoLayoutReason | null>(null);
+  const pendingAutoLayoutAnchorRef = useRef<AutoLayoutAnchor | null>(null);
   const problemIntentRef = useRef(problemIntent);
   const suppressInitialOutputSelectionRef = useRef(true);
   const collapsibleGroups = useMemo(() => collectCollapsibleUpstreamGroups(lineage), [lineage]);
@@ -329,8 +336,22 @@ export function LineageGraph({
       return next;
     });
   }, []);
+  const captureAutoLayoutAnchor = useCallback((nodeId: string, reason: AutoLayoutReason) => {
+    const renderedPosition = readRenderedNodePosition(graphShellRef.current, nodeId);
+    if (!renderedPosition) {
+      return;
+    }
+    pendingAutoLayoutAnchorRef.current = {
+      nodeId,
+      position: renderedPosition,
+      reason,
+    };
+  }, []);
   const collapseUpstream = useCallback((nodeId: string) => {
     const shouldRelayout = !collapsedGroupRootIds.has(nodeId);
+    if (shouldRelayout) {
+      captureAutoLayoutAnchor(nodeId, 'group-collapse');
+    }
     for (const helperNodeId of collapsibleGroups.get(nodeId)?.helperNodeIds ?? []) {
       const renderedPosition = readRenderedNodePosition(graphShellRef.current, helperNodeId);
       if (renderedPosition) {
@@ -342,9 +363,12 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-collapse');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroup = useCallback((nodeId: string) => {
     const shouldRelayout = collapsedGroupRootIds.has(nodeId);
+    if (shouldRelayout) {
+      captureAutoLayoutAnchor(nodeId, 'group-expand');
+    }
     setCollapsedGroupRootIds((current) => {
       if (!current.has(nodeId)) {
         return current;
@@ -359,11 +383,15 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-expand');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const expandGroupForNode = useCallback((nodeId: string) => {
-    const shouldRelayout = [...collapsibleGroups].some(
+    const expandedGroup = [...collapsibleGroups].find(
       ([rootNodeId, group]) => collapsedGroupRootIds.has(rootNodeId) && (rootNodeId === nodeId || group.helperNodeIds.includes(nodeId)),
     );
+    const shouldRelayout = Boolean(expandedGroup);
+    if (expandedGroup) {
+      captureAutoLayoutAnchor(expandedGroup[0], 'group-expand');
+    }
     setCollapsedGroupRootIds((current) => {
       const next = new Set(current);
       let changed = false;
@@ -378,7 +406,7 @@ export function LineageGraph({
     if (shouldRelayout) {
       scheduleAutoLayout('group-expand');
     }
-  }, [collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
+  }, [captureAutoLayoutAnchor, collapsedGroupRootIds, collapsibleGroups, scheduleAutoLayout]);
   const resetCollapsedGroups = useCallback(() => {
     const nextCollapsedGroupRootIds = createInitialCollapsedGroupRootIds(collapsibleGroups);
     if (!areStringSetsEqual(collapsedGroupRootIds, nextCollapsedGroupRootIds)) {
@@ -991,6 +1019,8 @@ export function LineageGraph({
     const autoLayoutJustEnabled = effectiveAutoLayoutEnabled && !previousAutoLayoutEnabledRef.current;
     const autoLayoutRequested = effectiveAutoLayoutEnabled && previousAutoLayoutRequestIdRef.current !== autoLayoutRequestId;
     const autoLayoutRequestReason = autoLayoutRequested ? autoLayoutRequestReasonRef.current : null;
+    const autoLayoutAnchor =
+      autoLayoutRequested || graphStructureChanged || graphLayoutChanged ? pendingAutoLayoutAnchorRef.current : null;
     const shouldResetDraggedPositions = autoLayoutRequestReason === 'manual';
     if (shouldResetDraggedPositions) {
       draggedNodeIdsRef.current = new Set();
@@ -1001,6 +1031,9 @@ export function LineageGraph({
     previousAutoLayoutRequestIdRef.current = autoLayoutRequestId;
     previousAutoLayoutEnabledRef.current = effectiveAutoLayoutEnabled;
     autoLayoutRequestReasonRef.current = null;
+    if (autoLayoutRequested) {
+      pendingAutoLayoutAnchorRef.current = null;
+    }
 
     setNodes((currentNodes) => {
       const currentById = new Map(currentNodes.map((node) => [node.id, node]));
@@ -1008,11 +1041,21 @@ export function LineageGraph({
       const visibleOriginNodeId = mapToVisibleNodeId(originNodeId, visibleNodeIdBySourceNodeId);
       const shouldRunAutoLayout =
         effectiveAutoLayoutEnabled && (graphStructureChanged || graphLayoutChanged || autoLayoutJustEnabled || autoLayoutRequested);
+      const expandedBranchNodeIds =
+        autoLayoutAnchor?.reason === 'group-expand'
+          ? collectGraphDownstreamNodeIds(autoLayoutAnchor.nodeId, graphEdges)
+          : null;
       const buildNextNodes = (options: { preserveOriginPosition: boolean; resetDraggedPositions: boolean }) => {
         const currentOriginNode = visibleOriginNodeId ? currentById.get(visibleOriginNodeId) : undefined;
         const nextOriginNode = visibleOriginNodeId ? graphNodes.find((node) => node.id === visibleOriginNodeId) : undefined;
+        const nextAnchorNode = autoLayoutAnchor ? graphNodes.find((node) => node.id === autoLayoutAnchor.nodeId) : undefined;
         const autoLayoutOffset =
-          shouldRunAutoLayout && options.preserveOriginPosition && currentOriginNode && nextOriginNode
+          shouldRunAutoLayout && autoLayoutAnchor && nextAnchorNode
+            ? {
+                x: autoLayoutAnchor.position.x - nextAnchorNode.position.x,
+                y: autoLayoutAnchor.position.y - nextAnchorNode.position.y,
+              }
+            : shouldRunAutoLayout && options.preserveOriginPosition && currentOriginNode && nextOriginNode
             ? {
                 x: currentOriginNode.position.x - nextOriginNode.position.x,
                 y: currentOriginNode.position.y - nextOriginNode.position.y,
@@ -1024,6 +1067,17 @@ export function LineageGraph({
           if (shouldRunAutoLayout) {
             const savedPosition = nodePositionsRef.current.get(node.id);
             const shouldKeepDraggedPosition = !options.resetDraggedPositions && draggedNodeIdsRef.current.has(node.id) && (current?.position || savedPosition);
+            const shouldKeepStableExistingPosition =
+              expandedBranchNodeIds !== null && current && !expandedBranchNodeIds.has(node.id);
+            if (shouldKeepStableExistingPosition) {
+              return {
+                ...node,
+                dragging: current.dragging,
+                measured: current.measured,
+                position: current.position,
+                selected: current.selected,
+              };
+            }
             return {
               ...node,
               dragging: current?.dragging,
@@ -1362,6 +1416,28 @@ function hasBackwardFlowEdges(nodes: GraphNode[], edges: GraphEdge[]) {
     const target = nodeById.get(edge.target);
     return Boolean(source && target && source.position.x >= target.position.x);
   });
+}
+
+function collectGraphDownstreamNodeIds(rootNodeId: string, edges: GraphEdge[]) {
+  const nodeIds = new Set<string>([rootNodeId]);
+  const queue = [rootNodeId];
+
+  while (queue.length > 0) {
+    const sourceId = queue.shift();
+    if (!sourceId) {
+      continue;
+    }
+
+    for (const edge of edges) {
+      if (edge.source !== sourceId || nodeIds.has(edge.target)) {
+        continue;
+      }
+      nodeIds.add(edge.target);
+      queue.push(edge.target);
+    }
+  }
+
+  return nodeIds;
 }
 
 function mapToVisibleNodeId(nodeId: string | null | undefined, visibleNodeIdBySourceNodeId: Map<string, string>) {
