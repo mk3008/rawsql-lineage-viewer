@@ -87,7 +87,7 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
   server.registerTool(
     'create_investigation_plan',
     {
-      description: 'Create a static, read-only investigation plan from SQL and optional workspace-confined schema inputs. targetNode defaults to main_output.',
+      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. targetNode defaults to main_output.',
       inputSchema: {
         ddl: z.unknown().optional(),
         ddlDirectories: z.unknown().optional(),

@@ -101,6 +101,14 @@ describe('create_investigation_plan MCP adapter', () => {
     try {
       const listed = await client.listTools();
       expect(listed.tools.map((tool) => tool.name)).toEqual(['create_investigation_plan']);
+      expect(listed.tools[0].description).toContain('static SQL/DDL analysis plan only');
+      expect(listed.tools[0].description).toContain('never connects to a database or executes SQL');
+      expect(listed.tools[0].description).toContain('candidate concerns are unconfirmed');
+      expect(listed.tools[0].description).toContain('investigation-only SELECT statements');
+      expect(listed.tools[0].description).toContain('not corrected or production SQL');
+      expect(listed.tools[0].description).toContain('without inventing unproven SQL');
+      expect(listed.tools[0].description).toContain('DDL must be explicitly supplied');
+      expect(listed.tools[0].description).toContain('never fetches database schema');
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
