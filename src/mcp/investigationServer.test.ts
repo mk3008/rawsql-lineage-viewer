@@ -109,6 +109,17 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(listed.tools[0].description).toContain('without inventing unproven SQL');
       expect(listed.tools[0].description).toContain('DDL must be explicitly supplied');
       expect(listed.tools[0].description).toContain('never fetches database schema');
+      expect(listed.tools[0].description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
+      expect(listed.tools[0].description).toContain('rather than free natural-language symptoms');
+      expect(listed.tools[0].description).toContain('for example, {customer_id: 10}');
+      expect(listed.tools[0].description).toContain('instead of inferring a key from DDL, primary-key status, or columns');
+      const inputProperties = listed.tools[0].inputSchema.properties as Record<string, { description?: string }>;
+      expect(Object.values(inputProperties).every((property) => typeof property.description === 'string' && property.description.length > 0)).toBe(true);
+      expect(inputProperties.symptom.description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
+      expect(inputProperties.symptom.description).toContain('rather than free natural-language symptoms');
+      expect(inputProperties.investigationKeys.description).toContain('for example {customer_id: 10}');
+      expect(inputProperties.investigationKeys.description).toContain('ask for its name and value');
+      expect(inputProperties.investigationKeys.description).toContain('never infer it from DDL, primary-key status, or columns');
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
