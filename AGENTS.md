@@ -1,5 +1,12 @@
 # Repository Guidance
 
+## Codex Task Orchestration
+
+For a delegated or multi-step task, read `docs/codex-orchestration.md` and use
+the globally installed `$minimal-orchestration` skill. Keep lineage-slice
+assessment in the control task and do not push, open a pull request, merge, or
+deploy unless explicitly requested.
+
 ## Lineage Changes
 
 Before changing lineage behavior, read `docs/lineage-maintenance-map.md` first.
