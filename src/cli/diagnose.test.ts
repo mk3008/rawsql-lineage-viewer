@@ -192,4 +192,50 @@ describe('rawsql-lineage diagnose CLI', () => {
       rmSync(root, { force: true, recursive: true });
     }
   });
+
+  it('preserves WHERE candidates unless safe optimization moves a joined-source predicate into JOIN ON', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const movedPredicateSqlPath = resolve(root, 'moved-predicate.sql');
+      const wherePredicateSqlPath = resolve(root, 'where-predicate.sql');
+      writeFileSync(
+        movedPredicateSqlPath,
+        'select c.id from customers c join customer_tags ct on ct.customer_id = c.id where ct.is_active = true',
+      );
+      writeFileSync(
+        wherePredicateSqlPath,
+        'select c.id from customers c where c.is_active = true',
+      );
+
+      const diagnose = (sqlPath: string) => JSON.parse(execFileSync(process.execPath, [
+        '--import',
+        'tsx',
+        resolve(process.cwd(), 'src/cli/diagnose.ts'),
+        'diagnose',
+        '--sql',
+        sqlPath,
+        '--target-column',
+        'id',
+        '--symptom',
+        'duplicate_rows',
+      ], { encoding: 'utf8' })) as {
+        packets: Array<{
+          rowLineage: { influences: Array<{ expressionSql?: string; mechanism: string }> };
+        }>;
+      };
+
+      const movedPredicateMechanisms = diagnose(movedPredicateSqlPath).packets[0].rowLineage.influences;
+      expect(movedPredicateMechanisms).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mechanism: 'join', expressionSql: expect.stringContaining('ct.is_active = true') }),
+      ]));
+      expect(movedPredicateMechanisms.map((influence) => influence.mechanism)).not.toContain('where');
+
+      const wherePredicateMechanisms = diagnose(wherePredicateSqlPath).packets[0].rowLineage.influences;
+      expect(wherePredicateMechanisms).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mechanism: 'where', expressionSql: 'c.is_active = true' }),
+      ]));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
 });
