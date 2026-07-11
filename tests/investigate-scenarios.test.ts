@@ -45,6 +45,34 @@ describe('rawsql-lineage investigate scenario fixtures', () => {
 
     assertStaticInvestigationPlan(plan, expected, parameterValue);
   });
+
+  it.each(scenarioNames)('only recommends a proven node-query outer filter for the eligible %s fixture', async (scenarioName) => {
+    const scenarioDir = join(scenarioRoot, scenarioName);
+    const expected = readJson<ScenarioExpectation>(join(scenarioDir, 'expected.json'));
+    const parametersPath = join(await temporaryDirectory(), 'parameters.json');
+    writeFileSync(parametersPath, JSON.stringify([
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'scenario_marker', origin: 'original_query_parameter', value: parameterValue },
+    ]));
+
+    const plan = createInvestigationPlanForCli([
+      '--sql', join(scenarioDir, 'query.sql'),
+      '--ddl', join(scenarioDir, 'schema.sql'),
+      '--target-node', 'main_output',
+      '--target-column', expected.targetColumn,
+      '--symptom', expected.symptom,
+      '--parameters', parametersPath,
+    ]);
+    const probes = plan.recommendedProbes.filter((probe) => probe.kind === 'node_query_outer_filter');
+
+    if (scenarioName === 'value-too-low-status-filter') {
+      expect(probes).toHaveLength(1);
+      expect(probes[0]).toMatchObject({ id: 'probe:node-query-outer-filter:01', nodeId: 'main_output', readOnly: true });
+      expect(probes[0].parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'scenario_marker']);
+    } else {
+      expect(probes).toEqual([]);
+    }
+  });
 });
 
 function assertStaticInvestigationPlan(plan: InvestigationPlanV1, expected: ScenarioExpectation, forbiddenParameterValue: string): void {
