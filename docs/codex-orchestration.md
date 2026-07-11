@@ -144,6 +144,28 @@ Send this message only after the report is saved:
 report=<durable-path> worker_thread_id=<id> next=<action>
 ```
 
+### Transport Handshake And Fallback
+
+Thread delivery is a notification channel, not the authoritative work record.
+The parent obtains the actual child thread id from the Codex thread registry
+immediately after creation, records it in the manifest, and sends a bootstrap
+message containing both the child and parent ids. A worker must copy those
+ids; it must not substitute a runtime label such as `/root`, reuse another
+worker's id, or guess an id from its prompt.
+
+The bootstrap message requests a short acknowledgement using the supplied
+ids. If that acknowledgement or the terminal notification is absent, the
+parent must inspect the child thread and the named durable report directly.
+The parent treats a report with an id mismatch as `not accepted`, sends a
+same-thread correction with the authoritative ids and an incremented attempt,
+and verifies the repaired notification before accepting the work.
+
+This fallback prevents a missed notification from being mistaken for lost
+work, while preserving the rule that report contents—not chat delivery—are
+the source of truth. Do not poll workers indefinitely: inspect only after the
+agreed completion window, a missed acknowledgement, or a reported terminal
+state without a valid notification.
+
 ### Parent Review And Correction
 
 Before accepting a worker report, the parent verifies the `task_id`, `attempt`, worker source, `base_state`, report path, changed paths, and acceptance evidence. Review only the changed files and the smallest checks that prove the original criteria. Keep repository evidence separate from human-only or external evidence.
