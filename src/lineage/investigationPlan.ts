@@ -206,8 +206,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
       blockedProbes.push(blockedProbe(probeId, 'UNSUITABLE_PROBE_SOURCE', 'No supported physical source relation is available for a standalone read-only probe.'));
       continue;
     }
-    const parameterNames = referencedParameters(influence.expressionSql);
-    const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, index + 1, parameterNames, parameterEntries);
+    const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, index + 1, parameterEntries);
     if (!probe.probe) {
       blockedProbes.push(probe.blocked);
       continue;
@@ -297,7 +296,7 @@ function createNodeQueryOuterFilterProbe(
     outputKeys.push(quoteIdentifier(matchingColumns[0].name));
   }
   const nodeQueryReadOnly = inspectReadOnlyProbeSql(node.querySql);
-  if (!nodeQueryReadOnly.ok) {
+  if (nodeQueryReadOnly.ok === false) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', nodeQueryReadOnly.code, nodeQueryReadOnly.reason) };
   }
 
@@ -305,14 +304,10 @@ function createNodeQueryOuterFilterProbe(
   const conditions = investigationKeys.map((key, index) => `investigation_node.${outputKeys[index]} = :${key.name}`);
   const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE ${conditions.join(' AND ')}`;
   const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
-  if (!generatedProbeReadOnly.ok) {
+  if (generatedProbeReadOnly.ok === false) {
     return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
   }
-  const parameterNames = [...new Set([
-    ...investigationKeys.map((key) => key.name),
-    ...referencedParameters(node.querySql),
-    ...inputs.filter((input) => input.origin === 'original_query_parameter').map((input) => input.name),
-  ])].sort();
+  const parameterNames = collectParameterNames(generatedProbeReadOnly.statement);
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return {
     probe: {
@@ -343,7 +338,7 @@ function hasWhereConcernForTargetNode(packet: ColumnDiagnosticPacket, context: I
 }
 
 type ReadOnlyProbeInspection =
-  | { ok: true }
+  | { ok: true; statement: unknown }
   | { code: 'PROBE_NOT_READ_ONLY' | 'PROBE_REPARSE_FAILED'; ok: false; reason: string };
 
 /**
@@ -355,7 +350,7 @@ function inspectReadOnlyProbeSql(sql: string): ReadOnlyProbeInspection {
   try {
     const statement = SqlParser.parse(sql);
     return isReadOnlySelectTree(statement)
-      ? { ok: true }
+      ? { ok: true, statement }
       : {
         code: 'PROBE_NOT_READ_ONLY',
         ok: false,
@@ -423,14 +418,14 @@ function createProbe(
   sourceNodeId: string,
   evidence: string,
   priority: number,
-  parameterNames: string[],
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked: BlockedProbeV1; probe?: never } | { blocked?: never; probe: ProbeSpecV1 } {
   const sql = `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`;
   const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
-  if (!generatedProbeReadOnly.ok) {
+  if (generatedProbeReadOnly.ok === false) {
     return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
   }
+  const parameterNames = collectParameterNames(generatedProbeReadOnly.statement);
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return { probe: {
     confidence: concern.confidence,
@@ -503,7 +498,7 @@ function compareConcerns(left: CandidateConcern, right: CandidateConcern): numbe
   return `${left.kind}\u0000${left.scopeId}\u0000${left.evidence.join('\u0000')}`.localeCompare(`${right.kind}\u0000${right.scopeId}\u0000${right.evidence.join('\u0000')}`);
 }
 
-function referencedParameters(sql: string): string[] {
+function collectParameterNames(statement: unknown): string[] {
   const names = new Set<string>();
   const seen = new Set<object>();
   const visit = (value: unknown): void => {

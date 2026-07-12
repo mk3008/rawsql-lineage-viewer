@@ -68,7 +68,7 @@ describe('rawsql-lineage investigate scenario fixtures', () => {
     if (scenarioName === 'value-too-low-status-filter') {
       expect(probes).toHaveLength(1);
       expect(probes[0]).toMatchObject({ id: 'probe:node-query-outer-filter:01', nodeId: 'main_output', readOnly: true });
-      expect(probes[0].parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'scenario_marker']);
+      expect(probes[0].parameters.map((parameter) => parameter.name)).toEqual(['customer_id']);
     } else {
       expect(probes).toEqual([]);
     }
