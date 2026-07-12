@@ -56,6 +56,15 @@ JSON independently; the evaluator, not the worker, classifies the result as
 `meets`, `partially meets`, or `does not meet`. The evaluator should state
 blockers, non-blockers, evidence gaps, wording overreach, and missing user value.
 
+## Read-only probe boundary
+
+`readOnly: true` means the probe is one parseable SQL statement with a top-level
+SELECT or binary SELECT and no data-modifying CTE at any nesting level. It is
+not executed or verified against a live database. This boundary does not prove
+the absence of DB-specific or user-defined function side effects, `SELECT FOR
+UPDATE` locking behavior, extension-specific syntax, or effects in SQL dialects
+outside the parser's supported surface.
+
 ## Required uncertainty fields
 
 - `UNCONFIRMED — DB symptom and correct baseline:` no conclusion without a
