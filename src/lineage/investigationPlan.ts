@@ -257,6 +257,9 @@ function createNodeQueryOuterFilterProbe(
   if (investigationKeys.length === 0) {
     return {};
   }
+  if (new Set(investigationKeys.map((key) => key.name)).size !== investigationKeys.length) {
+    return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'INVESTIGATION_KEY_DUPLICATE', 'Each explicitly supplied investigation key name must be unique.') };
+  }
   if (!context) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'NODE_QUERY_UNAVAILABLE', 'No parser-backed node query context is available for the explicitly supplied investigation key.') };
   }
