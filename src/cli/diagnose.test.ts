@@ -60,6 +60,29 @@ describe('rawsql-lineage diagnose CLI', () => {
     }
   });
 
+  it('rejects duplicate parameter names through the CLI boundary without exposing values', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      const parametersPath = resolve(root, 'parameters.json');
+      writeFileSync(sqlPath, 'select status from orders');
+      writeFileSync(parametersPath, JSON.stringify([
+        { name: 'status', origin: 'original_query_parameter', value: 'secret-one' },
+        { name: 'status', origin: 'investigation_key', value: 'secret-two' },
+      ]));
+      let thrown: unknown;
+      try {
+        createInvestigationPlanForCli(['--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ code: 'PARAMETER_NAME_COLLISION' });
+      expect(String((thrown as Error).message)).not.toContain('secret');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('emits all output column packets with DDL file input', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
     try {

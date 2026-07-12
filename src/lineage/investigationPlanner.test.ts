@@ -213,13 +213,11 @@ describe('createInvestigationPlan', () => {
     expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'INVESTIGATION_KEY_NOT_EXPOSED' }));
   });
 
-  it('blocks duplicate investigation key names rather than creating a partial filter', () => {
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+  it('rejects duplicate investigation key names at the Core boundary', () => {
+    expect(() => createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
       { name: 'customer_id', origin: 'investigation_key', value: 10 },
       { name: 'customer_id', origin: 'investigation_key', value: 11 },
-    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]));
-    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
-    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'INVESTIGATION_KEY_DUPLICATE' }));
+    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]))).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
   it('collects only parser-recognized parameters, not cast names, strings, comments, or quoted identifiers', () => {

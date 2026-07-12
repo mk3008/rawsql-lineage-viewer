@@ -149,6 +149,17 @@ export interface InvestigationNodeQueryContextV1 {
   scopes: LineageModel['scopes'];
 }
 
+/** A stable input error shared by the Planner's public entry points. */
+export class InvestigationPlanInputError extends Error {
+  readonly code: 'PARAMETER_NAME_COLLISION';
+
+  constructor() {
+    super('Parameter names must be unique across all supplied parameter origins.');
+    this.name = 'InvestigationPlanInputError';
+    this.code = 'PARAMETER_NAME_COLLISION';
+  }
+}
+
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/;
 const MAX_RECOMMENDED_PROBES = 3;
 /** Used when callers do not describe a symptom explicitly. */
@@ -159,6 +170,7 @@ const DEFAULT_INVESTIGATION_SYMPTOM: ProblemIntent = 'logic_review';
  * This function does not analyze altered SQL or execute a probe.
  */
 export function createInvestigationPlan(input: InvestigationPlanInputV1): InvestigationPlanV1 {
+  assertUniqueParameterNames(input.parameters ?? []);
   const schemaFacts = input.schemaFacts ?? (input.ddl ? parseSchemaFactsFromDdl(input.ddl) : undefined);
   const symptom = input.symptom ?? DEFAULT_INVESTIGATION_SYMPTOM;
   const { lineage } = analyzeSql(input.sql, { analysisMode: 'original', optimizeConditions: false, schemaFacts });
@@ -173,6 +185,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
   symptom: string = DEFAULT_INVESTIGATION_SYMPTOM,
   nodeQueryContext?: InvestigationNodeQueryContextV1,
 ): InvestigationPlanV1 {
+  assertUniqueParameterNames(inputs);
   const candidateConcerns = [...packet.candidateConcerns]
     .sort(compareConcerns)
     .map((concern, index) => toCandidateConcern(concern, index));
@@ -513,12 +526,16 @@ function collectParameterNames(statement: unknown): string[] {
       else visit(nested);
     }
   };
-  try {
-    visit(SqlParser.parse(sql));
-  } catch {
-    return [];
-  }
+  visit(statement);
   return [...names].sort();
+}
+
+function assertUniqueParameterNames(inputs: InvestigationPlannerParameterInputV1[]): void {
+  const names = new Set<string>();
+  for (const input of inputs) {
+    if (names.has(input.name)) throw new InvestigationPlanInputError();
+    names.add(input.name);
+  }
 }
 
 function isSafePredicate(sql: string): boolean {
