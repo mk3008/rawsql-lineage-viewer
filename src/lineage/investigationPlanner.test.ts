@@ -290,6 +290,32 @@ describe('createInvestigationPlan', () => {
     expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
   });
 
+  it('blocks a data-modifying CTE nested inside a derived-table source', () => {
+    const querySql = "SELECT customer_id FROM (WITH changed AS (DELETE FROM payments WHERE status = 'cancelled' RETURNING customer_id) SELECT customer_id FROM changed) nested_rows";
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it('allows a SELECT-only derived-table source', () => {
+    const querySql = 'SELECT customer_id FROM (WITH selected_rows AS (SELECT customer_id FROM payments WHERE status = :status) SELECT customer_id FROM selected_rows) nested_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+  });
+
   it.each([
     ['missing key output', contextFor('SELECT total FROM payments', [{ name: 'total', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
     ['duplicate key output', contextFor('SELECT customer_id, customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }, { name: 'customer_id', outputIndex: 1 }]), 'AMBIGUOUS_OUTPUT_COLUMN'],

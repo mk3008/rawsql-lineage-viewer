@@ -5,12 +5,17 @@ import { analyzeSql } from './rawsqlAdapter';
 import { parseSchemaFactsFromDdl, type DdlInput, type SchemaFacts } from './schemaFacts';
 import {
   BinarySelectQuery,
+  CTECollector,
   DeleteQuery,
+  FunctionSource,
   InsertQuery,
   MergeQuery,
   ParameterExpression,
+  ParenSource,
   SimpleSelectQuery,
   SqlParser,
+  SubQuerySource,
+  TableSource,
   UpdateQuery,
 } from 'rawsql-ts';
 
@@ -381,11 +386,27 @@ function inspectReadOnlyProbeSql(sql: string): ReadOnlyProbeInspection {
 /** Permits only public SELECT AST classes and recursively verifies every CTE body. */
 function isReadOnlySelectTree(query: unknown): boolean {
   if (query instanceof SimpleSelectQuery) {
-    return (query.withClause?.tables ?? []).every((table) => isReadOnlyCteQuery(table.query));
+    return (query.withClause?.tables ?? []).every((table) => isReadOnlyCteQuery(table.query))
+      && isReadOnlyFromClause(query)
+      && new CTECollector().collect(query).every((table) => isReadOnlyCteQuery(table.query));
   }
   if (query instanceof BinarySelectQuery) {
     return isReadOnlySelectTree(query.left) && isReadOnlySelectTree(query.right);
   }
+  return false;
+}
+
+/** Verifies parser-backed derived-table query sources instead of treating them as opaque tables. */
+function isReadOnlyFromClause(query: SimpleSelectQuery): boolean {
+  const sources = query.fromClause?.getSources() ?? [];
+  return sources.every((source) => isReadOnlySource(source.datasource));
+}
+
+function isReadOnlySource(source: unknown): boolean {
+  if (source instanceof TableSource) return true;
+  if (source instanceof SubQuerySource) return isReadOnlySelectTree(source.query);
+  if (source instanceof ParenSource) return isReadOnlySource(source.source);
+  if (source instanceof FunctionSource) return true;
   return false;
 }
 
