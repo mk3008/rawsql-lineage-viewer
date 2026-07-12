@@ -88,6 +88,9 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, ddlFiles: ['binary.sql'] })).toThrow('Binary files are not accepted');
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, ddlFiles: ['query.sql'], schemaFactsPath: 'facts.json' })).toThrow('cannot be combined');
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, knownParameters: { 'not-valid': 'paid' } })).toThrow('valid SQL parameter identifier');
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: `select '${'é'.repeat(1024 * 1024)}'`, targetColumn: 'status' })).toThrow(expect.objectContaining({ code: 'FILE_SIZE_LIMIT' }));
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select \0', targetColumn: 'status' })).toThrow(expect.objectContaining({ code: 'BINARY_FILE' }));
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select 1', targetColumn: 'status', investigationKeys: { customer_id: 10 }, knownParameters: { customer_id: 20 } })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
   it('serves exactly one stdio tool, returns structured input errors, isolates repeated calls, and does not write the workspace', async () => {
@@ -132,6 +135,10 @@ describe('create_investigation_plan MCP adapter', () => {
       expect((inputProperties.sql as { type?: string }).type).toBe('string');
       expect((inputProperties.ddlDirectories as { type?: string; items?: { type?: string } }).type).toBe('array');
       expect((inputProperties.ddlDirectories as { items?: { type?: string } }).items?.type).toBe('string');
+      const investigationArray = (inputProperties.investigationKeys as { anyOf?: Array<{ items?: { properties?: { origin?: { const?: string } } } }> }).anyOf?.find((entry) => entry.items)?.items;
+      const knownArray = (inputProperties.knownParameters as { anyOf?: Array<{ items?: { properties?: { origin?: { const?: string } } } }> }).anyOf?.find((entry) => entry.items)?.items;
+      expect(investigationArray?.properties?.origin?.const).toBe('investigation_key');
+      expect(knownArray?.properties?.origin?.const).toBe('original_query_parameter');
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
@@ -167,6 +174,13 @@ describe('create_investigation_plan MCP adapter', () => {
       });
       expect(duplicateDdl.isError).not.toBe(true);
       expect(duplicateDdl.structuredContent).toMatchObject({ kind: 'investigation-plan', target: { nodeId: 'main_output' } });
+
+      const duplicateParameter = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { sql: 'select status from orders', targetColumn: 'status', investigationKeys: { customer_id: 10 }, knownParameters: { customer_id: 20 } },
+      });
+      expect(duplicateParameter.isError).toBe(true);
+      expect(JSON.parse((duplicateParameter.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'PARAMETER_NAME_COLLISION', kind: 'invalid_input' });
     } finally {
       await client.close();
     }

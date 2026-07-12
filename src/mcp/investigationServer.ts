@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationPlanInputV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationPlanInputV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
 import { diagnosticProblemIntents, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 
@@ -17,14 +17,20 @@ const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TARGET_NODE = 'main_output';
 const SQL_PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const parameterValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const parameterArraySchema = z.array(z.object({
+const parameterObjectFields = {
   name: z.string().min(1),
-  origin: z.enum(investigationInputParameterOrigins).optional(),
   required: z.boolean().optional(),
   typeHint: z.string().optional(),
   value: parameterValueSchema.optional(),
-}));
-const parameterInputSchema = z.union([z.record(z.string(), parameterValueSchema), parameterArraySchema]);
+};
+const investigationKeyParameterInputSchema = z.union([
+  z.record(z.string(), parameterValueSchema),
+  z.array(z.object({ ...parameterObjectFields, origin: z.literal('investigation_key').optional() })),
+]);
+const knownParameterInputSchema = z.union([
+  z.record(z.string(), parameterValueSchema),
+  z.array(z.object({ ...parameterObjectFields, origin: z.literal('original_query_parameter').optional() })),
+]);
 
 export interface CreateInvestigationPlanMcpInput {
   sql?: unknown;
@@ -63,7 +69,9 @@ export function normalizeCreateInvestigationPlanInput(
   if (hasSql === hasSqlPath) {
     throw new McpInputError('SQL_SOURCE_REQUIRED', 'Provide exactly one of sql or sqlPath.');
   }
-  const sql = hasSql ? requiredNonEmptyString(input.sql, 'sql') : readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.sqlPath, 'sqlPath'));
+  const sql = hasSql
+    ? validateInlineSql(requiredNonEmptyString(input.sql, 'sql'), 'sql')
+    : readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.sqlPath, 'sqlPath'));
   const targetNode = input.targetNode === undefined ? DEFAULT_TARGET_NODE : requiredNonEmptyString(input.targetNode, 'targetNode');
   const targetColumn = requiredNonEmptyString(input.targetColumn, 'targetColumn');
   const symptom = input.symptom === undefined ? undefined : parseSymptom(input.symptom);
@@ -101,8 +109,8 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
         ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
         ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
         ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
-        investigationKeys: parameterInputSchema.optional().describe('Optional explicit record-specific key name/value map, for example {customer_id: 10}. When a record-specific investigation needs a key, ask for its name and value; never infer it from DDL, primary-key status, or columns.'),
-        knownParameters: parameterInputSchema.optional().describe('Optional known original-query parameter name/value map.'),
+        investigationKeys: investigationKeyParameterInputSchema.optional().describe('Optional explicit record-specific key name/value map, for example {customer_id: 10}. When a record-specific investigation needs a key, ask for its name and value; never infer it from DDL, primary-key status, or columns.'),
+        knownParameters: knownParameterInputSchema.optional().describe('Optional known original-query parameter name/value map.'),
         schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
         sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
         sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
@@ -117,6 +125,9 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
         return { content: [{ type: 'text', text: JSON.stringify(plan) }], structuredContent: plan as unknown as Record<string, unknown> };
       } catch (error) {
         if (error instanceof McpInputError) {
+          return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
+        }
+        if (error instanceof InvestigationPlanInputError) {
           return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
         }
         throw error;
@@ -339,6 +350,11 @@ function parseSymptom(value: unknown): ProblemIntent {
 function ensureTextSize(text: string, field: string): void {
   if (text.includes('\0')) throw new McpInputError('BINARY_FILE', `${field} contains a NUL byte.`);
   if (Buffer.byteLength(text) > MAX_FILE_BYTES) throw new McpInputError('FILE_SIZE_LIMIT', `${field} exceeds ${MAX_FILE_BYTES} bytes.`);
+}
+
+function validateInlineSql(text: string, field: string): string {
+  ensureTextSize(text, field);
+  return text;
 }
 
 function parseWorkspaceArgument(argv: string[]): string {
