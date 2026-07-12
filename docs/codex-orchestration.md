@@ -104,7 +104,7 @@ For a lineage task, `owning_slice` must be chosen from the maintenance map befor
 
 ### Worker Report And Notification
 
-The worker must save a durable report first, then notify the parent. Use `ready_for_review`, `blocked`, or `not done` as the worker terminal status; only the parent may mark the work accepted.
+The worker must save a durable report first, then notify the parent. Use `ready_for_review`, `blocked`, or `not_done` as the worker terminal status; only the parent may mark the work accepted. Worker status is transport vocabulary: parents and automation must not copy it verbatim into a final report (`worker not_done` becomes final attainment `not done`).
 
 ```yaml
 report_version: 1
@@ -112,7 +112,7 @@ task_id: <same-as-manifest>
 attempt: <current-attempt>
 worker_thread_id: <id>
 parent_thread_id: <id-or-null>
-status: ready_for_review | blocked | not done
+status: ready_for_review | blocked | not_done
 base_state: <copied-from-manifest-or-detected-drift>
 changed_paths: []
 purpose: <copied-from-manifest>
@@ -121,7 +121,7 @@ risks: []
 non_goals: []
 acceptance:
   - criterion: <original-observable-criterion>
-    status: done | partial | not done
+    status: done | partial | not_done
     evidence: <command-test-file-or-inspection>
 verification: []
 human_or_external_evidence:
