@@ -138,13 +138,13 @@ function resolveWorkspacePath(workspace: string, suppliedPath: string, deferExcl
   if (isAbsolute(suppliedPath) || segments.includes('..')) {
     throw new McpInputError('PATH_OUTSIDE_WORKSPACE', 'Paths must be relative to --workspace and must not contain .. segments.');
   }
-  const isExcluded = segments.some((segment) => EXCLUDED_DIRECTORIES.has(segment));
+  const isSuppliedExcluded = hasExcludedPathSegment(segments);
   const candidate = resolve(workspace, suppliedPath);
   let real: string;
   try {
     real = realpathSync(candidate);
   } catch {
-    if (isExcluded && !deferExcludedPathError) {
+    if (isSuppliedExcluded && !deferExcludedPathError) {
       throw new McpInputError('PATH_EXCLUDED', `Path is inside an excluded directory: ${suppliedPath}`);
     }
     throw new McpInputError('PATH_NOT_FOUND', `Workspace path does not exist: ${suppliedPath}`);
@@ -153,10 +153,22 @@ function resolveWorkspacePath(workspace: string, suppliedPath: string, deferExcl
   if (fromWorkspace === '..' || fromWorkspace.startsWith(`..${sep}`) || isAbsolute(fromWorkspace)) {
     throw new McpInputError('PATH_OUTSIDE_WORKSPACE', `Workspace path escapes --workspace: ${suppliedPath}`);
   }
-  if (isExcluded && !deferExcludedPathError) {
+  const isCanonicalExcluded = hasExcludedPathSegment(fromWorkspace.split(/[\\/]+/));
+  if (isCanonicalExcluded && (!deferExcludedPathError || !isSuppliedExcluded)) {
+    throw new McpInputError('PATH_EXCLUDED', `Path resolves inside an excluded directory: ${suppliedPath}`);
+  }
+  if (isSuppliedExcluded && !deferExcludedPathError) {
     throw new McpInputError('PATH_EXCLUDED', `Path is inside an excluded directory: ${suppliedPath}`);
   }
   return real;
+}
+
+function hasExcludedPathSegment(segments: string[]): boolean {
+  return segments.some((segment) => EXCLUDED_DIRECTORIES.has(normalizePathSegment(segment)));
+}
+
+function normalizePathSegment(segment: string): string {
+  return process.platform === 'win32' ? segment.toLowerCase() : segment;
 }
 
 function readWorkspaceText(workspace: string, suppliedPath: string): string {
@@ -201,7 +213,7 @@ function collectDdlFiles(workspace: string, suppliedDirectory: string): string[]
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const candidate = resolve(directory, entry.name);
       const resolved = resolveWorkspacePath(workspace, relative(workspace, candidate), true);
-      if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+      if (hasExcludedPathSegment([entry.name])) continue;
       const stat = statSync(resolved);
       if (stat.isDirectory()) visit(resolved, depth + 1);
       else if (stat.isFile() && resolved.toLowerCase().endsWith('.sql')) {

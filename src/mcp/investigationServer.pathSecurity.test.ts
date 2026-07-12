@@ -135,6 +135,45 @@ describe('MCP workspace path security', () => {
     expect(fromFacts.schemaFacts).toMatchObject({ kind: 'schema-facts', tables: {}, version: 1 });
   });
 
+  symlinkIt('rejects nonexcluded aliases into canonical excluded directories without reading their content', () => {
+    const workspace = temporaryDirectory('workspace');
+    const marker = 'CANONICAL_EXCLUDED_MARKER_MUST_NOT_LEAK_3f7a';
+    const vendor = resolve(workspace, 'vendor');
+    const nested = resolve(vendor, 'nested');
+    const nodeModules = resolve(workspace, 'node_modules');
+    const git = resolve(workspace, '.git');
+    const dist = resolve(workspace, 'dist');
+    const build = resolve(workspace, 'build');
+    const coverage = resolve(workspace, 'coverage');
+    mkdirSync(vendor);
+    mkdirSync(nested);
+    mkdirSync(nodeModules);
+    mkdirSync(git);
+    mkdirSync(dist);
+    mkdirSync(build);
+    mkdirSync(coverage);
+    writeFileSync(resolve(nodeModules, 'schema.sql'), marker);
+    writeFileSync(resolve(git, 'schema.sql'), marker);
+    writeFileSync(resolve(dist, 'schema.sql'), marker);
+    writeFileSync(resolve(build, 'schema.sql'), marker);
+    writeFileSync(resolve(coverage, 'schema.sql'), marker);
+    symlinkSync(nodeModules, resolve(workspace, 'modules-alias'), 'dir');
+    symlinkSync(git, resolve(workspace, 'git-alias'), 'dir');
+    symlinkSync(nodeModules, resolve(nested, 'modules-alias'), 'dir');
+    symlinkSync(resolve(workspace, 'modules-alias'), resolve(workspace, 'modules-chain'), 'dir');
+    symlinkSync(dist, resolve(workspace, 'dist-alias'), 'dir');
+    symlinkSync(build, resolve(workspace, 'build-alias'), 'dir');
+    symlinkSync(coverage, resolve(workspace, 'coverage-alias'), 'dir');
+
+    for (const directory of ['modules-alias', 'git-alias', 'vendor/nested/modules-alias', 'modules-chain', 'dist-alias', 'build-alias', 'coverage-alias']) {
+      expectInputError(
+        () => normalizeCreateInvestigationPlanInput(workspace, { ddlDirectories: [directory], sql: 'select 1 as id', targetColumn: 'id' }),
+        'PATH_EXCLUDED',
+        marker,
+      );
+    }
+  });
+
   it('preserves traversal, absolute-path, missing-path, exclusion, extension, and configured limit errors', () => {
     const workspace = temporaryDirectory('workspace');
     writeFileSync(resolve(workspace, 'query.sql'), 'select 1 as id');
