@@ -3,7 +3,7 @@ import type { LineageModel, LineageNode } from '../domain/lineage';
 import type { ProblemIntent } from './problemIntent';
 import { analyzeSql } from './rawsqlAdapter';
 import { parseSchemaFactsFromDdl, type DdlInput, type SchemaFacts } from './schemaFacts';
-import { BinarySelectQuery, SimpleSelectQuery, SqlParser } from 'rawsql-ts';
+import { BinarySelectQuery, ParameterExpression, SimpleSelectQuery, SqlParser } from 'rawsql-ts';
 
 /** The only SQL mode used to diagnose the submitted statement. */
 export type InvestigationAnalysisModeV1 = 'original';
@@ -14,6 +14,16 @@ export type InvestigationParameterOriginV1 =
   | 'derived_parameter'
   | 'environment_parameter'
   | 'unresolved_parameter';
+
+/** Origins accepted from callers; unresolved parameters are planner-created only. */
+export const investigationInputParameterOrigins = [
+  'investigation_key',
+  'original_query_parameter',
+  'derived_parameter',
+  'environment_parameter',
+] as const satisfies readonly Exclude<InvestigationParameterOriginV1, 'unresolved_parameter'>[];
+
+export type InvestigationInputParameterOriginV1 = (typeof investigationInputParameterOrigins)[number];
 
 export type InvestigationParameterStatusV1 = 'provided' | 'required' | 'unresolved';
 

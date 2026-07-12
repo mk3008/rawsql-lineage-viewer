@@ -56,6 +56,12 @@ describe('create_investigation_plan MCP adapter', () => {
     const mcpPlan = createInvestigationPlan(fromFiles);
     expect(mcpPlan).toEqual(cliPlan);
     expect(createInvestigationPlan(fromFiles)).toEqual(mcpPlan);
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, {
+      sql: 'select status from orders', targetColumn: 'status', investigationKeys: [{ name: 'customer_id', origin: 'original_query_parameter', value: 10 }],
+    })).toThrow(expect.objectContaining({ code: 'PARAMETER_ORIGIN_MISMATCH' }));
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, {
+      sql: 'select status from orders', targetColumn: 'status', knownParameters: [{ name: 'status', origin: 'investigation_key', value: 'paid' }],
+    })).toThrow(expect.objectContaining({ code: 'PARAMETER_ORIGIN_MISMATCH' }));
   });
 
   it('rejects external paths, traversal, excluded folders, binary files, and schema input conflicts before planning', () => {
@@ -120,6 +126,12 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(inputProperties.investigationKeys.description).toContain('for example {customer_id: 10}');
       expect(inputProperties.investigationKeys.description).toContain('ask for its name and value');
       expect(inputProperties.investigationKeys.description).toContain('never infer it from DDL, primary-key status, or columns');
+      expect((listed.tools[0].inputSchema.required as string[])).toContain('targetColumn');
+      expect((inputProperties.targetColumn as { type?: string }).type).toBe('string');
+      expect((inputProperties.symptom as { enum?: string[] }).enum).toEqual(['value_too_high', 'value_too_low', 'value_missing', 'missing_rows', 'duplicate_rows']);
+      expect((inputProperties.sql as { type?: string }).type).toBe('string');
+      expect((inputProperties.ddlDirectories as { type?: string; items?: { type?: string } }).type).toBe('array');
+      expect((inputProperties.ddlDirectories as { items?: { type?: string } }).items?.type).toBe('string');
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });

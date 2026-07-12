@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildColumnDiagnosticPacket } from '../lineage/diagnostics';
 import type { AnalysisWarning } from '../domain/lineage';
-import { createInvestigationPlan, type InvestigationPlanV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationPlanV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
 import { diagnosticProblemIntents, problemIntentOptions, symptomEffectMap, type DiagnosticConcernEffect, type DiagnosticProblemIntent, type ProblemIntent } from '../lineage/problemIntent';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
@@ -338,7 +338,7 @@ function parseParameters(value: unknown): InvestigationPlannerParameterInputV1[]
     if (typeof input.name !== 'string' || input.name.length === 0) {
       throw new Error(`Parameter at index ${index} must include a non-empty string name.`);
     }
-    if (!['investigation_key', 'original_query_parameter', 'derived_parameter', 'environment_parameter'].includes(String(input.origin))) {
+    if (!investigationInputParameterOrigins.includes(input.origin as typeof investigationInputParameterOrigins[number])) {
       throw new Error(`Parameter ${input.name} has an invalid origin.`);
     }
     if (input.required !== undefined && typeof input.required !== 'boolean') {
