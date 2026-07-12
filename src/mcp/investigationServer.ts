@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
-import { isAbsolute, relative, resolve } from 'node:path';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -133,24 +133,28 @@ function workspaceRealpath(workspace: string): string {
   }
 }
 
-function resolveWorkspacePath(workspace: string, suppliedPath: string): string {
+function resolveWorkspacePath(workspace: string, suppliedPath: string, deferExcludedPathError = false): string {
   const segments = suppliedPath.split(/[\\/]+/);
   if (isAbsolute(suppliedPath) || segments.includes('..')) {
     throw new McpInputError('PATH_OUTSIDE_WORKSPACE', 'Paths must be relative to --workspace and must not contain .. segments.');
   }
-  if (segments.some((segment) => EXCLUDED_DIRECTORIES.has(segment))) {
-    throw new McpInputError('PATH_EXCLUDED', `Path is inside an excluded directory: ${suppliedPath}`);
-  }
+  const isExcluded = segments.some((segment) => EXCLUDED_DIRECTORIES.has(segment));
   const candidate = resolve(workspace, suppliedPath);
   let real: string;
   try {
     real = realpathSync(candidate);
   } catch {
+    if (isExcluded && !deferExcludedPathError) {
+      throw new McpInputError('PATH_EXCLUDED', `Path is inside an excluded directory: ${suppliedPath}`);
+    }
     throw new McpInputError('PATH_NOT_FOUND', `Workspace path does not exist: ${suppliedPath}`);
   }
   const fromWorkspace = relative(workspace, real);
-  if (fromWorkspace === '..' || fromWorkspace.startsWith(`..${'\\'}`) || isAbsolute(fromWorkspace)) {
+  if (fromWorkspace === '..' || fromWorkspace.startsWith(`..${sep}`) || isAbsolute(fromWorkspace)) {
     throw new McpInputError('PATH_OUTSIDE_WORKSPACE', `Workspace path escapes --workspace: ${suppliedPath}`);
+  }
+  if (isExcluded && !deferExcludedPathError) {
+    throw new McpInputError('PATH_EXCLUDED', `Path is inside an excluded directory: ${suppliedPath}`);
   }
   return real;
 }
@@ -195,9 +199,9 @@ function collectDdlFiles(workspace: string, suppliedDirectory: string): string[]
   const visit = (directory: string, depth: number): void => {
     if (depth > MAX_DIRECTORY_DEPTH) throw new McpInputError('DDL_DIRECTORY_DEPTH', `DDL directory recursion exceeds ${MAX_DIRECTORY_DEPTH} levels.`);
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
       const candidate = resolve(directory, entry.name);
-      const resolved = resolveWorkspacePath(workspace, relative(workspace, candidate));
+      const resolved = resolveWorkspacePath(workspace, relative(workspace, candidate), true);
+      if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
       const stat = statSync(resolved);
       if (stat.isDirectory()) visit(resolved, depth + 1);
       else if (stat.isFile() && resolved.toLowerCase().endsWith('.sql')) {
