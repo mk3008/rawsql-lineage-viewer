@@ -291,7 +291,7 @@ function createNodeQueryOuterFilterProbe(
   const id = 'probe:node-query-outer-filter:01';
   const conditions = investigationKeys.map((key, index) => `investigation_node.${outputKeys[index]} = :${key.name}`);
   const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE ${conditions.join(' AND ')}`;
-  if (!isReadOnlySelect(sql)) {
+  if (!reparseGeneratedProbe(sql)) {
     return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated outer-filter probe did not re-parse as a read-only SELECT.') };
   }
   const parameterNames = [...new Set([
@@ -337,6 +337,11 @@ function isReadOnlySelect(sql: string): boolean {
   }
 }
 
+/** Every generated probe is parsed independently from its source fragment. */
+function reparseGeneratedProbe(sql: string): boolean {
+  return isReadOnlySelect(sql);
+}
+
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -376,7 +381,7 @@ function createProbe(
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked: BlockedProbeV1; probe?: never } | { blocked?: never; probe: ProbeSpecV1 } {
   const sql = `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`;
-  if (!isReadOnlySelect(sql)) {
+  if (!reparseGeneratedProbe(sql)) {
     return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated candidate probe did not re-parse as a read-only SELECT.') };
   }
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
