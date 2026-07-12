@@ -138,6 +138,54 @@ describe('createInvestigationPlan', () => {
     expect(() => analyzeSql(probe!.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
   });
 
+  it('requires every investigation key, sorts them, and applies each as an outer AND condition', () => {
+    const context = contextFor('SELECT customer_id, region_id, amount FROM payments WHERE status = :status', [
+      { name: 'customer_id', outputIndex: 0 }, { name: 'region_id', outputIndex: 1 }, { name: 'amount', outputIndex: 2 },
+    ]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'region_id', origin: 'investigation_key', value: 20 },
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+    ], 'value_too_low', context);
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+
+    expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id AND investigation_node."region_id" = :region_id');
+    expect(probe?.sql).not.toContain('= 10');
+    expect(probe?.sql).not.toContain('= 20');
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'region_id', 'status']);
+    for (const name of ['customer_id', 'region_id']) {
+      expect(plan.parameters.find((parameter) => parameter.name === name)?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
+    }
+  });
+
+  it('blocks the whole node query probe when any investigation key is not exactly exposed', () => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'missing_key', origin: 'investigation_key', value: 20 },
+    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]));
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'INVESTIGATION_KEY_NOT_EXPOSED' }));
+  });
+
+  it('collects only parser-recognized parameters, not cast names, strings, comments, or quoted identifiers', () => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', contextFor(
+      "SELECT customer_id FROM payments WHERE status = :status::text AND note <> ':fake' /* :comment */",
+      [{ name: 'customer_id', outputIndex: 0 }],
+    ));
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
+  });
+
+  it('returns a structured block when generated candidate SQL cannot reparse', () => {
+    const invalidPacket = packet({
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'status = (1' }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(invalidPacket);
+    expect(plan.recommendedProbes).toEqual([]);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_REPARSE_FAILED', status: 'blocked' }));
+  });
+
   it.each([
     ['missing key output', contextFor('SELECT total FROM payments', [{ name: 'total', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
     ['duplicate key output', contextFor('SELECT customer_id, customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }, { name: 'customer_id', outputIndex: 1 }]), 'AMBIGUOUS_OUTPUT_COLUMN'],

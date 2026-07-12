@@ -116,7 +116,7 @@ export interface InvestigationPlanV1 {
 /** A supplied value that the planner may reference by name, but never inline in SQL. */
 export interface InvestigationPlannerParameterInputV1 {
   name: string;
-  origin: Exclude<InvestigationParameterOriginV1, 'unresolved_parameter'>;
+  origin: InvestigationInputParameterOriginV1;
   required?: boolean;
   typeHint?: string;
   value?: boolean | number | string | null;
@@ -141,7 +141,6 @@ export interface InvestigationNodeQueryContextV1 {
 }
 
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/;
-const PARAMETER_REFERENCE = /:([A-Za-z_][A-Za-z0-9_]*)/g;
 const MAX_RECOMMENDED_PROBES = 3;
 /** Used when callers do not describe a symptom explicitly. */
 const DEFAULT_INVESTIGATION_SYMPTOM: ProblemIntent = 'logic_review';
@@ -200,10 +199,14 @@ export function createInvestigationPlanFromDiagnosticPacket(
     }
     const parameterNames = referencedParameters(influence.expressionSql);
     const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, index + 1, parameterNames, parameterEntries);
+    if (!probe.probe) {
+      blockedProbes.push(probe.blocked);
+      continue;
+    }
     if (recommendedProbes.length < MAX_RECOMMENDED_PROBES) {
-      recommendedProbes.push(probe);
+      recommendedProbes.push(probe.probe);
     } else {
-      deferredProbes.push(probe);
+      deferredProbes.push(probe.probe);
     }
   }
 
@@ -249,15 +252,13 @@ function createNodeQueryOuterFilterProbe(
   context: InvestigationNodeQueryContextV1 | undefined,
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked?: BlockedProbeV1; probe?: ProbeSpecV1 } {
-  const investigationKey = inputs.find((input) => input.origin === 'investigation_key');
-  if (!investigationKey) {
+  const investigationKeys = inputs.filter((input) => input.origin === 'investigation_key')
+    .sort((left, right) => left.name.localeCompare(right.name));
+  if (investigationKeys.length === 0) {
     return {};
   }
   if (!context) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'NODE_QUERY_UNAVAILABLE', 'No parser-backed node query context is available for the explicitly supplied investigation key.') };
-  }
-  if (!isValidParameterName(investigationKey.name)) {
-    return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'INVESTIGATION_KEY_NOT_EXPOSED', 'The explicitly supplied investigation key is not a valid SQL parameter identifier.') };
   }
   const node = context.nodes.find((candidate) => candidate.id === packet.target.nodeId);
   if (!node?.querySql) {
@@ -269,25 +270,32 @@ function createNodeQueryOuterFilterProbe(
   if (context.analysisWarnings.some((warning) => warning.code.includes('wildcard_unresolved'))) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'UNRESOLVED_WILDCARD', 'The node output cannot be proven because wildcard output expansion is unresolved.') };
   }
-  const matchingColumns = node.columns.filter((column) => column.name === investigationKey.name && column.outputIndex !== undefined);
-  if (matchingColumns.length === 0) {
-    return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'INVESTIGATION_KEY_NOT_EXPOSED', 'The explicitly supplied investigation key is not uniquely exposed by the selected node query.') };
-  }
-  if (matchingColumns.length !== 1) {
-    return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'AMBIGUOUS_OUTPUT_COLUMN', 'The selected node query exposes the investigation key more than once.') };
+  const outputKeys: string[] = [];
+  for (const investigationKey of investigationKeys) {
+    if (!isValidParameterName(investigationKey.name)) {
+      return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'INVESTIGATION_KEY_NOT_EXPOSED', 'Every explicitly supplied investigation key must be a valid SQL parameter identifier.') };
+    }
+    const matchingColumns = node.columns.filter((column) => column.name === investigationKey.name && column.outputIndex !== undefined);
+    if (matchingColumns.length === 0) {
+      return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'INVESTIGATION_KEY_NOT_EXPOSED', 'Every explicitly supplied investigation key must be uniquely exposed by the selected node query.') };
+    }
+    if (matchingColumns.length !== 1) {
+      return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'AMBIGUOUS_OUTPUT_COLUMN', 'The selected node query exposes an investigation key more than once.') };
+    }
+    outputKeys.push(quoteIdentifier(matchingColumns[0].name));
   }
   if (!isReadOnlySelect(node.querySql)) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'NODE_QUERY_UNAVAILABLE', 'The selected node query is not a parser-backed read-only SELECT.') };
   }
 
   const id = 'probe:node-query-outer-filter:01';
-  const outputKey = quoteIdentifier(matchingColumns[0].name);
-  const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE investigation_node.${outputKey} = :${investigationKey.name}`;
+  const conditions = investigationKeys.map((key, index) => `investigation_node.${outputKeys[index]} = :${key.name}`);
+  const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE ${conditions.join(' AND ')}`;
   if (!isReadOnlySelect(sql)) {
     return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated outer-filter probe did not re-parse as a read-only SELECT.') };
   }
   const parameterNames = [...new Set([
-    investigationKey.name,
+    ...investigationKeys.map((key) => key.name),
     ...referencedParameters(node.querySql),
     ...inputs.filter((input) => input.origin === 'original_query_parameter').map((input) => input.name),
   ])].sort();
@@ -303,7 +311,7 @@ function createNodeQueryOuterFilterProbe(
       parameters,
       priority: 1,
       priorityReasons: ['The selected node query exposes the explicitly supplied investigation key exactly once.'],
-      question: `Which selected-node rows match the supplied ${investigationKey.name} key?`,
+      question: `Which selected-node rows match the supplied ${investigationKeys.map((key) => key.name).join(', ')} key values?`,
       readOnly: true,
       reason: 'Wrap the proven standalone node query and apply the investigation key only in the outer filter.',
       sql,
@@ -366,9 +374,13 @@ function createProbe(
   priority: number,
   parameterNames: string[],
   parameterEntries: Map<string, InvestigationParameterV1>,
-): ProbeSpecV1 {
+): { blocked: BlockedProbeV1; probe?: never } | { blocked?: never; probe: ProbeSpecV1 } {
+  const sql = `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`;
+  if (!isReadOnlySelect(sql)) {
+    return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated candidate probe did not re-parse as a read-only SELECT.') };
+  }
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
-  return {
+  return { probe: {
     confidence: concern.confidence,
     hypothesis: `${concern.reason} This remains a candidate concern until the read-only probe is evaluated.`,
     id,
@@ -381,8 +393,8 @@ function createProbe(
     question: `How many rows in ${source} satisfy the candidate condition?`,
     readOnly: true,
     reason: concern.reason,
-    sql: `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`,
-  };
+    sql,
+  } };
 }
 
 function ensureProbeParameter(name: string, probeId: string, entries: Map<string, InvestigationParameterV1>): InvestigationParameterV1 {
@@ -440,7 +452,26 @@ function compareConcerns(left: CandidateConcern, right: CandidateConcern): numbe
 }
 
 function referencedParameters(sql: string): string[] {
-  return [...sql.matchAll(PARAMETER_REFERENCE)].map((match) => match[1]).filter((name, index, names) => names.indexOf(name) === index).sort();
+  const names = new Set<string>();
+  const seen = new Set<object>();
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof ParameterExpression) {
+      names.add(value.name.value);
+      return;
+    }
+    for (const nested of Object.values(value)) {
+      if (Array.isArray(nested)) nested.forEach(visit);
+      else visit(nested);
+    }
+  };
+  try {
+    visit(SqlParser.parse(sql));
+  } catch {
+    return [];
+  }
+  return [...names].sort();
 }
 
 function isSafePredicate(sql: string): boolean {
