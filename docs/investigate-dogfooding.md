@@ -15,9 +15,15 @@ npx tsx src/cli/diagnose.ts investigate \
   --ddl tests/scenarios/<scenario>/schema.sql \
   --target-node main_output \
   --target-column <expected.targetColumn> \
-  --symptom <expected.symptom> \
-  --parameters <parameter-input.json>
+  --symptom <expected.symptom>
 ```
+
+Add `--parameters <parameter-input.json>` only when the scenario requires
+explicit investigation keys or known original-query parameter values. The JSON
+file is an array of parameter objects with a fixed origin, for example
+`[{"name":"customer_id","origin":"investigation_key","value":10}]`.
+Do not create placeholder parameters merely to make a dogfooding command look
+complete.
 
 Save the command's JSON only as ephemeral evidence under
 `tmp/orchestration/<task-id>/raw/<scenario>.json`. Do not copy a generated plan
