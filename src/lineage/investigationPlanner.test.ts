@@ -1,3 +1,4 @@
+import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, SimpleSelectQuery, SqlParser, UpdateQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
 import type { InvestigationNodeQueryContextV1 } from './investigationPlan';
 import type { ColumnDiagnosticPacket } from './diagnostics';
@@ -196,11 +197,63 @@ describe('createInvestigationPlan', () => {
   });
 
   it.each([
+    ['INSERT', "WITH changed AS (INSERT INTO audit_log(message) VALUES ('x') RETURNING id) SELECT id FROM changed", InsertQuery],
+    ['UPDATE', "WITH changed AS (UPDATE orders SET status = 'x' WHERE id = 1 RETURNING id) SELECT id FROM changed", UpdateQuery],
+    ['DELETE', 'WITH changed AS (DELETE FROM orders WHERE id = 1 RETURNING id) SELECT id FROM changed', DeleteQuery],
+    ['MERGE', 'WITH changed AS (MERGE INTO orders target USING staged source ON target.id = source.id WHEN MATCHED THEN UPDATE SET status = source.status RETURNING target.id) SELECT id FROM changed', MergeQuery],
+  ])('blocks a parsed %s CTE even though its top-level AST is SELECT', (_name, querySql, dmlConstructor) => {
+    const parsed = SqlParser.parse(querySql);
+    expect(parsed).toBeInstanceOf(SimpleSelectQuery);
+    expect(parsed).not.toBeInstanceOf(BinarySelectQuery);
+    if (!(parsed instanceof SimpleSelectQuery)) throw new Error('Expected the DML CTE reproduction to parse as a SimpleSelectQuery.');
+    expect(parsed.withClause?.tables).toHaveLength(1);
+    expect(parsed.withClause?.tables[0].query).toBeInstanceOf(dmlConstructor);
+
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it('allows nested SELECT-only CTEs before creating an outer-filter probe', () => {
+    const querySql = 'WITH first_rows AS (SELECT customer_id, status FROM payments), selected_rows AS (SELECT customer_id FROM first_rows WHERE status = :status) SELECT customer_id FROM selected_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+  });
+
+  it('blocks a data-modifying CTE nested beneath a SELECT CTE', () => {
+    const querySql = 'WITH selected_rows AS (WITH changed AS (DELETE FROM payments WHERE status = \'cancelled\' RETURNING customer_id) SELECT customer_id FROM changed) SELECT customer_id FROM selected_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it.each([
     ['missing key output', contextFor('SELECT total FROM payments', [{ name: 'total', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
     ['duplicate key output', contextFor('SELECT customer_id, customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }, { name: 'customer_id', outputIndex: 1 }]), 'AMBIGUOUS_OUTPUT_COLUMN'],
     ['unresolved wildcard', { ...contextFor('SELECT customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), analysisWarnings: [{ code: 'wildcard_unresolved_without_schema', message: 'Wildcard expansion is unresolved.' }] }, 'UNRESOLVED_WILDCARD'],
     ['absent node query', contextFor(undefined, [{ name: 'customer_id', outputIndex: 0 }]), 'NODE_QUERY_UNAVAILABLE'],
-    ['non-SELECT node query', contextFor('DELETE FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), 'NODE_QUERY_UNAVAILABLE'],
+    ['non-SELECT node query', contextFor('DELETE FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_NOT_READ_ONLY'],
+    ['unparseable node query', contextFor('SELECT FROM', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_REPARSE_FAILED'],
     ['source alias only', contextFor('SELECT p.amount FROM payments p', [{ name: 'amount', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
   ])('blocks the outer-filter probe for %s', (_label, context, code) => {
     const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', context);

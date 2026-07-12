@@ -3,7 +3,16 @@ import type { LineageModel, LineageNode } from '../domain/lineage';
 import type { ProblemIntent } from './problemIntent';
 import { analyzeSql } from './rawsqlAdapter';
 import { parseSchemaFactsFromDdl, type DdlInput, type SchemaFacts } from './schemaFacts';
-import { BinarySelectQuery, ParameterExpression, SimpleSelectQuery, SqlParser } from 'rawsql-ts';
+import {
+  BinarySelectQuery,
+  DeleteQuery,
+  InsertQuery,
+  MergeQuery,
+  ParameterExpression,
+  SimpleSelectQuery,
+  SqlParser,
+  UpdateQuery,
+} from 'rawsql-ts';
 
 /** The only SQL mode used to diagnose the submitted statement. */
 export type InvestigationAnalysisModeV1 = 'original';
@@ -287,15 +296,17 @@ function createNodeQueryOuterFilterProbe(
     }
     outputKeys.push(quoteIdentifier(matchingColumns[0].name));
   }
-  if (!isReadOnlySelect(node.querySql)) {
-    return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'NODE_QUERY_UNAVAILABLE', 'The selected node query is not a parser-backed read-only SELECT.') };
+  const nodeQueryReadOnly = inspectReadOnlyProbeSql(node.querySql);
+  if (!nodeQueryReadOnly.ok) {
+    return { blocked: blockedProbe('probe:node-query-outer-filter:01', nodeQueryReadOnly.code, nodeQueryReadOnly.reason) };
   }
 
   const id = 'probe:node-query-outer-filter:01';
   const conditions = investigationKeys.map((key, index) => `investigation_node.${outputKeys[index]} = :${key.name}`);
   const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE ${conditions.join(' AND ')}`;
-  if (!reparseGeneratedProbe(sql)) {
-    return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated outer-filter probe did not re-parse as a read-only SELECT.') };
+  const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
+  if (!generatedProbeReadOnly.ok) {
+    return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
   }
   const parameterNames = [...new Set([
     ...investigationKeys.map((key) => key.name),
@@ -331,18 +342,50 @@ function hasWhereConcernForTargetNode(packet: ColumnDiagnosticPacket, context: I
   }));
 }
 
-function isReadOnlySelect(sql: string): boolean {
+type ReadOnlyProbeInspection =
+  | { ok: true }
+  | { code: 'PROBE_NOT_READ_ONLY' | 'PROBE_REPARSE_FAILED'; ok: false; reason: string };
+
+/**
+ * `readOnly: true` means one parseable SELECT statement whose complete CTE tree
+ * contains only SELECT queries. It does not establish the absence of database-
+ * specific function, lock, extension, or user-defined-function side effects.
+ */
+function inspectReadOnlyProbeSql(sql: string): ReadOnlyProbeInspection {
   try {
     const statement = SqlParser.parse(sql);
-    return statement instanceof SimpleSelectQuery || statement instanceof BinarySelectQuery;
+    return isReadOnlySelectTree(statement)
+      ? { ok: true }
+      : {
+        code: 'PROBE_NOT_READ_ONLY',
+        ok: false,
+        reason: 'The parsed probe contains a query tree that is not provably read-only.',
+      };
   } catch {
-    return false;
+    return {
+      code: 'PROBE_REPARSE_FAILED',
+      ok: false,
+      reason: 'The probe SQL did not parse as one read-only SELECT statement.',
+    };
   }
 }
 
-/** Every generated probe is parsed independently from its source fragment. */
-function reparseGeneratedProbe(sql: string): boolean {
-  return isReadOnlySelect(sql);
+/** Permits only public SELECT AST classes and recursively verifies every CTE body. */
+function isReadOnlySelectTree(query: unknown): boolean {
+  if (query instanceof SimpleSelectQuery) {
+    return (query.withClause?.tables ?? []).every((table) => isReadOnlyCteQuery(table.query));
+  }
+  if (query instanceof BinarySelectQuery) {
+    return isReadOnlySelectTree(query.left) && isReadOnlySelectTree(query.right);
+  }
+  return false;
+}
+
+function isReadOnlyCteQuery(query: unknown): boolean {
+  if (query instanceof InsertQuery || query instanceof UpdateQuery || query instanceof DeleteQuery || query instanceof MergeQuery) {
+    return false;
+  }
+  return isReadOnlySelectTree(query);
 }
 
 function quoteIdentifier(value: string): string {
@@ -384,8 +427,9 @@ function createProbe(
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked: BlockedProbeV1; probe?: never } | { blocked?: never; probe: ProbeSpecV1 } {
   const sql = `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`;
-  if (!reparseGeneratedProbe(sql)) {
-    return { blocked: blockedProbe(id, 'PROBE_REPARSE_FAILED', 'The generated candidate probe did not re-parse as a read-only SELECT.') };
+  const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
+  if (!generatedProbeReadOnly.ok) {
+    return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
   }
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return { probe: {
