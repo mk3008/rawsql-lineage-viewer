@@ -3,8 +3,86 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { createInvestigationPlanForCli } from './diagnose';
 
 describe('rawsql-lineage diagnose CLI', () => {
+  it('delegates investigation planning exactly once with unchanged static inputs', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      const ddlPath = resolve(root, 'schema.sql');
+      const parametersPath = resolve(root, 'parameters.json');
+      writeFileSync(sqlPath, 'select status from orders where status = :status');
+      writeFileSync(ddlPath, 'create table orders (status text);');
+      writeFileSync(parametersPath, JSON.stringify([{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]));
+      const calls: unknown[] = [];
+      const plan = createInvestigationPlanForCli([
+        '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--symptom', 'missing_rows', '--parameters', parametersPath, '--ddl', ddlPath,
+      ], {
+        createPlan: (input) => {
+          calls.push(input);
+          return { kind: 'investigation-plan', version: 1 } as ReturnType<typeof createInvestigationPlanForCli>;
+        },
+      });
+
+      expect(plan).toEqual({ kind: 'investigation-plan', version: 1 });
+      expect(calls).toEqual([{
+        ddl: [{ filePath: ddlPath, sql: 'create table orders (status text);' }],
+        parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+        sql: 'select status from orders where status = :status',
+        symptom: 'missing_rows',
+        target: { columnName: 'status', nodeId: 'main_output' },
+      }]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('emits an investigation plan as JSON without executing supplied SQL', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      const parametersPath = resolve(root, 'parameters.json');
+      writeFileSync(sqlPath, 'select status from orders where status = :status');
+      writeFileSync(parametersPath, JSON.stringify([{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]));
+
+      const stdout = execFileSync(process.execPath, [
+        '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath,
+      ], { encoding: 'utf8' });
+      const plan = JSON.parse(stdout) as { diagnostics: Array<{ code: string }>; kind: string; recommendedProbes: Array<{ sql: string }>; target: { columnName: string; nodeId: string } };
+
+      expect(plan.kind).toBe('investigation-plan');
+      expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'logic_review' });
+      expect(plan.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'original_sql_only' })]));
+      expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects duplicate parameter names through the CLI boundary without exposing values', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      const parametersPath = resolve(root, 'parameters.json');
+      writeFileSync(sqlPath, 'select status from orders');
+      writeFileSync(parametersPath, JSON.stringify([
+        { name: 'status', origin: 'original_query_parameter', value: 'secret-one' },
+        { name: 'status', origin: 'investigation_key', value: 'secret-two' },
+      ]));
+      let thrown: unknown;
+      try {
+        createInvestigationPlanForCli(['--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(thrown).toMatchObject({ code: 'PARAMETER_NAME_COLLISION' });
+      expect(String((thrown as Error).message)).not.toContain('secret');
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
   it('emits all output column packets with DDL file input', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
     try {
@@ -133,6 +211,52 @@ describe('rawsql-lineage diagnose CLI', () => {
         'customers',
         'orders',
       ]);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('preserves WHERE candidates unless safe optimization moves a joined-source predicate into JOIN ON', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const movedPredicateSqlPath = resolve(root, 'moved-predicate.sql');
+      const wherePredicateSqlPath = resolve(root, 'where-predicate.sql');
+      writeFileSync(
+        movedPredicateSqlPath,
+        'select c.id from customers c join customer_tags ct on ct.customer_id = c.id where ct.is_active = true',
+      );
+      writeFileSync(
+        wherePredicateSqlPath,
+        'select c.id from customers c where c.is_active = true',
+      );
+
+      const diagnose = (sqlPath: string) => JSON.parse(execFileSync(process.execPath, [
+        '--import',
+        'tsx',
+        resolve(process.cwd(), 'src/cli/diagnose.ts'),
+        'diagnose',
+        '--sql',
+        sqlPath,
+        '--target-column',
+        'id',
+        '--symptom',
+        'duplicate_rows',
+      ], { encoding: 'utf8' })) as {
+        packets: Array<{
+          rowLineage: { influences: Array<{ expressionSql?: string; mechanism: string }> };
+        }>;
+      };
+
+      const movedPredicateMechanisms = diagnose(movedPredicateSqlPath).packets[0].rowLineage.influences;
+      expect(movedPredicateMechanisms).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mechanism: 'join', expressionSql: expect.stringContaining('ct.is_active = true') }),
+      ]));
+      expect(movedPredicateMechanisms.map((influence) => influence.mechanism)).not.toContain('where');
+
+      const wherePredicateMechanisms = diagnose(wherePredicateSqlPath).packets[0].rowLineage.influences;
+      expect(wherePredicateMechanisms).toEqual(expect.arrayContaining([
+        expect.objectContaining({ mechanism: 'where', expressionSql: 'c.is_active = true' }),
+      ]));
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

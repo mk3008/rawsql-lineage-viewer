@@ -4,9 +4,10 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildColumnDiagnosticPacket } from '../lineage/diagnostics';
 import type { AnalysisWarning } from '../domain/lineage';
-import { diagnosticProblemIntents, symptomEffectMap, type DiagnosticConcernEffect, type DiagnosticProblemIntent } from '../lineage/problemIntent';
+import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationPlanV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { diagnosticProblemIntents, problemIntentOptions, symptomEffectMap, type DiagnosticConcernEffect, type DiagnosticProblemIntent, type ProblemIntent } from '../lineage/problemIntent';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
-import type { SchemaFacts } from '../lineage/schemaFacts';
+import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 import { parseSchemaFactsFromDdl } from '../lineage/schemaFacts';
 
 interface DiagnoseArgs {
@@ -17,6 +18,17 @@ interface DiagnoseArgs {
   sql?: string;
   symptom?: DiagnosticProblemIntent;
   targetColumn?: string;
+}
+
+interface InvestigateArgs extends Omit<DiagnoseArgs, 'symptom' | 'targetColumn'> {
+  parameters?: string;
+  symptom?: ProblemIntent;
+  targetColumn?: string;
+  targetNode?: string;
+}
+
+interface InvestigationCliDependencies {
+  createPlan: typeof createInvestigationPlan;
 }
 
 interface SqlDiagnosticReport {
@@ -50,11 +62,18 @@ const implementedConcernEffects = new Set<DiagnosticConcernEffect>([
 ]);
 
 const validProblemIntents = new Set<DiagnosticProblemIntent>(diagnosticProblemIntents);
+const validInvestigationSymptoms = new Set<ProblemIntent>(problemIntentOptions);
 
 const excludedDirectories = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const [command, ...argv] = process.argv.slice(2);
+  if (command === 'investigate') {
+    process.stdout.write(`${JSON.stringify(createInvestigationPlanForCli(argv), null, 2)}\n`);
+    return;
+  }
+
+  const args = parseArgs(command === 'diagnose' ? argv : process.argv.slice(2));
   if (!args.sql) {
     throw new Error('Missing required --sql <file> option.');
   }
@@ -104,8 +123,6 @@ async function main(): Promise<void> {
 
 function parseArgs(argv: string[]): DiagnoseArgs {
   const args: DiagnoseArgs = { ddl: [], ddlDir: [] };
-  const command = argv[0] === 'diagnose' ? argv.shift() : undefined;
-  void command;
 
   for (let index = 0; index < argv.length; index += 1) {
     const option = argv[index];
@@ -144,6 +161,83 @@ function parseArgs(argv: string[]): DiagnoseArgs {
   return args;
 }
 
+/**
+ * Creates exactly one shared investigation plan from static CLI inputs.
+ * This boundary does not execute SQL or manufacture diagnostic/probe SQL.
+ */
+export function createInvestigationPlanForCli(
+  argv: string[],
+  dependencies: InvestigationCliDependencies = { createPlan: createInvestigationPlan },
+): InvestigationPlanV1 {
+  const args = parseInvestigateArgs(argv);
+  if (!args.sql) {
+    throw new Error('Missing required --sql <file> option.');
+  }
+  if (!args.targetNode) {
+    throw new Error('Missing required --target-node <node-id> option.');
+  }
+  if (!args.targetColumn) {
+    throw new Error('Missing required --target-column <column-name> option.');
+  }
+  if (args.schemaFacts && (args.ddl.length > 0 || args.ddlDir.length > 0)) {
+    throw new Error('Use either --schema-facts <file> or --ddl/--ddl-dir inputs, not both.');
+  }
+
+  const ddl = loadDdlInputs(args);
+  const schemaFacts = args.schemaFacts ? normalizeLoadedSchemaFacts(JSON.parse(readTextFile(args.schemaFacts))) : undefined;
+  const parameters = args.parameters ? parseParameters(JSON.parse(readTextFile(args.parameters))) : undefined;
+  return dependencies.createPlan({
+    ...(ddl.length > 0 ? { ddl } : {}),
+    ...(parameters ? { parameters } : {}),
+    ...(schemaFacts ? { schemaFacts } : {}),
+    sql: readTextFile(args.sql),
+    symptom: args.symptom,
+    target: { columnName: args.targetColumn, nodeId: args.targetNode },
+  });
+}
+
+function parseInvestigateArgs(argv: string[]): InvestigateArgs {
+  const args: InvestigateArgs = { ddl: [], ddlDir: [] };
+  for (let index = 0; index < argv.length; index += 1) {
+    const option = argv[index];
+    const value = argv[index + 1];
+    if (!option.startsWith('--')) {
+      throw new Error(`Unexpected positional argument: ${option}`);
+    }
+    if (option === '--ddl') {
+      args.ddl.push(requireValue(option, value));
+      index += 1;
+    } else if (option === '--ddl-dir') {
+      args.ddlDir.push(requireValue(option, value));
+      index += 1;
+    } else if (option === '--parameters') {
+      args.parameters = requireValue(option, value);
+      index += 1;
+    } else if (option === '--schema-facts') {
+      args.schemaFacts = requireValue(option, value);
+      index += 1;
+    } else if (option === '--sql') {
+      args.sql = requireValue(option, value);
+      index += 1;
+    } else if (option === '--target-column') {
+      args.targetColumn = requireValue(option, value);
+      index += 1;
+    } else if (option === '--target-node') {
+      args.targetNode = requireValue(option, value);
+      index += 1;
+    } else if (option === '--symptom') {
+      args.symptom = parseInvestigationSymptom(requireValue(option, value));
+      index += 1;
+    } else if (option === '--help' || option === '-h') {
+      printInvestigateHelp();
+      process.exit(0);
+    } else {
+      throw new Error(`Unknown option: ${option}`);
+    }
+  }
+  return args;
+}
+
 function loadSchemaFacts(args: DiagnoseArgs): SchemaFacts | undefined {
   if (args.schemaFacts) {
     return normalizeLoadedSchemaFacts(JSON.parse(readTextFile(args.schemaFacts)));
@@ -162,6 +256,13 @@ function loadSchemaFacts(args: DiagnoseArgs): SchemaFacts | undefined {
     filePath,
     sql: readTextFile(filePath),
   })));
+}
+
+function loadDdlInputs(args: Pick<DiagnoseArgs, 'ddl' | 'ddlDir'>): DdlInput[] {
+  return [
+    ...args.ddlDir.flatMap((directory) => collectDdlFiles(resolve(process.cwd(), directory))),
+    ...args.ddl.map((filePath) => resolve(process.cwd(), filePath)),
+  ].sort((left, right) => left.localeCompare(right)).map((filePath) => ({ filePath, sql: readTextFile(filePath) }));
 }
 
 function normalizeLoadedSchemaFacts(value: unknown): SchemaFacts {
@@ -218,8 +319,53 @@ function parseProblemIntent(value: string): DiagnosticProblemIntent {
   throw new Error(`Unknown symptom: ${value}. Expected one of: ${[...validProblemIntents].join(', ')}.`);
 }
 
+function parseInvestigationSymptom(value: string): ProblemIntent {
+  if (validInvestigationSymptoms.has(value as ProblemIntent)) {
+    return value as ProblemIntent;
+  }
+  throw new Error(`Unknown symptom: ${value}. Expected one of: ${[...validInvestigationSymptoms].join(', ')}.`);
+}
+
+function parseParameters(value: unknown): InvestigationPlannerParameterInputV1[] {
+  if (!Array.isArray(value)) {
+    throw new Error('Parameters JSON must be an array of parameter objects.');
+  }
+  return value.map((parameter, index) => {
+    if (!parameter || typeof parameter !== 'object' || Array.isArray(parameter)) {
+      throw new Error(`Parameter at index ${index} must be an object.`);
+    }
+    const input = parameter as Record<string, unknown>;
+    if (typeof input.name !== 'string' || input.name.length === 0) {
+      throw new Error(`Parameter at index ${index} must include a non-empty string name.`);
+    }
+    if (!investigationInputParameterOrigins.includes(input.origin as typeof investigationInputParameterOrigins[number])) {
+      throw new Error(`Parameter ${input.name} has an invalid origin.`);
+    }
+    if (input.required !== undefined && typeof input.required !== 'boolean') {
+      throw new Error(`Parameter ${input.name} required must be a boolean.`);
+    }
+    if (input.typeHint !== undefined && typeof input.typeHint !== 'string') {
+      throw new Error(`Parameter ${input.name} typeHint must be a string.`);
+    }
+    if (input.value !== undefined && input.value !== null && !['boolean', 'number', 'string'].includes(typeof input.value)) {
+      throw new Error(`Parameter ${input.name} value must be null, boolean, number, or string.`);
+    }
+    return {
+      name: input.name as string,
+      origin: input.origin as InvestigationPlannerParameterInputV1['origin'],
+      ...(input.required !== undefined ? { required: input.required as boolean } : {}),
+      ...(input.typeHint !== undefined ? { typeHint: input.typeHint as string } : {}),
+      ...(Object.prototype.hasOwnProperty.call(input, 'value') ? { value: input.value as boolean | number | string | null } : {}),
+    };
+  });
+}
+
 function printHelp(): void {
   process.stdout.write(`rawsql-lineage diagnose --sql <file> [--target-column <name>] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--out <file>]\n`);
+}
+
+function printInvestigateHelp(): void {
+  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <file>]\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

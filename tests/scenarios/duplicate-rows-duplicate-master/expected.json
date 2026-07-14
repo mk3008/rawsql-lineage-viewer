@@ -25,9 +25,9 @@
   ],
   "expectedEffects": ["row_multiplication", "row_filter"],
   "primaryEffects": ["row_multiplication"],
-  "expectedMechanisms": ["join", "where"],
+  "expectedMechanisms": ["join"],
   "expectedEvidenceContains": ["customer_id", "is_active"],
   "expectedCheckDomains": ["data_condition", "schema_assumption"],
   "notExpectedEffects": [],
-  "notes": "Duplicate active master rows create duplicate output rows."
+  "notes": "Duplicate active master rows create duplicate output rows. The diagnostic CLI safely moves the joined-source WHERE predicate into the INNER JOIN ON clause, so it is represented as join rather than where."
 }

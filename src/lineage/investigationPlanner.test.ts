@@ -1,0 +1,392 @@
+import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, SimpleSelectQuery, SqlParser, UpdateQuery } from 'rawsql-ts';
+import { describe, expect, it } from 'vitest';
+import type { InvestigationNodeQueryContextV1 } from './investigationPlan';
+import type { ColumnDiagnosticPacket } from './diagnostics';
+import { createInvestigationPlan, createInvestigationPlanFromDiagnosticPacket } from './investigationPlan';
+import { analyzeSql } from './rawsqlAdapter';
+
+function packet(overrides: Partial<ColumnDiagnosticPacket> = {}): ColumnDiagnosticPacket {
+  return {
+    candidateConcerns: [{ checkDomains: ['data_condition'], confidence: 'possible', effects: ['row_filter'], evidence: ['status = :status'], impact: ['may_filter_rows'], influenceIds: ['influence:where'], kind: 'where', mechanisms: ['where'], reason: 'The WHERE predicate may exclude rows.', scopeId: 'scope:orders', signals: ['where'] }],
+    columnLineage: { caseRules: [], expressionChain: [], expressions: [], references: [], root: 'orders.status', scopeChain: [], sourceLeaves: [{ columnName: 'status', nodeId: 'table:orders', nodeLabel: 'orders', nodeType: 'table', scopeId: 'scope:orders' }], summary: { caseRuleCount: 0, expressionStepCount: 0, intermediateReferenceCount: 0, sourceLeafCount: 1 } },
+    diagnostics: [], kind: 'column-diagnostic-packet', omittedContext: { message: '', omittedColumnCount: 0, omittedInfluenceCount: 0, omittedNodeCount: 0 },
+    rowLineage: { influences: [{ effects: ['row_filter'], expressionSql: 'status = :status', id: 'influence:where', kind: 'where', mechanism: 'where', references: [{ columnName: 'status', nodeId: 'table:orders', nodeLabel: 'orders', roles: ['row_lineage'], scopeId: 'scope:orders', usages: [{ role: 'row_lineage', scopeId: 'scope:orders', usageKind: 'where' }] }], signals: ['where'], scopeId: 'scope:orders' }], nodeImpacts: [], summary: '' },
+    target: { columnName: 'status', nodeId: 'table:orders', nodeLabel: 'orders', nodeType: 'table', scopeId: 'scope:orders' }, version: 1, views: { columnLineageTree: { derivedFrom: 'columnLineage', tree: [] } },
+    ...overrides,
+  };
+}
+
+describe('createInvestigationPlan', () => {
+  it('is deterministic and analyzes only the original diagnostic packet', () => {
+    const input = { sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, symptom: 'missing_rows' as const, parameters: [{ name: 'status', origin: 'original_query_parameter' as const, required: true, value: 'paid' }] };
+    expect(createInvestigationPlan(input)).toEqual(createInvestigationPlan(input));
+    expect(createInvestigationPlan(input).analysisMode).toBe('original');
+    expect(createInvestigationPlan(input).diagnostics[0].code).toBe('original_sql_only');
+  });
+
+  it('preserves the supplied symptom on the investigation target and defaults deterministically', () => {
+    const base = { sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' } };
+    expect(createInvestigationPlan({ ...base, symptom: 'missing_rows' }).target.symptom).toBe('missing_rows');
+    expect(createInvestigationPlan(base).target.symptom).toBe('logic_review');
+  });
+
+  it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
+    const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
+    expect(plan.recommendedProbes).toHaveLength(1);
+    expect(plan.recommendedProbes[0]).toMatchObject({ readOnly: true, sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)' });
+    expect(plan.recommendedProbes[0].sql).not.toContain('paid');
+    for (const probe of plan.recommendedProbes) {
+      expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
+    }
+  });
+
+  it('derives candidate probe parameters from completed SQL, preserving provided values and unresolved placeholders', () => {
+    const candidate = packet({
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'status = :status AND tenant_id = :tenant_id AND status = :status' }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(candidate, [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]);
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'candidate_row_count');
+
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['status', 'tenant_id']);
+    expect(probe?.parameters.find((parameter) => parameter.name === 'status')).toMatchObject({ origin: 'original_query_parameter', value: 'paid' });
+    expect(probe?.parameters.find((parameter) => parameter.name === 'tenant_id')).toMatchObject({ origin: 'unresolved_parameter', status: 'unresolved' });
+    expect(plan.parameters.find((parameter) => parameter.name === 'tenant_id')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
+  });
+
+  it('keeps parameter origins separate and marks absent required values unresolved', () => {
+    const plan = createInvestigationPlan({ sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [
+      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+      { name: 'customer_id', origin: 'investigation_key', required: true },
+      { name: 'start_date', origin: 'derived_parameter', value: '2026-01-01' },
+      { name: 'database_timezone', origin: 'environment_parameter' },
+    ] });
+    expect(plan.parameters.map((item) => item.origin)).toEqual(['derived_parameter', 'environment_parameter', 'original_query_parameter', 'unresolved_parameter']);
+    expect(plan.unresolvedParameters).toMatchObject([{ name: 'customer_id', status: 'unresolved' }]);
+  });
+
+  it('blocks a probe when a usable source relation is unavailable', () => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(packet({ columnLineage: { ...packet().columnLineage, sourceLeaves: [] } }));
+    expect(plan.recommendedProbes).toEqual([]);
+    expect(plan.blockedProbes).toMatchObject([{ code: 'UNSUITABLE_PROBE_SOURCE', status: 'blocked' }]);
+    expect(plan.limitations).toEqual(expect.arrayContaining([{ code: 'unsuitable_probe_source', message: expect.any(String) }]));
+  });
+
+  it('limits recommendations to three deterministic probes', () => {
+    const concerns = ['where', 'where', 'where', 'where'].map((kind, index) => ({
+      ...packet().candidateConcerns[0], evidence: [`status = :status_${index}`], kind, scopeId: `scope:${kind}`,
+    }));
+    const plan = createInvestigationPlanFromDiagnosticPacket(packet({ candidateConcerns: concerns }));
+    expect(plan.recommendedProbes).toHaveLength(3);
+    expect(plan.deferredProbes).toHaveLength(1);
+    expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+    for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+      expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
+    }
+  });
+
+  it('sorts all successful probes before splitting recommendations, including the node-query probe', () => {
+    const base = nodeQueryPacket();
+    const concerns = ['zeta', 'beta', 'alpha'].map((scopeId, index) => ({
+      ...base.candidateConcerns[0],
+      evidence: [`status = :status_${index}`],
+      scopeId: `scope:${scopeId}`,
+    }));
+    const context = contextFor('SELECT customer_id, status FROM orders WHERE status = :status', [
+      { name: 'customer_id', outputIndex: 0 }, { name: 'status', outputIndex: 1 },
+    ]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      { ...base, candidateConcerns: concerns },
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      context,
+    );
+
+    expect(plan.recommendedProbes.map((probe) => probe.kind)).toEqual(['node_query_outer_filter', 'candidate_row_count', 'candidate_row_count']);
+    expect(plan.deferredProbes.map((probe) => probe.kind)).toEqual(['candidate_row_count']);
+    expect([...plan.recommendedProbes, ...plan.deferredProbes].map((probe) => [probe.priority, probe.kind, probe.nodeId, probe.id])).toEqual([
+      [1, 'node_query_outer_filter', 'main_output', 'probe:node-query-outer-filter:01'],
+      [1, 'candidate_row_count', 'table:orders', 'probe:where:01'],
+      [2, 'candidate_row_count', 'table:orders', 'probe:where:02'],
+      [3, 'candidate_row_count', 'table:orders', 'probe:where:03'],
+    ]);
+  });
+
+  it('keeps the sorted recommendation result independent of candidate input order and excludes blocked probes', () => {
+    const base = packet();
+    const whereConcerns = ['c', 'a', 'b', 'd'].map((scopeId, index) => ({
+      ...base.candidateConcerns[0], evidence: [`status = :status_${index}`], scopeId: `scope:${scopeId}`,
+    }));
+    const blockedConcern = { ...base.candidateConcerns[0], kind: 'join_on' as const, influenceIds: ['influence:join'], scopeId: 'scope:blocked' };
+    const makePlan = (candidateConcerns: typeof whereConcerns) => createInvestigationPlanFromDiagnosticPacket(packet({ candidateConcerns: [...candidateConcerns, blockedConcern] }));
+    const forward = makePlan(whereConcerns);
+    const reverse = makePlan([...whereConcerns].reverse());
+
+    expect(forward.recommendedProbes).toHaveLength(3);
+    expect(forward.blockedProbes).toContainEqual(expect.objectContaining({ code: 'UNSUPPORTED_CONCERN_KIND' }));
+    expect(forward.recommendedProbes.map((probe) => probe.id)).toEqual(reverse.recommendedProbes.map((probe) => probe.id));
+    expect(forward.deferredProbes.map((probe) => probe.id)).toEqual(reverse.deferredProbes.map((probe) => probe.id));
+    expect([...forward.recommendedProbes, ...forward.deferredProbes].map((probe) => probe.priority)).toEqual([2, 3, 4, 5]);
+  });
+
+  it('never interpolates prose or unsafe candidate evidence into probe SQL', () => {
+    const unsafePacket = packet({
+      candidateConcerns: [{ ...packet().candidateConcerns[0], evidence: ['This is prose; DROP TABLE orders;'] }],
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(unsafePacket);
+    expect(plan.recommendedProbes[0].sql).toBe('SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status = :status)');
+    expect(plan.recommendedProbes[0].sql).not.toContain('DROP TABLE');
+    expect(plan.recommendedProbes[0].sql).not.toContain('This is prose');
+  });
+
+  it('blocks when only diagnostic evidence exists without a parser-backed predicate', () => {
+    const missingFragmentPacket = packet({
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: undefined }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(missingFragmentPacket);
+    expect(plan.blockedProbes).toMatchObject([{ code: 'SAFE_PROBE_FRAGMENT_UNAVAILABLE', status: 'blocked' }]);
+  });
+
+  it('blocks an ON/join concern instead of embedding it in a WHERE probe', () => {
+    const joinPacket = packet({
+      candidateConcerns: [{ ...packet().candidateConcerns[0], kind: 'join_on', influenceIds: ['influence:join'] }],
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], id: 'influence:join', kind: 'join_on', mechanism: 'join', expressionSql: 'orders.customer_id = customers.id' }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(joinPacket);
+    expect(plan.recommendedProbes).toEqual([]);
+    expect(plan.blockedProbes).toMatchObject([{ code: 'UNSUPPORTED_CONCERN_KIND', status: 'blocked' }]);
+  });
+
+  it('blocks an alias-qualified WHERE predicate when the alias cannot be reconstructed', () => {
+    const aliasPacket = packet({
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'o.status IS NOT NULL' }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(aliasPacket);
+    expect(plan.recommendedProbes).toEqual([]);
+    expect(plan.blockedProbes).toMatchObject([{ code: 'ALIAS_MAPPING_UNAVAILABLE', status: 'blocked' }]);
+  });
+
+  it('wraps a proven selected node query with an explicitly supplied investigation key without changing its SQL', () => {
+    const query = 'SELECT p.customer_id, sum(p.amount) AS paid_amount FROM payments p WHERE p.status = :status GROUP BY p.customer_id';
+    const nodeQuery = analyzeSql(query, { analysisMode: 'original', optimizeConditions: false }).lineage.nodes.find((node) => node.id === 'main_output')?.querySql;
+    const plan = createInvestigationPlan({
+      sql: query,
+      target: { columnName: 'paid_amount', nodeId: 'main_output' },
+      symptom: 'value_too_low',
+      parameters: [
+        { name: 'customer_id', origin: 'investigation_key', value: 10 },
+        { name: 'status', origin: 'original_query_parameter', value: 'succeeded' },
+      ],
+    });
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+
+    expect(probe).toMatchObject({
+      id: 'probe:node-query-outer-filter:01',
+      kind: 'node_query_outer_filter',
+      nodeId: 'main_output',
+      priority: 1,
+      readOnly: true,
+    });
+    expect(probe?.sql).toContain(`FROM (\n${nodeQuery}\n) AS investigation_node`);
+    expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id');
+    expect(probe?.sql).not.toContain('= 10');
+    expect(probe?.sql).not.toContain('succeeded');
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
+    expect(plan.parameters.find((parameter) => parameter.name === 'customer_id')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
+    expect(plan.parameters.find((parameter) => parameter.name === 'status')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
+    expect(() => analyzeSql(probe!.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
+  });
+
+  it('does not mark unused known parameters as required by the node-query probe', () => {
+    const context = contextFor('SELECT customer_id, amount FROM payments WHERE status = :status', [
+      { name: 'customer_id', outputIndex: 0 }, { name: 'amount', outputIndex: 1 },
+    ]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+      { name: 'scenario_marker', origin: 'original_query_parameter', value: 'marker' },
+    ], 'value_too_low', context);
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
+    expect(plan.parameters.find((parameter) => parameter.name === 'scenario_marker')?.usedBy).toEqual([{ analysisMode: 'original', kind: 'original_analysis' }]);
+  });
+
+  it.each([
+    [[{ name: 'status', origin: 'original_query_parameter' as const }, { name: 'status', origin: 'original_query_parameter' as const }]],
+    [[{ name: 'status', origin: 'original_query_parameter' as const }, { name: 'status', origin: 'investigation_key' as const }]],
+    [[{ name: 'status', origin: 'investigation_key' as const }, { name: 'status', origin: 'original_query_parameter' as const }]],
+  ])('rejects duplicate parameter names at both Core Planner public entry points', (inputs) => {
+    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: inputs })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+    expect(() => createInvestigationPlanFromDiagnosticPacket(packet(), inputs)).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+  });
+
+  it('keeps distinct parameter names at the Core boundary', () => {
+    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [
+      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+    ] })).not.toThrow();
+  });
+
+  it('requires every investigation key, sorts them, and applies each as an outer AND condition', () => {
+    const context = contextFor('SELECT customer_id, region_id, amount FROM payments WHERE status = :status', [
+      { name: 'customer_id', outputIndex: 0 }, { name: 'region_id', outputIndex: 1 }, { name: 'amount', outputIndex: 2 },
+    ]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'region_id', origin: 'investigation_key', value: 20 },
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+    ], 'value_too_low', context);
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+
+    expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id AND investigation_node."region_id" = :region_id');
+    expect(probe?.sql).not.toContain('= 10');
+    expect(probe?.sql).not.toContain('= 20');
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'region_id', 'status']);
+    for (const name of ['customer_id', 'region_id']) {
+      expect(plan.parameters.find((parameter) => parameter.name === name)?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
+    }
+  });
+
+  it('blocks the whole node query probe when any investigation key is not exactly exposed', () => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'missing_key', origin: 'investigation_key', value: 20 },
+    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]));
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'INVESTIGATION_KEY_NOT_EXPOSED' }));
+  });
+
+  it('rejects duplicate investigation key names at the Core boundary', () => {
+    expect(() => createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
+      { name: 'customer_id', origin: 'investigation_key', value: 10 },
+      { name: 'customer_id', origin: 'investigation_key', value: 11 },
+    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]))).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+  });
+
+  it('collects only parser-recognized parameters, not cast names, strings, comments, or quoted identifiers', () => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', contextFor(
+      "SELECT customer_id FROM payments WHERE status = :status::text AND note <> ':fake' /* :comment */",
+      [{ name: 'customer_id', outputIndex: 0 }],
+    ));
+    const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+    expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
+  });
+
+  it('returns a structured block when generated candidate SQL cannot reparse', () => {
+    const invalidPacket = packet({
+      rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'status = (1' }] },
+    });
+    const plan = createInvestigationPlanFromDiagnosticPacket(invalidPacket, [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]);
+    expect(plan.recommendedProbes).toEqual([]);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_REPARSE_FAILED', status: 'blocked' }));
+    expect(plan.parameters).toEqual([expect.objectContaining({ name: 'status', usedBy: [{ analysisMode: 'original', kind: 'original_analysis' }] })]);
+  });
+
+  it.each([
+    ['INSERT', "WITH changed AS (INSERT INTO audit_log(message) VALUES ('x') RETURNING id) SELECT id FROM changed", InsertQuery],
+    ['UPDATE', "WITH changed AS (UPDATE orders SET status = 'x' WHERE id = 1 RETURNING id) SELECT id FROM changed", UpdateQuery],
+    ['DELETE', 'WITH changed AS (DELETE FROM orders WHERE id = 1 RETURNING id) SELECT id FROM changed', DeleteQuery],
+    ['MERGE', 'WITH changed AS (MERGE INTO orders target USING staged source ON target.id = source.id WHEN MATCHED THEN UPDATE SET status = source.status RETURNING target.id) SELECT id FROM changed', MergeQuery],
+  ])('blocks a parsed %s CTE even though its top-level AST is SELECT', (_name, querySql, dmlConstructor) => {
+    const parsed = SqlParser.parse(querySql);
+    expect(parsed).toBeInstanceOf(SimpleSelectQuery);
+    expect(parsed).not.toBeInstanceOf(BinarySelectQuery);
+    if (!(parsed instanceof SimpleSelectQuery)) throw new Error('Expected the DML CTE reproduction to parse as a SimpleSelectQuery.');
+    expect(parsed.withClause?.tables).toHaveLength(1);
+    expect(parsed.withClause?.tables[0].query).toBeInstanceOf(dmlConstructor);
+
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it('allows nested SELECT-only CTEs before creating an outer-filter probe', () => {
+    const querySql = 'WITH first_rows AS (SELECT customer_id, status FROM payments), selected_rows AS (SELECT customer_id FROM first_rows WHERE status = :status) SELECT customer_id FROM selected_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+  });
+
+  it('blocks a data-modifying CTE nested beneath a SELECT CTE', () => {
+    const querySql = 'WITH selected_rows AS (WITH changed AS (DELETE FROM payments WHERE status = \'cancelled\' RETURNING customer_id) SELECT customer_id FROM changed) SELECT customer_id FROM selected_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it('blocks a data-modifying CTE nested inside a derived-table source', () => {
+    const querySql = "SELECT customer_id FROM (WITH changed AS (DELETE FROM payments WHERE status = 'cancelled' RETURNING customer_id) SELECT customer_id FROM changed) nested_rows";
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+  });
+
+  it('allows a SELECT-only derived-table source', () => {
+    const querySql = 'SELECT customer_id FROM (WITH selected_rows AS (SELECT customer_id FROM payments WHERE status = :status) SELECT customer_id FROM selected_rows) nested_rows';
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      nodeQueryPacket(),
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      'value_too_low',
+      contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
+    );
+
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+  });
+
+  it.each([
+    ['missing key output', contextFor('SELECT total FROM payments', [{ name: 'total', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
+    ['duplicate key output', contextFor('SELECT customer_id, customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }, { name: 'customer_id', outputIndex: 1 }]), 'AMBIGUOUS_OUTPUT_COLUMN'],
+    ['unresolved wildcard', { ...contextFor('SELECT customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), analysisWarnings: [{ code: 'wildcard_unresolved_without_schema', message: 'Wildcard expansion is unresolved.' }] }, 'UNRESOLVED_WILDCARD'],
+    ['absent node query', contextFor(undefined, [{ name: 'customer_id', outputIndex: 0 }]), 'NODE_QUERY_UNAVAILABLE'],
+    ['non-SELECT node query', contextFor('DELETE FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_NOT_READ_ONLY'],
+    ['unparseable node query', contextFor('SELECT FROM', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_REPARSE_FAILED'],
+    ['source alias only', contextFor('SELECT p.amount FROM payments p', [{ name: 'amount', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
+  ])('blocks the outer-filter probe for %s', (_label, context, code) => {
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', context);
+    expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code, status: 'blocked' }));
+  });
+});
+
+function nodeQueryPacket(): ColumnDiagnosticPacket {
+  const base = packet();
+  return {
+    ...base,
+    target: { ...base.target, nodeId: 'main_output' },
+  };
+}
+
+function contextFor(querySql: string | undefined, columns: Array<{ name: string; outputIndex: number }>): InvestigationNodeQueryContextV1 {
+  return {
+    analysisWarnings: [],
+    nodes: [{ columns: columns.map((column) => ({ id: `main_output.${column.name}.${column.outputIndex}`, ...column })), id: 'main_output', label: 'Final Result', querySql, type: 'output' }],
+    scopes: [{ id: 'scope:orders', kind: 'select', nodeId: 'main_output' }],
+  };
+}
