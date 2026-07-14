@@ -84,6 +84,50 @@ describe('createInvestigationPlan', () => {
     }
   });
 
+  it('sorts all successful probes before splitting recommendations, including the node-query probe', () => {
+    const base = nodeQueryPacket();
+    const concerns = ['zeta', 'beta', 'alpha'].map((scopeId, index) => ({
+      ...base.candidateConcerns[0],
+      evidence: [`status = :status_${index}`],
+      scopeId: `scope:${scopeId}`,
+    }));
+    const context = contextFor('SELECT customer_id, status FROM orders WHERE status = :status', [
+      { name: 'customer_id', outputIndex: 0 }, { name: 'status', outputIndex: 1 },
+    ]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(
+      { ...base, candidateConcerns: concerns },
+      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      'value_too_low',
+      context,
+    );
+
+    expect(plan.recommendedProbes.map((probe) => probe.kind)).toEqual(['node_query_outer_filter', 'candidate_row_count', 'candidate_row_count']);
+    expect(plan.deferredProbes.map((probe) => probe.kind)).toEqual(['candidate_row_count']);
+    expect([...plan.recommendedProbes, ...plan.deferredProbes].map((probe) => [probe.priority, probe.kind, probe.nodeId, probe.id])).toEqual([
+      [1, 'node_query_outer_filter', 'main_output', 'probe:node-query-outer-filter:01'],
+      [1, 'candidate_row_count', 'table:orders', 'probe:where:01'],
+      [2, 'candidate_row_count', 'table:orders', 'probe:where:02'],
+      [3, 'candidate_row_count', 'table:orders', 'probe:where:03'],
+    ]);
+  });
+
+  it('keeps the sorted recommendation result independent of candidate input order and excludes blocked probes', () => {
+    const base = packet();
+    const whereConcerns = ['c', 'a', 'b', 'd'].map((scopeId, index) => ({
+      ...base.candidateConcerns[0], evidence: [`status = :status_${index}`], scopeId: `scope:${scopeId}`,
+    }));
+    const blockedConcern = { ...base.candidateConcerns[0], kind: 'join_on' as const, influenceIds: ['influence:join'], scopeId: 'scope:blocked' };
+    const makePlan = (candidateConcerns: typeof whereConcerns) => createInvestigationPlanFromDiagnosticPacket(packet({ candidateConcerns: [...candidateConcerns, blockedConcern] }));
+    const forward = makePlan(whereConcerns);
+    const reverse = makePlan([...whereConcerns].reverse());
+
+    expect(forward.recommendedProbes).toHaveLength(3);
+    expect(forward.blockedProbes).toContainEqual(expect.objectContaining({ code: 'UNSUPPORTED_CONCERN_KIND' }));
+    expect(forward.recommendedProbes.map((probe) => probe.id)).toEqual(reverse.recommendedProbes.map((probe) => probe.id));
+    expect(forward.deferredProbes.map((probe) => probe.id)).toEqual(reverse.deferredProbes.map((probe) => probe.id));
+    expect([...forward.recommendedProbes, ...forward.deferredProbes].map((probe) => probe.priority)).toEqual([2, 3, 4, 5]);
+  });
+
   it('never interpolates prose or unsafe candidate evidence into probe SQL', () => {
     const unsafePacket = packet({
       candidateConcerns: [{ ...packet().candidateConcerns[0], evidence: ['This is prose; DROP TABLE orders;'] }],

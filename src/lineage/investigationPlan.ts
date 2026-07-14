@@ -167,6 +167,11 @@ export class InvestigationPlanInputError extends Error {
 
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*(?:\.[A-Za-z_][A-Za-z0-9_$]*)*$/;
 const MAX_RECOMMENDED_PROBES = 3;
+/** Explicit, semantic ordering for equally-prioritized successful probes. */
+const PROBE_KIND_RANK: Readonly<Record<string, number>> = {
+  node_query_outer_filter: 0,
+  candidate_row_count: 1,
+};
 /** Used when callers do not describe a symptom explicitly. */
 const DEFAULT_INVESTIGATION_SYMPTOM: ProblemIntent = 'logic_review';
 
@@ -196,8 +201,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
     .map((concern, index) => toCandidateConcern(concern, index));
   const parameterEntries = buildParameters(inputs);
   const sourceByNodeId = new Map(packet.columnLineage.sourceLeaves.map((source) => [source.nodeId, source]));
-  const recommendedProbes: ProbeSpecV1[] = [];
-  const deferredProbes: ProbeSpecV1[] = [];
+  const successfulProbes: ProbeSpecV1[] = [];
   const blockedProbes: BlockedProbeV1[] = [];
 
   for (const [index, concern] of [...packet.candidateConcerns].sort(compareConcerns).entries()) {
@@ -229,24 +233,19 @@ export function createInvestigationPlanFromDiagnosticPacket(
       blockedProbes.push(probe.blocked);
       continue;
     }
-    if (recommendedProbes.length < MAX_RECOMMENDED_PROBES) {
-      recommendedProbes.push(probe.probe);
-    } else {
-      deferredProbes.push(probe.probe);
-    }
+    successfulProbes.push(probe.probe);
   }
 
   const nodeQueryProbe = createNodeQueryOuterFilterProbe(packet, inputs, nodeQueryContext, parameterEntries);
   if (nodeQueryProbe.probe) {
-    if (recommendedProbes.length < MAX_RECOMMENDED_PROBES) {
-      recommendedProbes.push(nodeQueryProbe.probe);
-    } else {
-      deferredProbes.push(nodeQueryProbe.probe);
-    }
+    successfulProbes.push(nodeQueryProbe.probe);
   } else if (nodeQueryProbe.blocked) {
     blockedProbes.push(nodeQueryProbe.blocked);
   }
 
+  const sortedProbes = successfulProbes.sort(compareProbes);
+  const recommendedProbes = sortedProbes.slice(0, MAX_RECOMMENDED_PROBES);
+  const deferredProbes = sortedProbes.slice(MAX_RECOMMENDED_PROBES);
   const parameters = [...parameterEntries.values()].sort((left, right) => left.id.localeCompare(right.id));
   const unresolvedParameters = parameters.filter(isUnresolvedParameter);
   return {
@@ -530,6 +529,14 @@ function toCandidateConcern(concern: CandidateConcern, index: number): Candidate
 
 function compareConcerns(left: CandidateConcern, right: CandidateConcern): number {
   return `${left.kind}\u0000${left.scopeId}\u0000${left.evidence.join('\u0000')}`.localeCompare(`${right.kind}\u0000${right.scopeId}\u0000${right.evidence.join('\u0000')}`);
+}
+
+/** Sorts all successful probes before the recommendation split: priority, kind, node, then id. */
+function compareProbes(left: ProbeSpecV1, right: ProbeSpecV1): number {
+  return left.priority - right.priority
+    || (PROBE_KIND_RANK[left.kind] ?? Number.MAX_SAFE_INTEGER) - (PROBE_KIND_RANK[right.kind] ?? Number.MAX_SAFE_INTEGER)
+    || left.nodeId.localeCompare(right.nodeId)
+    || left.id.localeCompare(right.id);
 }
 
 function collectParameterNames(statement: unknown): string[] {
