@@ -15,6 +15,22 @@ afterEach(() => {
 });
 
 describe('create_investigation_plan MCP adapter', () => {
+  it.each(['value_too_high', 'value_too_low', 'value_missing', 'missing_rows', 'duplicate_rows'])('accepts the public symptom %s', (symptom) => {
+    const input = normalizeCreateInvestigationPlanInput(temporaryWorkspace(), { sql: 'select status from orders', symptom, targetColumn: 'status' });
+    expect(input.symptom).toBe(symptom);
+  });
+
+  it.each(['logic_review', 'all_signals', 'unknown'])('rejects non-public MCP symptom %s', (symptom) => {
+    expect(() => normalizeCreateInvestigationPlanInput(temporaryWorkspace(), { sql: 'select status from orders', symptom, targetColumn: 'status' }))
+      .toThrow(expect.objectContaining({ code: 'SYMPTOM_INVALID' }));
+  });
+
+  it('leaves the Core symptom default available when MCP symptom is omitted', () => {
+    const input = normalizeCreateInvestigationPlanInput(temporaryWorkspace(), { sql: 'select status from orders', targetColumn: 'status' });
+    expect(input.symptom).toBeUndefined();
+    expect(createInvestigationPlan(input).target.symptom).toBe('logic_review');
+  });
+
   it('normalizes approved parameter maps, inline DDL strings, target defaults, and duplicate file paths', () => {
     const workspace = temporaryWorkspace();
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');

@@ -6,7 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationPlanInputV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
-import { diagnosticProblemIntents, problemIntentOptions, type ProblemIntent } from '../lineage/problemIntent';
+import { diagnosticProblemIntents, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 
 const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
@@ -343,7 +343,9 @@ function validateParameterValue(value: unknown, field: string): void {
 
 function parseSymptom(value: unknown): ProblemIntent {
   const symptom = requiredNonEmptyString(value, 'symptom');
-  if (!problemIntentOptions.includes(symptom as ProblemIntent)) throw new McpInputError('SYMPTOM_INVALID', `Unknown symptom: ${symptom}.`);
+  if (!diagnosticProblemIntents.includes(symptom as typeof diagnosticProblemIntents[number])) {
+    throw new McpInputError('SYMPTOM_INVALID', `Unknown symptom: ${symptom}. Accepted values: ${diagnosticProblemIntents.join(', ')}.`);
+  }
   return symptom as ProblemIntent;
 }
 
