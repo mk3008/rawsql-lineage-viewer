@@ -616,7 +616,7 @@ textarea {
 }
 
 .condition-optimization-failure-placeholder {
-  display: none;
+  visibility: hidden;
 }
 
 .condition-optimization-trace-tabs {

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { optimizeConditions } from 'rawsql-ts';
 import { salesSummarySql } from '../examples/salesSummarySql';
-import { analyzeSql } from './rawsqlAdapter';
+import { analyzeSql, finalizeConditionOptimizationDisplayReport, type ConditionOptimizationReport } from './rawsqlAdapter';
 
 const heavySelectSql = `with order_base as (
   select o.id, o.customer_id, o.status, o.total_amount, o.created_at
@@ -95,6 +95,34 @@ function edgesTargetingTables(sql: string) {
   const { lineage } = analyzeSql(sql);
   const tableNodeIds = new Set(lineage.nodes.filter((node) => node.type === 'table').map((node) => node.id));
   return lineage.edges.filter((edge) => tableNodeIds.has(edge.target));
+}
+
+function conditionOptimizationReport(overrides: Partial<ConditionOptimizationReport> = {}): ConditionOptimizationReport {
+  return {
+    applied: [],
+    appliedCount: 0,
+    blockedCount: 0,
+    changed: false,
+    debugProbeCount: 0,
+    debugProbeSkippedCount: 0,
+    debugProbes: [],
+    debugSkippedProbes: [],
+    enabled: true,
+    errorCount: 0,
+    errors: [],
+    mode: 'optimized',
+    ok: true,
+    optimizedSql: 'select 1',
+    originalSql: 'select 1',
+    phases: [],
+    skipped: [],
+    skippedCount: 0,
+    unchangedAvailable: false,
+    unchangedCount: 0,
+    warningCount: 0,
+    warnings: [],
+    ...overrides,
+  };
 }
 
 describe('rawsqlAdapter', () => {
@@ -369,6 +397,39 @@ describe('rawsqlAdapter', () => {
     expect(conditionOptimization.originalSql).toMatch(/^insert\s+into\s+table_a/i);
     expect(conditionOptimization.originalSql).toContain('select');
     expect(conditionOptimization.optimizedSql).toBe(conditionOptimization.originalSql);
+  });
+
+  it('shows the optimization failure and falls back to the formatted Input SQL', () => {
+    const report = finalizeConditionOptimizationDisplayReport(conditionOptimizationReport({
+      errors: [{ code: 'OPTIMIZER_ERROR', reason: 'The optimizer rejected the query.', status: 'blocked' }],
+      errorCount: 1,
+      ok: false,
+    }), 'select 1');
+
+    expect(report.displayFailure).toEqual({
+      code: 'OPTIMIZATION_FAILED',
+      message: 'Optimization failed. The optimizer rejected the query.',
+    });
+    expect(report.optimizedSql).toBe(report.originalSql);
+  });
+
+  it('reports an Output SQL parse failure and falls back to the formatted Input SQL', () => {
+    const report = finalizeConditionOptimizationDisplayReport(conditionOptimizationReport({
+      optimizedSql: 'select from',
+    }), 'select 1');
+
+    expect(report.displayFailure?.code).toBe('OUTPUT_FORMAT_FAILED');
+    expect(report.displayFailure?.message).toContain('Output SQL could not be parsed for display');
+    expect(report.optimizedSql).toBe(report.originalSql);
+  });
+
+  it('reports an Input SQL parse failure and keeps the trimmed input in both SQL views', () => {
+    const report = finalizeConditionOptimizationDisplayReport(conditionOptimizationReport(), 'select from');
+
+    expect(report.displayFailure?.code).toBe('INPUT_FORMAT_FAILED');
+    expect(report.displayFailure?.message).toContain('Input SQL could not be parsed for display');
+    expect(report.originalSql).toBe('select from');
+    expect(report.optimizedSql).toBe(report.originalSql);
   });
 
   it('rejects INSERT statements without SELECT', () => {

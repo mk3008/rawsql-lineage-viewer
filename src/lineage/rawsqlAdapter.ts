@@ -93,7 +93,7 @@ export interface ConditionOptimizationReport {
 }
 
 export interface ConditionOptimizationDisplayFailure {
-  code: 'OPTIMIZATION_FAILED' | 'OUTPUT_FORMAT_FAILED';
+  code: 'INPUT_FORMAT_FAILED' | 'OPTIMIZATION_FAILED' | 'OUTPUT_FORMAT_FAILED';
   message: string;
 }
 
@@ -266,13 +266,26 @@ function optimizeLineageSelectQuery(
   };
 }
 
-function finalizeConditionOptimizationDisplayReport(
+export function finalizeConditionOptimizationDisplayReport(
   report: ConditionOptimizationReport,
   originalSql: string,
   optimizedQuery?: unknown,
 ): ConditionOptimizationReport {
-  const originalDisplay = formatSqlForOptimizationDisplay(originalSql);
+  const originalDisplay = formatSqlForOptimizationDisplay(originalSql, 'Input SQL');
   const originalDisplaySql = originalDisplay.sql;
+  if (originalDisplay.failure) {
+    return withConditionOptimizationSql(
+      {
+        ...report,
+        displayFailure: {
+          code: 'INPUT_FORMAT_FAILED',
+          message: originalDisplay.failure,
+        },
+      },
+      originalDisplaySql,
+      originalDisplaySql,
+    );
+  }
   if (!report.enabled) {
     return withConditionOptimizationSql(report, originalDisplaySql, originalDisplaySql);
   }
@@ -292,8 +305,8 @@ function finalizeConditionOptimizationDisplayReport(
   }
 
   const optimizedDisplay = optimizedQuery
-    ? formatQueryForOptimizationDisplay(optimizedQuery, originalSql)
-    : formatSqlForOptimizationDisplay(report.optimizedSql, originalSql);
+    ? formatQueryForOptimizationDisplay(optimizedQuery, 'Output SQL', originalSql)
+    : formatSqlForOptimizationDisplay(report.optimizedSql, 'Output SQL', originalSql);
   if (optimizedDisplay.failure) {
     return withConditionOptimizationSql(
       {
@@ -311,17 +324,22 @@ function finalizeConditionOptimizationDisplayReport(
   return withConditionOptimizationSql(report, originalDisplaySql, optimizedDisplay.sql);
 }
 
-function formatSqlForOptimizationDisplay(sql: string, commentSourceSql?: string): { failure?: string; sql: string } {
+function formatSqlForOptimizationDisplay(
+  sql: string,
+  label: 'Input SQL' | 'Output SQL',
+  commentSourceSql?: string,
+): { failure?: string; sql: string } {
   const parsedSql = parseSqlForOptimizationDisplay(sql);
   if (parsedSql.failure) {
-    return { failure: `Output SQL could not be parsed for display: ${parsedSql.failure}`, sql: sql.trim() };
+    return { failure: `${label} could not be parsed for display: ${parsedSql.failure}`, sql: sql.trim() };
   }
 
-  return formatQueryForOptimizationDisplay(parsedSql.query, commentSourceSql, sql.trim());
+  return formatQueryForOptimizationDisplay(parsedSql.query, label, commentSourceSql, sql.trim());
 }
 
 function formatQueryForOptimizationDisplay(
   query: unknown,
+  label: 'Input SQL' | 'Output SQL',
   commentSourceSql?: string,
   fallbackSql = '',
 ): { failure?: string; sql: string } {
@@ -335,7 +353,7 @@ function formatQueryForOptimizationDisplay(
   const formattedSql = formatNodeQuerySqlWithError(query);
   if (formattedSql.failure || !formattedSql.sql) {
     return {
-      failure: `Output SQL could not be formatted for display: ${formattedSql.failure ?? 'The formatter returned no SQL.'}`,
+      failure: `${label} could not be formatted for display: ${formattedSql.failure ?? 'The formatter returned no SQL.'}`,
       sql: fallbackSql,
     };
   }
