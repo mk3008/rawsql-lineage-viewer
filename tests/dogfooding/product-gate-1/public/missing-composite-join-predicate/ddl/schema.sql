@@ -1,0 +1,1 @@
+create table orders (id integer primary key, customer_id integer not null); create table order_lines (order_id integer not null, line_no integer not null, amount numeric not null, primary key(order_id,line_no)); create table shipment_lines (order_id integer not null, line_no integer not null, shipped_amount numeric not null, primary key(order_id,line_no));
