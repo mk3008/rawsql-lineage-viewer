@@ -47,7 +47,7 @@ The nested Codex CLI selected only `create_investigation_plan` and attempted the
 
 This is a Codex host approval / non-interactive execution layer limitation. It is **not** evidence of a Viewer Planner defect, MCP server defect, CLI defect, rawsql-ts defect, SQL-safety defect, or tool-selection failure. Its impact on Product Dogfooding Gate 1 is non-blocking.
 
-The immutable worker report is [Attempt 5 report](C:\Users\mssgm\.codex\worktrees\ba44\sql-lineage-viewer\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui-attempt-5.yaml), SHA-256 `9971ECBECB05FF7E4AF512B8057052361BF39897F9C9F71F89C4DF27AEC10490`.
+The untracked local Attempt 5 worker report is preserved as supplementary evidence. Its classification and checksum are recorded in the committed [Gate 1 evidence index](../../tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/evidence-index.md): SHA-256 `9971ECBECB05FF7E4AF512B8057052361BF39897F9C9F71F89C4DF27AEC10490`.
 
 ## Remaining Limitation
 
@@ -59,7 +59,7 @@ Unattended or nested Codex CLI execution of a local MCP tool remains unverified 
 
 ## Evidence Index
 
-See [Gate 1 evidence index](C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\evidence-index.md). It provides paths, SHA-256 hashes, classifications, and the raw-evidence boundary without embedding transcripts.
+See the committed [Gate 1 evidence index](../../tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/evidence-index.md). It provides repository-relative artifact identifiers, SHA-256 hashes, classifications, and the raw-evidence boundary without embedding transcripts.
 
 ## Review Triage
 

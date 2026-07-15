@@ -13,17 +13,17 @@ Interactive CLI transcript evidence is human-observed supplementary evidence. It
 
 ## Durable Evidence
 
-| Classification | Absolute path | SHA-256 |
+| Classification | Artifact location | SHA-256 |
 | --- | --- | --- |
-| Baseline verification | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\baseline-verification.json` | `3EF4D67DCB8FEF49EF3F63FCADA245F995B43EF96DB02D2CB16BFC47E375E063` |
-| Human authorization and isolation decision | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\human-decision.md` | `389EE42A7EAFAA1596913705CFCB0419F2CD46915928121E8794BF138BCECCF4` |
-| User-local MCP configuration before registration | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\mcp-config-before-summary.md` | `5D8EE5E8869D4CC7215FB51DDB78EE02B15D331F39A5262982024368F2B9F17F` |
-| User-local MCP configuration after registration | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\mcp-config-after-summary.md` | `78F05AAC46EFA12D47F7D5DFD07FED2CF54D400CB66B3FAF7351C60BE2A96C55` |
-| Registered-tool inventory before registration | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\tool-inventory-before.json` | `5E3009605CFC193CE906CF3312C7E4B8D3669D77F94B8904DA45D119E00C39B3` |
-| Registered-tool inventory after registration | `C:\Users\mssgm\.codex\worktrees\product-dogfooding-gate-1\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui\attempt-2\tool-inventory-after.json` | `1C01A0BBB8F840A0A84B825379BCAC42B47A8C42F1476BEC98654F343582FBDD` |
-| Attempt 2 GUI exposure observation | `C:\Users\mssgm\.codex\worktrees\ba44\sql-lineage-viewer\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui-attempt-2.yaml` | `41CE90F44368483966ED196B5A08B6A3850F71A4D2DCCCD6F09AFE2BCE3CB432` |
-| Attempt 3 direct-layer environment validation | `C:\Users\mssgm\.codex\worktrees\ba44\sql-lineage-viewer\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui-attempt-3.yaml` | `AAE41678B9938DD02B3B0FA57663E722FAD807A2BD20D2A1C06A6B7D453E36D1` |
-| Attempt 5 non-interactive cancellation | `C:\Users\mssgm\.codex\worktrees\ba44\sql-lineage-viewer\tmp\orchestration\product-dogfooding-gate-1\gate1-mcp-real-host-trial-ui-attempt-5.yaml` | `9971ECBECB05FF7E4AF512B8057052361BF39897F9C9F71F89C4DF27AEC10490` |
+| Baseline verification | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/baseline-verification.json` | `3EF4D67DCB8FEF49EF3F63FCADA245F995B43EF96DB02D2CB16BFC47E375E063` |
+| Human authorization and isolation decision | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/human-decision.md` | `389EE42A7EAFAA1596913705CFCB0419F2CD46915928121E8794BF138BCECCF4` |
+| User-local MCP configuration before registration | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/mcp-config-before-summary.md` | `5D8EE5E8869D4CC7215FB51DDB78EE02B15D331F39A5262982024368F2B9F17F` |
+| User-local MCP configuration after registration | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/mcp-config-after-summary.md` | `78F05AAC46EFA12D47F7D5DFD07FED2CF54D400CB66B3FAF7351C60BE2A96C55` |
+| Registered-tool inventory before registration | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/tool-inventory-before.json` | `5E3009605CFC193CE906CF3312C7E4B8D3669D77F94B8904DA45D119E00C39B3` |
+| Registered-tool inventory after registration | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui/attempt-2/tool-inventory-after.json` | `1C01A0BBB8F840A0A84B825379BCAC42B47A8C42F1476BEC98654F343582FBDD` |
+| Attempt 2 GUI exposure observation | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui-attempt-2.yaml` | `41CE90F44368483966ED196B5A08B6A3850F71A4D2DCCCD6F09AFE2BCE3CB432` |
+| Attempt 3 direct-layer environment validation | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui-attempt-3.yaml` | `AAE41678B9938DD02B3B0FA57663E722FAD807A2BD20D2A1C06A6B7D453E36D1` |
+| Attempt 5 non-interactive cancellation | Local-only (not committed): `tmp/orchestration/product-dogfooding-gate-1/gate1-mcp-real-host-trial-ui-attempt-5.yaml` | `9971ECBECB05FF7E4AF512B8057052361BF39897F9C9F71F89C4DF27AEC10490` |
 
 ## Attempt 5 Preservation Boundary
 
