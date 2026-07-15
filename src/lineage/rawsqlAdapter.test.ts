@@ -359,6 +359,18 @@ describe('rawsqlAdapter', () => {
     expect(nodeById.get('table_orders')?.columns.map((column) => column.name)).toEqual(['amount']);
   });
 
+  it('keeps the full INSERT SELECT statement in the As-is SQL report', () => {
+    const { conditionOptimization } = analyzeSql(`
+      insert into table_a (id)
+      select 1
+    `, { analysisMode: 'original' });
+
+    expect(conditionOptimization.enabled).toBe(false);
+    expect(conditionOptimization.originalSql).toMatch(/^insert\s+into\s+table_a/i);
+    expect(conditionOptimization.originalSql).toContain('select');
+    expect(conditionOptimization.optimizedSql).toBe(conditionOptimization.originalSql);
+  });
+
   it('rejects INSERT statements without SELECT', () => {
     expect(() => analyzeSql('insert into customer_sales (customer_id) values (1)')).toThrow(
       'INSERT lineage requires a SELECT query.',

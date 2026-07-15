@@ -829,10 +829,14 @@ function ConditionOptimizationReview({
   const isCopyableSqlView = effectiveSqlView === 'original' || effectiveSqlView === 'optimized';
   const copySqlName = effectiveSqlView === 'optimized' ? 'Optimized' : 'Original';
   const [copySqlState, setCopySqlState] = useState<'idle' | 'copied' | 'failed'>('idle');
+  const [copyFailureState, setCopyFailureState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => {
     setCopySqlState('idle');
   }, [effectiveSqlView, report.optimizedSql, report.originalSql]);
+  useEffect(() => {
+    setCopyFailureState('idle');
+  }, [report.displayFailure]);
   useEffect(() => {
     setActiveTraceView((currentView) => {
       if (report.mode === 'debug_probes') {
@@ -858,6 +862,17 @@ function ConditionOptimizationReview({
       </button>
     </div>
   ) : null;
+  const copyFailureDetails = async () => {
+    if (!report.displayFailure) {
+      return;
+    }
+    try {
+      await copyText(`${report.displayFailure.code}: ${report.displayFailure.message}`);
+      setCopyFailureState('copied');
+    } catch {
+      setCopyFailureState('failed');
+    }
+  };
 
   return (
     <section className={`condition-optimization-review ${report.enabled ? '' : 'condition-optimization-review-disabled'}`} aria-label="Condition optimization">
@@ -867,6 +882,19 @@ function ConditionOptimizationReview({
       </div>
       <AnalysisModeTabs activeMode={analysisMode} availability={analysisModeAvailability} onModeChange={onAnalysisModeChange} />
       <div className="condition-optimization-summary-meta">{describeAnalysisMode(report)}</div>
+      {report.displayFailure ? (
+        <div className="condition-optimization-failure" role="alert">
+          <div>
+            <strong>Output SQL was not generated.</strong>
+            <span>Input SQL is shown instead, so the Diff does not show a misleading rewrite.</span>
+            <code>{report.displayFailure.code}: {report.displayFailure.message}</code>
+          </div>
+          <button className="lineage-copy-button" type="button" onClick={() => void copyFailureDetails()}>
+            {copyFailureState === 'copied' ? <CheckCircle2 size={12} aria-hidden="true" /> : <Copy size={12} aria-hidden="true" />}
+            {copyFailureState === 'copied' ? 'Copied' : copyFailureState === 'failed' ? 'Copy failed' : 'Copy error details'}
+          </button>
+        </div>
+      ) : <div className="condition-optimization-failure-placeholder" aria-hidden="true" />}
       {report.mode === 'original' ? null : <OptimizationSqlTabs activeSqlView={activeSqlView} onSqlViewChange={onSqlViewChange} />}
       {report.enabled ? (
         <>

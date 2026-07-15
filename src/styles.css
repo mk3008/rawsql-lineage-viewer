@@ -491,7 +491,7 @@ textarea {
 
 .condition-optimization-review {
   display: grid;
-  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+  grid-template-rows: auto auto auto auto auto minmax(0, 1fr);
   gap: 9px;
   margin: 0 16px 12px;
   border: 1px solid #bfdbfe;
@@ -574,6 +574,49 @@ textarea {
 .condition-optimization-summary-meta {
   color: #64748b;
   line-height: 1.4;
+}
+
+.condition-optimization-failure {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #fbbf24;
+  border-radius: 7px;
+  padding: 8px;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.condition-optimization-failure > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.condition-optimization-failure strong,
+.condition-optimization-failure span,
+.condition-optimization-failure code {
+  overflow-wrap: anywhere;
+}
+
+.condition-optimization-failure span,
+.condition-optimization-failure code {
+  color: #a16207;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.condition-optimization-failure code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', monospace;
+}
+
+.condition-optimization-failure .lineage-copy-button {
+  flex: 0 0 auto;
+}
+
+.condition-optimization-failure-placeholder {
+  display: none;
 }
 
 .condition-optimization-trace-tabs {

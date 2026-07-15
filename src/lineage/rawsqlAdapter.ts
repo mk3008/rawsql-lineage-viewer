@@ -69,6 +69,7 @@ export interface ConditionOptimizationReport {
   debugProbeSkippedCount: number;
   debugProbes: ConditionOptimizationReportItem[];
   debugSkippedProbes: ConditionOptimizationReportItem[];
+  displayFailure?: ConditionOptimizationDisplayFailure;
   enabled: boolean;
   errorCount: number;
   errors: ConditionOptimizationReportItem[];
@@ -89,6 +90,11 @@ export interface ConditionOptimizationReport {
   unchangedCount: number;
   warningCount: number;
   warnings: ConditionOptimizationReportItem[];
+}
+
+export interface ConditionOptimizationDisplayFailure {
+  code: 'OPTIMIZATION_FAILED' | 'OUTPUT_FORMAT_FAILED';
+  message: string;
 }
 
 export interface ConditionOptimizationPhaseReport {
@@ -187,18 +193,13 @@ function parseLineageSelectQuery(sql: string, analysisMode: SqlAnalysisMode): Pa
     throw error;
   }
 
-  const optimizationDisplaySql = formatConditionOptimizationDisplaySql(sql, optimization.report.enabled ? optimization.report.optimizedSql : sql);
-  const report = withConditionOptimizationSql(
-    optimization.report,
-    optimizationDisplaySql.originalSql,
-    optimizationDisplaySql.optimizedSql,
-  );
+  const report = optimization.report;
 
   if (statement instanceof CreateTableQuery) {
     if (!statement.asSelectQuery) {
       throw new Error('CREATE TABLE lineage requires an AS SELECT query.');
     }
-    return { conditionOptimization: report, query: statement.asSelectQuery };
+    return { conditionOptimization: finalizeConditionOptimizationDisplayReport(report, sql), query: statement.asSelectQuery };
   }
 
   if (statement instanceof InsertQuery) {
@@ -210,13 +211,17 @@ function parseLineageSelectQuery(sql: string, analysisMode: SqlAnalysisMode): Pa
       : statement.selectQuery;
     const optimizedSelect = optimizeLineageSelectQuery(statement.selectQuery, originalSelectQuery, analysisMode);
     return {
-      conditionOptimization: mergeConditionOptimizationReports(report, optimizedSelect.conditionOptimization),
+      conditionOptimization: finalizeConditionOptimizationDisplayReport(
+        mergeConditionOptimizationReports(report, optimizedSelect.conditionOptimization),
+        sql,
+        cloneInsertQueryWithSelect(statement, optimizedSelect.query),
+      ),
       query: optimizedSelect.query,
     };
   }
 
   if (isSelectQuery(statement)) {
-    return { conditionOptimization: report, query: statement };
+    return { conditionOptimization: finalizeConditionOptimizationDisplayReport(report, sql), query: statement };
   }
 
   throw new Error('Only SELECT, CREATE TABLE AS SELECT, CREATE VIEW AS SELECT, and INSERT SELECT statements are supported.');
@@ -261,18 +266,101 @@ function optimizeLineageSelectQuery(
   };
 }
 
-function formatConditionOptimizationDisplaySql(originalSql: string, optimizedSql: string): { optimizedSql: string; originalSql: string } {
-  const originalForDisplay = parseSqlOrUndefined(originalSql);
-  const originalForRestore = parseSqlOrUndefined(originalSql);
-  const optimizedForDisplay = parseSqlOrUndefined(optimizedSql);
-  if (optimizedForDisplay && originalForRestore) {
-    restoreLineageComments(optimizedForDisplay, originalForRestore);
+function finalizeConditionOptimizationDisplayReport(
+  report: ConditionOptimizationReport,
+  originalSql: string,
+  optimizedQuery?: unknown,
+): ConditionOptimizationReport {
+  const originalDisplay = formatSqlForOptimizationDisplay(originalSql);
+  const originalDisplaySql = originalDisplay.sql;
+  if (!report.enabled) {
+    return withConditionOptimizationSql(report, originalDisplaySql, originalDisplaySql);
   }
 
-  return {
-    optimizedSql: formatNodeQuerySql(optimizedForDisplay) ?? optimizedSql.trim(),
-    originalSql: formatNodeQuerySql(originalForDisplay) ?? originalSql.trim(),
-  };
+  if (!report.ok) {
+    return withConditionOptimizationSql(
+      {
+        ...report,
+        displayFailure: {
+          code: 'OPTIMIZATION_FAILED',
+          message: optimizationFailureMessage(report),
+        },
+      },
+      originalDisplaySql,
+      originalDisplaySql,
+    );
+  }
+
+  const optimizedDisplay = optimizedQuery
+    ? formatQueryForOptimizationDisplay(optimizedQuery, originalSql)
+    : formatSqlForOptimizationDisplay(report.optimizedSql, originalSql);
+  if (optimizedDisplay.failure) {
+    return withConditionOptimizationSql(
+      {
+        ...report,
+        displayFailure: {
+          code: 'OUTPUT_FORMAT_FAILED',
+          message: optimizedDisplay.failure,
+        },
+      },
+      originalDisplaySql,
+      originalDisplaySql,
+    );
+  }
+
+  return withConditionOptimizationSql(report, originalDisplaySql, optimizedDisplay.sql);
+}
+
+function formatSqlForOptimizationDisplay(sql: string, commentSourceSql?: string): { failure?: string; sql: string } {
+  const parsedSql = parseSqlForOptimizationDisplay(sql);
+  if (parsedSql.failure) {
+    return { failure: `Output SQL could not be parsed for display: ${parsedSql.failure}`, sql: sql.trim() };
+  }
+
+  return formatQueryForOptimizationDisplay(parsedSql.query, commentSourceSql, sql.trim());
+}
+
+function formatQueryForOptimizationDisplay(
+  query: unknown,
+  commentSourceSql?: string,
+  fallbackSql = '',
+): { failure?: string; sql: string } {
+  if (commentSourceSql) {
+    const commentSource = parseSqlOrUndefined(commentSourceSql);
+    if (commentSource) {
+      restoreLineageComments(query, commentSource);
+    }
+  }
+
+  const formattedSql = formatNodeQuerySqlWithError(query);
+  if (formattedSql.failure || !formattedSql.sql) {
+    return {
+      failure: `Output SQL could not be formatted for display: ${formattedSql.failure ?? 'The formatter returned no SQL.'}`,
+      sql: fallbackSql,
+    };
+  }
+  return { sql: formattedSql.sql };
+}
+
+function cloneInsertQueryWithSelect(statement: InsertQuery, selectQuery: SelectQuery): InsertQuery {
+  return Object.assign(Object.create(Object.getPrototypeOf(statement)), statement, { selectQuery }) as InsertQuery;
+}
+
+function parseSqlForOptimizationDisplay(sql: string): { failure?: string; query?: unknown } {
+  try {
+    return { query: SqlParser.parse(sql) };
+  } catch (error) {
+    return { failure: errorMessage(error) };
+  }
+}
+
+function optimizationFailureMessage(report: ConditionOptimizationReport): string {
+  const reasons = [...report.errors, ...report.skipped]
+    .map((item) => item.reason ?? item.code)
+    .filter((reason): reason is string => Boolean(reason));
+  return reasons.length > 0
+    ? `Optimization failed. ${reasons.join(' ')}`
+    : 'Optimization failed. The optimizer did not return a usable SQL result.';
 }
 
 function createDisabledConditionOptimizationReport(sql = ''): ConditionOptimizationReport {
@@ -353,7 +441,7 @@ function mergeConditionOptimizationReports(
   right: ConditionOptimizationReport,
 ): ConditionOptimizationReport {
   if (!left.enabled) {
-    return right;
+    return left;
   }
   if (!right.enabled) {
     return left;
@@ -1146,6 +1234,18 @@ function formatNodeQuerySql(query: unknown): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+function formatNodeQuerySqlWithError(query: unknown): { failure?: string; sql?: string } {
+  try {
+    return { sql: nodeSqlFormatter.format(query as Parameters<SqlFormatter['format']>[0]).formattedSql.trim() };
+  } catch (error) {
+    return { failure: errorMessage(error) };
+  }
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function formatStandaloneQuerySql(query: unknown): string | undefined {
