@@ -71,6 +71,7 @@ describe('create_investigation_plan MCP adapter', () => {
     ]);
     const mcpPlan = createInvestigationPlan(fromFiles);
     expect(mcpPlan).toEqual(cliPlan);
+    expect(mcpPlan.nextEvidenceChecklist).toEqual(cliPlan.nextEvidenceChecklist);
     expect(createInvestigationPlan(fromFiles)).toEqual(mcpPlan);
     expect(() => normalizeCreateInvestigationPlanInput(workspace, {
       sql: 'select status from orders', targetColumn: 'status', investigationKeys: [{ name: 'customer_id', origin: 'original_query_parameter', value: 10 }],
@@ -160,7 +161,11 @@ describe('create_investigation_plan MCP adapter', () => {
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
       const second = await client.callTool({ name: 'create_investigation_plan', arguments: request });
       expect(first.structuredContent).toEqual(second.structuredContent);
-      expect(first.structuredContent).toMatchObject({ kind: 'investigation-plan', target: { columnName: 'status', nodeId: 'main_output' } });
+      expect(first.structuredContent).toMatchObject({
+        kind: 'investigation-plan',
+        nextEvidenceChecklist: expect.arrayContaining([expect.objectContaining({ kind: 'condition', status: 'to_verify' })]),
+        target: { columnName: 'status', nodeId: 'main_output' },
+      });
 
       const invalid = await client.callTool({ name: 'create_investigation_plan', arguments: { sql: 'select 1', sqlPath: 'query.sql', targetColumn: 'x', targetNode: 'main_output' } });
       expect(invalid.isError).toBe(true);

@@ -30,6 +30,49 @@ describe('createInvestigationPlan', () => {
     expect(createInvestigationPlan(base).target.symptom).toBe('logic_review');
   });
 
+  it('lists static relation, condition, and matching-record facts for a blocked correlated EXISTS without exposing values or SQL', () => {
+    const plan = createInvestigationPlan({
+      sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
+      target: { columnName: 'id', nodeId: 'main_output' },
+      symptom: 'missing_rows',
+      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+    });
+    const checklist = plan.nextEvidenceChecklist;
+    const property = checklist.find((item) => item.kind === 'property');
+
+    expect(plan.blockedProbes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'UNSUPPORTED_CONCERN_KIND', status: 'blocked' }),
+    ]));
+    expect(checklist).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        condition: expect.objectContaining({ kind: 'where', mechanism: 'exists' }),
+        kind: 'condition',
+        status: 'to_verify',
+      }),
+      expect.objectContaining({
+        kind: 'relation',
+        relation: expect.objectContaining({ nodeId: 'table_customers', relationName: 'customers', columnNames: expect.arrayContaining(['id']) }),
+      }),
+      expect.objectContaining({
+        kind: 'relation',
+        relation: expect.objectContaining({ nodeId: 'table_customer_favorites', relationName: 'customer_favorites', columnNames: expect.arrayContaining(['customer_id', 'is_active']) }),
+      }),
+    ]));
+    expect(property).toMatchObject({
+      kind: 'property',
+      property: { kind: 'matching_related_record', relationNodeIds: expect.arrayContaining(['table_customers', 'table_customer_favorites']) },
+      status: 'to_verify',
+    });
+    expect(JSON.stringify(checklist)).not.toContain('secret-active-value');
+    expect(JSON.stringify(checklist)).not.toContain('SELECT');
+    expect(createInvestigationPlan({
+      sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
+      target: { columnName: 'id', nodeId: 'main_output' },
+      symptom: 'missing_rows',
+      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+    }).nextEvidenceChecklist).toEqual(checklist);
+  });
+
   it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
     const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
     expect(plan.recommendedProbes).toHaveLength(1);

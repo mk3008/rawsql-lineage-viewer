@@ -112,6 +112,32 @@ export interface BlockedProbeV1 {
   status: 'blocked';
 }
 
+export interface NextEvidenceConditionFactV1 {
+  influenceId: string;
+  kind: string;
+  mechanism: string;
+  scopeId: string;
+}
+
+export interface NextEvidenceRelationFactV1 {
+  columnNames: string[];
+  nodeId: string;
+  relationName: string;
+  scopeIds: string[];
+}
+
+export interface NextEvidencePropertyFactV1 {
+  conditionId: string;
+  kind: 'matching_related_record' | 'no_matching_related_record';
+  relationNodeIds: string[];
+}
+
+/** A static fact to verify after diagnosis; it never includes a new SQL statement or parameter value. */
+export type NextEvidenceChecklistItemV1 =
+  | { condition: NextEvidenceConditionFactV1; id: string; kind: 'condition'; status: 'to_verify' }
+  | { id: string; kind: 'relation'; relation: NextEvidenceRelationFactV1; status: 'to_verify' }
+  | { id: string; kind: 'property'; property: NextEvidencePropertyFactV1; status: 'to_verify' };
+
 export interface InvestigationPlanV1 {
   analysisMode: InvestigationAnalysisModeV1;
   blockedProbes: BlockedProbeV1[];
@@ -120,6 +146,7 @@ export interface InvestigationPlanV1 {
   diagnostics: InvestigationDiagnosticV1[];
   kind: 'investigation-plan';
   limitations: InvestigationLimitationV1[];
+  nextEvidenceChecklist: NextEvidenceChecklistItemV1[];
   parameters: InvestigationParameterV1[];
   recommendedProbes: ProbeSpecV1[];
   target: InvestigationTargetV1;
@@ -263,12 +290,81 @@ export function createInvestigationPlanFromDiagnosticPacket(
       { code: 'original_analysis_only', message: 'The planner does not rewrite or execute SQL.' },
       ...blockedProbes.map((probe) => ({ code: probe.code.toLowerCase(), message: probe.reason })),
     ],
+    nextEvidenceChecklist: buildNextEvidenceChecklist(packet),
     parameters,
     recommendedProbes,
     target: { columnName: packet.target.columnName, nodeId: packet.target.nodeId, symptom },
     unresolvedParameters,
     version: 1,
   };
+}
+
+/**
+ * Lists only diagnostic identities and references that a human can verify next.
+ * It deliberately does not carry condition SQL, probe SQL, or supplied values.
+ */
+function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket): NextEvidenceChecklistItemV1[] {
+  const influenceById = new Map(packet.rowLineage.influences.map((influence) => [influence.id, influence]));
+  const influences = [...new Set(
+    [...packet.candidateConcerns]
+      .sort(compareConcerns)
+      .flatMap((concern) => concern.influenceIds)
+      .map((id) => influenceById.get(id))
+      .filter((influence): influence is NonNullable<typeof influence> => influence !== undefined),
+  )].sort((left, right) => `${left.scopeId}\u0000${left.kind}\u0000${left.mechanism}\u0000${left.id}`.localeCompare(`${right.scopeId}\u0000${right.kind}\u0000${right.mechanism}\u0000${right.id}`));
+
+  const conditionIdByInfluenceId = new Map<string, string>();
+  const conditionItems = influences.map((influence, index) => {
+    const id = `next-evidence:condition:${String(index + 1).padStart(2, '0')}`;
+    conditionIdByInfluenceId.set(influence.id, id);
+    return {
+      condition: { influenceId: influence.id, kind: influence.kind, mechanism: influence.mechanism, scopeId: influence.scopeId },
+      id,
+      kind: 'condition' as const,
+      status: 'to_verify' as const,
+    };
+  });
+
+  const relationFacts = new Map<string, NextEvidenceRelationFactV1>();
+  for (const influence of influences) {
+    for (const reference of influence.references) {
+      const existing = relationFacts.get(reference.nodeId);
+      if (existing) {
+        existing.columnNames = [...new Set([...existing.columnNames, reference.columnName])].sort();
+        existing.scopeIds = [...new Set([...existing.scopeIds, reference.scopeId])].sort();
+      } else {
+        relationFacts.set(reference.nodeId, {
+          columnNames: [reference.columnName],
+          nodeId: reference.nodeId,
+          relationName: reference.nodeLabel,
+          scopeIds: [reference.scopeId],
+        });
+      }
+    }
+  }
+  const relationItems = [...relationFacts.values()]
+    .sort((left, right) => left.nodeId.localeCompare(right.nodeId) || left.relationName.localeCompare(right.relationName))
+    .map((relation, index) => ({
+      id: `next-evidence:relation:${String(index + 1).padStart(2, '0')}`,
+      kind: 'relation' as const,
+      relation,
+      status: 'to_verify' as const,
+    }));
+
+  const propertyItems = influences
+    .filter((influence) => influence.mechanism === 'exists' || influence.mechanism === 'not_exists')
+    .map((influence, index) => ({
+      id: `next-evidence:property:${String(index + 1).padStart(2, '0')}`,
+      kind: 'property' as const,
+      property: {
+        conditionId: conditionIdByInfluenceId.get(influence.id)!,
+        kind: influence.mechanism === 'exists' ? 'matching_related_record' as const : 'no_matching_related_record' as const,
+        relationNodeIds: [...new Set(influence.references.map((reference) => reference.nodeId))].sort(),
+      },
+      status: 'to_verify' as const,
+    }));
+
+  return [...conditionItems, ...relationItems, ...propertyItems];
 }
 
 function createNodeQueryOuterFilterProbe(
