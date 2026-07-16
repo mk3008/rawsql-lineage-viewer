@@ -135,7 +135,7 @@ function collectConditionInfluences(
   const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
   return conditions.flatMap((item, index) => {
     const expressionSql = deps.formatExpressionSql(item);
-    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources)), scopeId, 'row_lineage', 'anchor');
+    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources), { skipUnqualifiedInInlineQueries: true }), scopeId, 'row_lineage', 'anchor');
     const relatedReferences = toSourceReferences(deps.collectNestedQueryReferences(item), scopeId, 'row_lineage', 'related');
     const references = [...anchorReferences, ...relatedReferences].filter((reference, index, all) =>
       all.findIndex((candidate) => candidate.nodeId === reference.nodeId && candidate.columnName === reference.columnName && candidate.provenance === reference.provenance) === index,
