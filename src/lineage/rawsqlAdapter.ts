@@ -1359,7 +1359,7 @@ function resolveSourceExpression(
   if (datasource instanceof TableSource) {
     const sourceName = datasource.getSourceName();
     const alias = source.aliasExpression ? source.getAliasName() : null;
-    const aliases = alias ? [alias, sourceName] : [sourceName];
+    const aliases = alias ? [alias, sourceName] : getUnaliasedTableSourceAliases(datasource);
     if (cteNames.has(sourceName)) {
       const node = findCteSourceNode(sourceName, nodes);
       const cteId = toCteId(sourceName);
@@ -1518,7 +1518,7 @@ function resolveSinglePhysicalWildcardPassthroughSource(
 
   const alias = source.aliasExpression ? source.getAliasName() : null;
   return {
-    aliases: alias ? [alias, sourceName] : [sourceName],
+    aliases: alias ? [alias, sourceName] : getUnaliasedTableSourceAliases(source.datasource),
     node: createTableNode(sourceName, nodes, schemaFacts),
     sourceAlias: alias ?? undefined,
   };
@@ -1550,13 +1550,18 @@ function collectInlineQueryLocalAliases(inlineQuery: InlineQuery): ReadonlySet<s
   return new Set(
     (query.fromClause?.getSources() ?? [])
       .map((source) => {
-        if (source.aliasExpression) {
-          return source.getAliasName();
+        if (!(source.datasource instanceof TableSource)) {
+          return [];
         }
-        return source.datasource instanceof TableSource ? source.datasource.getSourceName() : null;
+        return source.aliasExpression ? [source.getAliasName()] : getUnaliasedTableSourceAliases(source.datasource);
       })
+      .flat()
       .filter((namespace): namespace is string => Boolean(namespace)),
   );
+}
+
+function getUnaliasedTableSourceAliases(source: TableSource): string[] {
+  return [...new Set([source.getSourceName(), source.table.name])];
 }
 
 function createOutputColumnDeps(options: CollectQueryEdgesOptions): OutputColumnDeps {
