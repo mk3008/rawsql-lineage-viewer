@@ -1,4 +1,4 @@
-import { DistinctOn, SimpleSelectQuery } from 'rawsql-ts';
+import { DistinctOn, InlineQuery, ParenExpression, SimpleSelectQuery, UnaryExpression } from 'rawsql-ts';
 import type { JoinClause } from 'rawsql-ts';
 import type {
   LineageColumn,
@@ -187,20 +187,16 @@ function unwrapParenthesized(value: unknown): unknown {
   return current;
 }
 
-function isParenExpressionLike(value: unknown): value is { expression: unknown } {
-  return value != null && typeof value === 'object' && value.constructor?.name === 'ParenExpression' && 'expression' in value;
+function isParenExpressionLike(value: unknown): value is ParenExpression {
+  return value instanceof ParenExpression;
 }
 
-function isUnaryExpressionLike(value: unknown): value is { expression: unknown; operator: { value: string } } {
-  return value != null
-    && typeof value === 'object'
-    && value.constructor?.name === 'UnaryExpression'
-    && 'expression' in value
-    && typeof (value as { operator?: { value?: unknown } }).operator?.value === 'string';
+function isUnaryExpressionLike(value: unknown): value is UnaryExpression {
+  return value instanceof UnaryExpression;
 }
 
 function isInlineQueryLike(value: unknown): boolean {
-  return value != null && typeof value === 'object' && value.constructor?.name === 'InlineQuery';
+  return value instanceof InlineQuery;
 }
 
 function collectOrderByInfluences(
