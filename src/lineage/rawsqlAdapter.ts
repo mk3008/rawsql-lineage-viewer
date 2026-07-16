@@ -1549,9 +1549,13 @@ function collectInlineQueryLocalAliases(inlineQuery: InlineQuery): ReadonlySet<s
   }
   return new Set(
     (query.fromClause?.getSources() ?? [])
-      .filter((source) => Boolean(source.aliasExpression))
-      .map((source) => source.getAliasName())
-      .filter((alias): alias is string => Boolean(alias)),
+      .map((source) => {
+        if (source.aliasExpression) {
+          return source.getAliasName();
+        }
+        return source.datasource instanceof TableSource ? source.datasource.getSourceName() : null;
+      })
+      .filter((namespace): namespace is string => Boolean(namespace)),
   );
 }
 
