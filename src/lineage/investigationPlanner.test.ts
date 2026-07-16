@@ -30,6 +30,91 @@ describe('createInvestigationPlan', () => {
     expect(createInvestigationPlan(base).target.symptom).toBe('logic_review');
   });
 
+  it('lists static relation, condition, and matching-record facts for a blocked correlated EXISTS without exposing values or SQL', () => {
+    const plan = createInvestigationPlan({
+      sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
+      target: { columnName: 'id', nodeId: 'main_output' },
+      symptom: 'missing_rows',
+      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+    });
+    const checklist = plan.nextEvidenceChecklist;
+    const property = checklist.find((item) => item.kind === 'property');
+
+    expect(plan.blockedProbes).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'UNSUPPORTED_CONCERN_KIND', status: 'blocked' }),
+    ]));
+    expect(checklist).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        condition: expect.objectContaining({ kind: 'where', mechanism: 'exists' }),
+        kind: 'condition',
+        status: 'to_verify',
+      }),
+      expect.objectContaining({
+        kind: 'relation',
+        relation: expect.objectContaining({ nodeId: 'table_customers', relationName: 'customers', columnNames: expect.arrayContaining(['id']) }),
+      }),
+      expect.objectContaining({
+        kind: 'relation',
+        relation: expect.objectContaining({ nodeId: 'table_customer_favorites', relationName: 'customer_favorites', columnNames: expect.arrayContaining(['customer_id', 'is_active']) }),
+      }),
+    ]));
+    expect(checklist.find((item) => item.kind === 'condition')?.condition).toMatchObject({
+      candidateConcernIds: ['concern:where-exists:01'],
+      influenceId: expect.any(String),
+    });
+    expect(checklist.filter((item) => item.kind === 'relation').map((item) => item.relation.conditionIds)).toEqual([
+      ['next-evidence:condition:01'],
+      ['next-evidence:condition:01'],
+    ]);
+    expect(property).toMatchObject({
+      kind: 'property',
+      property: {
+        anchorRelationNodeIds: ['table_customer_favorites', 'table_customers'],
+        kind: 'matching_related_record',
+        relatedRelationNodeIds: [],
+      },
+      status: 'to_verify',
+    });
+    expect(JSON.stringify(checklist)).not.toContain('secret-active-value');
+    expect(JSON.stringify(checklist)).not.toContain('SELECT');
+    expect(createInvestigationPlan({
+      sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
+      target: { columnName: 'id', nodeId: 'main_output' },
+      symptom: 'missing_rows',
+      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+    }).nextEvidenceChecklist).toEqual(checklist);
+  });
+
+  it('links shared conditions to every source concern and relation to its condition items deterministically', () => {
+    const first = packet();
+    const secondInfluence: typeof first.rowLineage.influences[number] = {
+      ...first.rowLineage.influences[0],
+      id: 'influence:join',
+      kind: 'join' as const,
+      mechanism: 'join' as const,
+      references: [{ ...first.rowLineage.influences[0].references[0], nodeId: 'table:customers', nodeLabel: 'customers', columnName: 'id', scopeId: 'scope:customers-subquery' }],
+    };
+    const concerns = [
+      { ...first.candidateConcerns[0], evidence: ['status = :status'], influenceIds: ['influence:where', 'influence:join'] },
+      { ...first.candidateConcerns[0], evidence: ['status = :other_status'], influenceIds: ['influence:where'] },
+    ];
+    const plan = createInvestigationPlanFromDiagnosticPacket({
+      ...first,
+      candidateConcerns: concerns,
+      rowLineage: { ...first.rowLineage, influences: [...first.rowLineage.influences, secondInfluence] },
+    });
+    expect(plan.candidateConcerns.map((concern) => concern.id)).toEqual(['concern:where:01', 'concern:where:02']);
+    expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'condition').map((item) => ({ id: item.id, concernIds: item.condition.candidateConcernIds }))).toEqual([
+      { id: 'next-evidence:condition:01', concernIds: ['concern:where:02'] },
+      { id: 'next-evidence:condition:02', concernIds: ['concern:where:01', 'concern:where:02'] },
+    ]);
+    expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'relation').map((item) => ({ nodeId: item.relation.nodeId, conditionIds: item.relation.conditionIds }))).toEqual([
+      { nodeId: 'table:customers', conditionIds: ['next-evidence:condition:01'] },
+      { nodeId: 'table:orders', conditionIds: ['next-evidence:condition:02'] },
+    ]);
+    expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('status =');
+  });
+
   it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
     const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
     expect(plan.recommendedProbes).toHaveLength(1);

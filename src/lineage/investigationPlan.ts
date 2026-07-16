@@ -112,6 +112,35 @@ export interface BlockedProbeV1 {
   status: 'blocked';
 }
 
+export interface NextEvidenceConditionFactV1 {
+  candidateConcernIds: string[];
+  influenceId: string;
+  kind: string;
+  mechanism: string;
+  scopeId: string;
+}
+
+export interface NextEvidenceRelationFactV1 {
+  conditionIds: string[];
+  columnNames: string[];
+  nodeId: string;
+  relationName: string;
+  scopeIds: string[];
+}
+
+export interface NextEvidencePropertyFactV1 {
+  anchorRelationNodeIds: string[];
+  conditionId: string;
+  kind: 'matching_related_record' | 'no_matching_related_record';
+  relatedRelationNodeIds: string[];
+}
+
+/** A static fact to verify after diagnosis; it never includes a new SQL statement or parameter value. */
+export type NextEvidenceChecklistItemV1 =
+  | { condition: NextEvidenceConditionFactV1; id: string; kind: 'condition'; status: 'to_verify' }
+  | { id: string; kind: 'relation'; relation: NextEvidenceRelationFactV1; status: 'to_verify' }
+  | { id: string; kind: 'property'; property: NextEvidencePropertyFactV1; status: 'to_verify' };
+
 export interface InvestigationPlanV1 {
   analysisMode: InvestigationAnalysisModeV1;
   blockedProbes: BlockedProbeV1[];
@@ -120,6 +149,8 @@ export interface InvestigationPlanV1 {
   diagnostics: InvestigationDiagnosticV1[];
   kind: 'investigation-plan';
   limitations: InvestigationLimitationV1[];
+  /** Required in plan version 1; item provenance fields are additive within this field. */
+  nextEvidenceChecklist: NextEvidenceChecklistItemV1[];
   parameters: InvestigationParameterV1[];
   recommendedProbes: ProbeSpecV1[];
   target: InvestigationTargetV1;
@@ -196,16 +227,16 @@ export function createInvestigationPlanFromDiagnosticPacket(
   nodeQueryContext?: InvestigationNodeQueryContextV1,
 ): InvestigationPlanV1 {
   assertUniqueParameterNames(inputs);
-  const candidateConcerns = [...packet.candidateConcerns]
-    .sort(compareConcerns)
-    .map((concern, index) => toCandidateConcern(concern, index));
+  const indexedConcerns = indexCandidateConcerns(packet.candidateConcerns);
+  const candidateConcerns = indexedConcerns.map(({ concern, id }) => toCandidateConcern(concern, id));
   const parameterEntries = buildParameters(inputs);
   const sourceByNodeId = new Map(packet.columnLineage.sourceLeaves.map((source) => [source.nodeId, source]));
   const successfulProbes: ProbeSpecV1[] = [];
   const blockedProbes: BlockedProbeV1[] = [];
 
-  for (const [index, concern] of [...packet.candidateConcerns].sort(compareConcerns).entries()) {
-    const probeId = `probe:${slug(concern.kind)}:${String(index + 1).padStart(2, '0')}`;
+  for (const indexedConcern of indexedConcerns) {
+    const { concern } = indexedConcern;
+    const probeId = `probe:${slug(concern.kind)}:${String(indexedConcern.index + 1).padStart(2, '0')}`;
     if (concern.kind !== 'where') {
       blockedProbes.push(blockedProbe(probeId, 'UNSUPPORTED_CONCERN_KIND', 'Only a single-relation WHERE predicate is supported for a standalone read-only probe.'));
       continue;
@@ -228,7 +259,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
       blockedProbes.push(blockedProbe(probeId, 'UNSUITABLE_PROBE_SOURCE', 'No supported physical source relation is available for a standalone read-only probe.'));
       continue;
     }
-    const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, index + 1, parameterEntries);
+    const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, indexedConcern.index + 1, parameterEntries);
     if (!probe.probe) {
       blockedProbes.push(probe.blocked);
       continue;
@@ -263,12 +294,118 @@ export function createInvestigationPlanFromDiagnosticPacket(
       { code: 'original_analysis_only', message: 'The planner does not rewrite or execute SQL.' },
       ...blockedProbes.map((probe) => ({ code: probe.code.toLowerCase(), message: probe.reason })),
     ],
+    nextEvidenceChecklist: buildNextEvidenceChecklist(packet, indexedConcerns),
     parameters,
     recommendedProbes,
     target: { columnName: packet.target.columnName, nodeId: packet.target.nodeId, symptom },
     unresolvedParameters,
     version: 1,
   };
+}
+
+/**
+ * Lists only diagnostic identities and references that a human can verify next.
+ * It deliberately does not carry condition SQL, probe SQL, or supplied values.
+ */
+interface IndexedCandidateConcern {
+  concern: CandidateConcern;
+  id: string;
+  index: number;
+}
+
+function indexCandidateConcerns(concerns: CandidateConcern[]): IndexedCandidateConcern[] {
+  return concerns
+    .map((concern, inputIndex) => ({ concern, inputIndex }))
+    .sort((left, right) => compareConcerns(left.concern, right.concern) || left.inputIndex - right.inputIndex)
+    .map(({ concern }, index) => ({ concern, id: `concern:${slug(concern.kind)}:${String(index + 1).padStart(2, '0')}`, index }));
+}
+
+function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket, indexedConcerns: IndexedCandidateConcern[]): NextEvidenceChecklistItemV1[] {
+  const influenceById = new Map(packet.rowLineage.influences.map((influence) => [influence.id, influence]));
+  const candidateConcernIdsByInfluenceId = new Map<string, string[]>();
+  for (const { concern, id } of indexedConcerns) {
+    for (const influenceId of concern.influenceIds) {
+      candidateConcernIdsByInfluenceId.set(influenceId, [
+        ...(candidateConcernIdsByInfluenceId.get(influenceId) ?? []),
+        id,
+      ]);
+    }
+  }
+  for (const [influenceId, candidateConcernIds] of candidateConcernIdsByInfluenceId) {
+    candidateConcernIdsByInfluenceId.set(influenceId, [...new Set(candidateConcernIds)].sort());
+  }
+  const influences = [...new Set(
+    indexedConcerns
+      .map(({ concern }) => concern)
+      .flatMap((concern) => concern.influenceIds)
+      .map((id) => influenceById.get(id))
+      .filter((influence): influence is NonNullable<typeof influence> => influence !== undefined),
+  )].sort((left, right) => `${left.scopeId}\u0000${left.kind}\u0000${left.mechanism}\u0000${left.id}`.localeCompare(`${right.scopeId}\u0000${right.kind}\u0000${right.mechanism}\u0000${right.id}`));
+
+  const conditionIdByInfluenceId = new Map<string, string>();
+  const conditionItems = influences.map((influence, index) => {
+    const id = `next-evidence:condition:${String(index + 1).padStart(2, '0')}`;
+    conditionIdByInfluenceId.set(influence.id, id);
+    return {
+      condition: {
+        candidateConcernIds: candidateConcernIdsByInfluenceId.get(influence.id) ?? [],
+        influenceId: influence.id,
+        kind: influence.kind,
+        mechanism: influence.mechanism,
+        scopeId: influence.scopeId,
+      },
+      id,
+      kind: 'condition' as const,
+      status: 'to_verify' as const,
+    };
+  });
+
+  const relationFacts = new Map<string, NextEvidenceRelationFactV1>();
+  for (const influence of influences) {
+    for (const reference of influence.references) {
+      const existing = relationFacts.get(reference.nodeId);
+      if (existing) {
+        existing.conditionIds = [...new Set([
+          ...existing.conditionIds,
+          conditionIdByInfluenceId.get(influence.id)!,
+        ])].sort();
+        existing.columnNames = [...new Set([...existing.columnNames, reference.columnName])].sort();
+        existing.scopeIds = [...new Set([...existing.scopeIds, reference.scopeId])].sort();
+      } else {
+        relationFacts.set(reference.nodeId, {
+          conditionIds: [conditionIdByInfluenceId.get(influence.id)!],
+          columnNames: [reference.columnName],
+          nodeId: reference.nodeId,
+          relationName: reference.nodeLabel,
+          scopeIds: [reference.scopeId],
+        });
+      }
+    }
+  }
+  const relationItems = [...relationFacts.values()]
+    .sort((left, right) => left.nodeId.localeCompare(right.nodeId) || left.relationName.localeCompare(right.relationName))
+    .map((relation, index) => ({
+      id: `next-evidence:relation:${String(index + 1).padStart(2, '0')}`,
+      kind: 'relation' as const,
+      relation,
+      status: 'to_verify' as const,
+    }));
+
+  const propertyItems = influences
+    .filter((influence) => influence.mechanism === 'exists' || influence.mechanism === 'not_exists')
+    .map((influence, index) => ({
+      id: `next-evidence:property:${String(index + 1).padStart(2, '0')}`,
+      kind: 'property' as const,
+      property: {
+        conditionId: conditionIdByInfluenceId.get(influence.id)!,
+        kind: influence.mechanism === 'exists' ? 'matching_related_record' as const : 'no_matching_related_record' as const,
+        anchorRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.scopeId === influence.scopeId).map((reference) => reference.nodeId))].sort(),
+        relatedRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.scopeId !== influence.scopeId).map((reference) => reference.nodeId))].sort(),
+      },
+      status: 'to_verify' as const,
+    }));
+
+  return [...conditionItems, ...relationItems, ...propertyItems];
 }
 
 function createNodeQueryOuterFilterProbe(
@@ -517,18 +654,35 @@ function resolveWhereInfluence(concern: CandidateConcern, packet: ColumnDiagnost
   return undefined;
 }
 
-function toCandidateConcern(concern: CandidateConcern, index: number): CandidateConcernV1 {
+function toCandidateConcern(concern: CandidateConcern, id: string): CandidateConcernV1 {
   return {
     evidence: [...concern.evidence],
     hypothesis: `${concern.reason} This is a candidate concern, not a conclusion.`,
-    id: `concern:${slug(concern.kind)}:${String(index + 1).padStart(2, '0')}`,
+    id,
     limitations: ['No database result was inspected.'],
     status: 'candidate',
   };
 }
 
 function compareConcerns(left: CandidateConcern, right: CandidateConcern): number {
-  return `${left.kind}\u0000${left.scopeId}\u0000${left.evidence.join('\u0000')}`.localeCompare(`${right.kind}\u0000${right.scopeId}\u0000${right.evidence.join('\u0000')}`);
+  return concernSortKey(left).localeCompare(concernSortKey(right));
+}
+
+function concernSortKey(concern: CandidateConcern): string {
+  return JSON.stringify([
+    concern.kind,
+    concern.scopeId,
+    concern.confidence,
+    concern.checkDomains,
+    concern.effects,
+    concern.evidence,
+    concern.impact,
+    concern.influenceIds,
+    concern.mechanisms,
+    concern.reason,
+    concern.signals,
+    concern.symptomMatch,
+  ]);
 }
 
 /** Sorts all successful probes before the recommendation split: priority, kind, node, then id. */

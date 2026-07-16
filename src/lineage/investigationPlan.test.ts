@@ -17,6 +17,7 @@ describe('InvestigationPlanV1 contract', () => {
       diagnostics: [{ code: 'sql_only', message: 'Diagnosis is based only on SQL analysis.' }],
       kind: 'investigation-plan',
       limitations: [{ code: 'no_database_access', message: 'No database result was inspected.' }],
+      nextEvidenceChecklist: [],
       parameters: [
         originalStatus,
         { id: 'parameter:investigation-key', name: 'customer_id', origin: 'investigation_key', required: true, status: 'required', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
