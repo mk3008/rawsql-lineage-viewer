@@ -113,6 +113,7 @@ export interface BlockedProbeV1 {
 }
 
 export interface NextEvidenceConditionFactV1 {
+  candidateConcernIds: string[];
   influenceId: string;
   kind: string;
   mechanism: string;
@@ -120,6 +121,7 @@ export interface NextEvidenceConditionFactV1 {
 }
 
 export interface NextEvidenceRelationFactV1 {
+  conditionIds: string[];
   columnNames: string[];
   nodeId: string;
   relationName: string;
@@ -305,9 +307,23 @@ export function createInvestigationPlanFromDiagnosticPacket(
  */
 function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket): NextEvidenceChecklistItemV1[] {
   const influenceById = new Map(packet.rowLineage.influences.map((influence) => [influence.id, influence]));
+  const sortedConcerns = [...packet.candidateConcerns].sort(compareConcerns);
+  const candidateConcernIdByConcern = new Map(sortedConcerns.map((concern, index) => [concern, `concern:${slug(concern.kind)}:${String(index + 1).padStart(2, '0')}`]));
+  const candidateConcernIdsByInfluenceId = new Map<string, string[]>();
+  for (const concern of sortedConcerns) {
+    const candidateConcernId = candidateConcernIdByConcern.get(concern)!;
+    for (const influenceId of concern.influenceIds) {
+      candidateConcernIdsByInfluenceId.set(influenceId, [
+        ...(candidateConcernIdsByInfluenceId.get(influenceId) ?? []),
+        candidateConcernId,
+      ]);
+    }
+  }
+  for (const [influenceId, candidateConcernIds] of candidateConcernIdsByInfluenceId) {
+    candidateConcernIdsByInfluenceId.set(influenceId, [...new Set(candidateConcernIds)].sort());
+  }
   const influences = [...new Set(
-    [...packet.candidateConcerns]
-      .sort(compareConcerns)
+    sortedConcerns
       .flatMap((concern) => concern.influenceIds)
       .map((id) => influenceById.get(id))
       .filter((influence): influence is NonNullable<typeof influence> => influence !== undefined),
@@ -318,7 +334,13 @@ function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket): NextEvidenc
     const id = `next-evidence:condition:${String(index + 1).padStart(2, '0')}`;
     conditionIdByInfluenceId.set(influence.id, id);
     return {
-      condition: { influenceId: influence.id, kind: influence.kind, mechanism: influence.mechanism, scopeId: influence.scopeId },
+      condition: {
+        candidateConcernIds: candidateConcernIdsByInfluenceId.get(influence.id) ?? [],
+        influenceId: influence.id,
+        kind: influence.kind,
+        mechanism: influence.mechanism,
+        scopeId: influence.scopeId,
+      },
       id,
       kind: 'condition' as const,
       status: 'to_verify' as const,
@@ -330,10 +352,15 @@ function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket): NextEvidenc
     for (const reference of influence.references) {
       const existing = relationFacts.get(reference.nodeId);
       if (existing) {
+        existing.conditionIds = [...new Set([
+          ...existing.conditionIds,
+          conditionIdByInfluenceId.get(influence.id)!,
+        ])].sort();
         existing.columnNames = [...new Set([...existing.columnNames, reference.columnName])].sort();
         existing.scopeIds = [...new Set([...existing.scopeIds, reference.scopeId])].sort();
       } else {
         relationFacts.set(reference.nodeId, {
+          conditionIds: [conditionIdByInfluenceId.get(influence.id)!],
           columnNames: [reference.columnName],
           nodeId: reference.nodeId,
           relationName: reference.nodeLabel,

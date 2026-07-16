@@ -58,6 +58,14 @@ describe('createInvestigationPlan', () => {
         relation: expect.objectContaining({ nodeId: 'table_customer_favorites', relationName: 'customer_favorites', columnNames: expect.arrayContaining(['customer_id', 'is_active']) }),
       }),
     ]));
+    expect(checklist.find((item) => item.kind === 'condition')?.condition).toMatchObject({
+      candidateConcernIds: ['concern:where-exists:01'],
+      influenceId: expect.any(String),
+    });
+    expect(checklist.filter((item) => item.kind === 'relation').map((item) => item.relation.conditionIds)).toEqual([
+      ['next-evidence:condition:01'],
+      ['next-evidence:condition:01'],
+    ]);
     expect(property).toMatchObject({
       kind: 'property',
       property: { kind: 'matching_related_record', relationNodeIds: expect.arrayContaining(['table_customers', 'table_customer_favorites']) },
@@ -71,6 +79,35 @@ describe('createInvestigationPlan', () => {
       symptom: 'missing_rows',
       parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
     }).nextEvidenceChecklist).toEqual(checklist);
+  });
+
+  it('links shared conditions to every source concern and relation to its condition items deterministically', () => {
+    const first = packet();
+    const secondInfluence: typeof first.rowLineage.influences[number] = {
+      ...first.rowLineage.influences[0],
+      id: 'influence:join',
+      kind: 'join' as const,
+      mechanism: 'join' as const,
+      references: [{ ...first.rowLineage.influences[0].references[0], nodeId: 'table:customers', nodeLabel: 'customers', columnName: 'id' }],
+    };
+    const concerns = [
+      { ...first.candidateConcerns[0], evidence: ['status = :status'], influenceIds: ['influence:where', 'influence:join'] },
+      { ...first.candidateConcerns[0], evidence: ['status = :other_status'], influenceIds: ['influence:where'] },
+    ];
+    const plan = createInvestigationPlanFromDiagnosticPacket({
+      ...first,
+      candidateConcerns: concerns,
+      rowLineage: { ...first.rowLineage, influences: [...first.rowLineage.influences, secondInfluence] },
+    });
+    expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'condition').map((item) => ({ id: item.id, concernIds: item.condition.candidateConcernIds }))).toEqual([
+      { id: 'next-evidence:condition:01', concernIds: ['concern:where:02'] },
+      { id: 'next-evidence:condition:02', concernIds: ['concern:where:01', 'concern:where:02'] },
+    ]);
+    expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'relation').map((item) => ({ nodeId: item.relation.nodeId, conditionIds: item.relation.conditionIds }))).toEqual([
+      { nodeId: 'table:customers', conditionIds: ['next-evidence:condition:01'] },
+      { nodeId: 'table:orders', conditionIds: ['next-evidence:condition:02'] },
+    ]);
+    expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('status =');
   });
 
   it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
