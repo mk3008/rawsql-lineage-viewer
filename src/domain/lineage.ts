@@ -76,6 +76,7 @@ export interface SourceSpan {
 export interface LineageSourceReference {
   columnName: string;
   nodeId: string;
+  provenance?: 'anchor' | 'related';
   role?: 'row_lineage' | 'unknown' | 'column_lineage';
   scopeId: string;
 }

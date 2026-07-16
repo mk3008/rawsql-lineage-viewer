@@ -69,9 +69,9 @@ describe('createInvestigationPlan', () => {
     expect(property).toMatchObject({
       kind: 'property',
       property: {
-        anchorRelationNodeIds: ['table_customer_favorites', 'table_customers'],
+        anchorRelationNodeIds: ['table_customers'],
         kind: 'matching_related_record',
-        relatedRelationNodeIds: [],
+        relatedRelationNodeIds: ['table_customer_favorites'],
       },
       status: 'to_verify',
     });
@@ -83,6 +83,64 @@ describe('createInvestigationPlan', () => {
       symptom: 'missing_rows',
       parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
     }).nextEvidenceChecklist).toEqual(checklist);
+  });
+
+  it('classifies positive and negative existence with correlated and uncorrelated relation roles', () => {
+    const cases = [
+      {
+        sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id)',
+        mechanism: 'exists',
+        propertyKind: 'matching_related_record',
+        anchor: ['table_customers'],
+        related: ['table_customer_favorites'],
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id)',
+        mechanism: 'not_exists',
+        propertyKind: 'no_matching_related_record',
+        anchor: ['table_customers'],
+        related: ['table_customer_favorites'],
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.is_active = :active)',
+        mechanism: 'exists',
+        propertyKind: 'matching_related_record',
+        anchor: [],
+        related: ['table_customer_favorites'],
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.is_active = :active)',
+        mechanism: 'not_exists',
+        propertyKind: 'no_matching_related_record',
+        anchor: [],
+        related: ['table_customer_favorites'],
+      },
+    ] as const;
+
+    for (const testCase of cases) {
+      const plan = createInvestigationPlan({
+        sql: testCase.sql,
+        target: { columnName: 'id', nodeId: 'main_output' },
+        parameters: [{ name: 'active', origin: 'original_query_parameter', value: 'secret-value' }],
+      });
+      const condition = plan.nextEvidenceChecklist.find((item) => item.kind === 'condition');
+      const property = plan.nextEvidenceChecklist.find((item) => item.kind === 'property');
+      expect(condition).toMatchObject({ condition: { mechanism: testCase.mechanism } });
+      expect(property).toMatchObject({
+        property: {
+          anchorRelationNodeIds: testCase.anchor,
+          kind: testCase.propertyKind,
+          relatedRelationNodeIds: testCase.related,
+        },
+      });
+      expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('secret-value');
+      expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('SELECT');
+      expect(plan).toEqual(createInvestigationPlan({
+        sql: testCase.sql,
+        target: { columnName: 'id', nodeId: 'main_output' },
+        parameters: [{ name: 'active', origin: 'original_query_parameter', value: 'secret-value' }],
+      }));
+    }
   });
 
   it('links shared conditions to every source concern and relation to its condition items deterministically', () => {
@@ -112,6 +170,11 @@ describe('createInvestigationPlan', () => {
       { nodeId: 'table:customers', conditionIds: ['next-evidence:condition:01'] },
       { nodeId: 'table:orders', conditionIds: ['next-evidence:condition:02'] },
     ]);
+    expect(createInvestigationPlanFromDiagnosticPacket({
+      ...first,
+      candidateConcerns: [...concerns].reverse(),
+      rowLineage: { ...first.rowLineage, influences: [...first.rowLineage.influences, secondInfluence] },
+    })).toMatchObject({ candidateConcerns: plan.candidateConcerns, nextEvidenceChecklist: plan.nextEvidenceChecklist });
     expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('status =');
   });
 

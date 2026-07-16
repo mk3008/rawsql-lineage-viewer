@@ -135,10 +135,10 @@ function collectConditionInfluences(
   const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
   return conditions.flatMap((item, index) => {
     const expressionSql = deps.formatExpressionSql(item);
-    const references = toSourceReferences(
-      mergeColumnRefs(resolveColumnReferences(item, toSourceReferenceTargets(sources)), deps.collectNestedQueryReferences(item)),
-      scopeId,
-      'row_lineage',
+    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources)), scopeId, 'row_lineage', 'anchor');
+    const relatedReferences = toSourceReferences(deps.collectNestedQueryReferences(item), scopeId, 'row_lineage', 'related');
+    const references = [...anchorReferences, ...relatedReferences].filter((reference, index, all) =>
+      all.findIndex((candidate) => candidate.nodeId === reference.nodeId && candidate.columnName === reference.columnName && candidate.provenance === reference.provenance) === index,
     );
     if (!expressionSql && references.length === 0) {
       return [];
@@ -271,13 +271,15 @@ function toSourceReferences(
   refs: LineageColumnRef[],
   scopeId: string,
   role: LineageSourceReference['role'],
+  provenance?: LineageSourceReference['provenance'],
 ): LineageSourceReference[] {
-  return refs.map((ref) => ({
-    columnName: ref.columnName,
-    nodeId: ref.nodeId,
-    role,
-    scopeId,
-  }));
+  return refs.map((ref) => {
+    const result: LineageSourceReference = { columnName: ref.columnName, nodeId: ref.nodeId, role, scopeId };
+    if (provenance) {
+      Object.defineProperty(result, 'provenance', { configurable: true, value: provenance });
+    }
+    return result;
+  });
 }
 
 function toSourceReferenceTargets(sources: PopulationOriginSource[]): SourceReferenceTarget[] {

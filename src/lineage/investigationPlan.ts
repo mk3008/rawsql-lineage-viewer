@@ -399,8 +399,8 @@ function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket, indexedConce
       property: {
         conditionId: conditionIdByInfluenceId.get(influence.id)!,
         kind: influence.mechanism === 'exists' ? 'matching_related_record' as const : 'no_matching_related_record' as const,
-        anchorRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.scopeId === influence.scopeId).map((reference) => reference.nodeId))].sort(),
-        relatedRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.scopeId !== influence.scopeId).map((reference) => reference.nodeId))].sort(),
+        anchorRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.provenance === 'anchor').map((reference) => reference.nodeId))].sort(),
+        relatedRelationNodeIds: [...new Set(influence.references.filter((reference) => reference.provenance === 'related').map((reference) => reference.nodeId))].sort(),
       },
       status: 'to_verify' as const,
     }));

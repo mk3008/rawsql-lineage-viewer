@@ -49,6 +49,7 @@ export interface DiagnosticSourceReference {
   id?: string;
   nodeId: string;
   nodeLabel: string;
+  provenance?: 'anchor' | 'related';
   roles: Array<DiagnosticSourceUsage['role']>;
   scopeId: string;
   usages: DiagnosticSourceUsage[];
@@ -1107,7 +1108,10 @@ function impactsFromEffects(effects: PopulationEffect[]): LineageImpact[] {
 }
 
 function mechanismFromKind(kind: string, expressionSql?: string): PopulationMechanism {
-  if (kind === 'where' && /^\s*(not\s+)?exists\b/i.test(expressionSql ?? '')) {
+  if (kind === 'where' && /^\s*not\s+exists\b/i.test(expressionSql ?? '')) {
+    return 'not_exists';
+  }
+  if (kind === 'where' && /^\s*exists\b/i.test(expressionSql ?? '')) {
     return 'exists';
   }
   switch (kind) {
@@ -1201,7 +1205,7 @@ function createDiagnosticReference(
   const node = model.nodes.find((item) => item.id === reference.nodeId);
   const column = node?.columns.find((item) => item.name === reference.columnName);
   const definedInScopeId = column?.scopeId ?? model.scopes.find((scope) => scope.nodeId === reference.nodeId)?.id;
-  return {
+  const result: DiagnosticSourceReference = {
     columnName: reference.columnName,
     definedInScopeId,
     id: referenceIdValue(reference.nodeId, reference.columnName),
@@ -1216,6 +1220,10 @@ function createDiagnosticReference(
     }],
     usedInScopeIds: [reference.scopeId],
   };
+  if (reference.provenance) {
+    Object.defineProperty(result, 'provenance', { configurable: true, value: reference.provenance });
+  }
+  return result;
 }
 
 function columnRefToSourceReference(reference: LineageColumnRef, usageScopeId: string): LineageSourceReference {
@@ -1241,19 +1249,27 @@ function classifyBothReferences(references: DiagnosticSourceReference[]): Diagno
     existing.usedInScopeIds = dedupeStrings([...(existing.usedInScopeIds ?? []), ...(reference.usedInScopeIds ?? [reference.scopeId])]);
   }
   return [...merged.values()].map((reference) => {
-    return {
+    const result: DiagnosticSourceReference = {
       ...reference,
       roles: rolesFromUsages(reference.usages),
       usedInScopeIds: dedupeStrings(reference.usages.map((usage) => usage.scopeId)),
     };
+    if (reference.provenance) {
+      Object.defineProperty(result, 'provenance', { configurable: true, value: reference.provenance });
+    }
+    return result;
   });
 }
 
 function cloneDiagnosticReference(reference: DiagnosticSourceReference): DiagnosticSourceReference {
-  return {
+  const clone: DiagnosticSourceReference = {
     ...reference,
     usages: reference.usages.map((usage) => ({ ...usage })),
   };
+  if (reference.provenance) {
+    Object.defineProperty(clone, 'provenance', { configurable: true, value: reference.provenance });
+  }
+  return clone;
 }
 
 function dedupeDiagnosticReferences(references: DiagnosticSourceReference[]): DiagnosticSourceReference[] {

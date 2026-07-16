@@ -414,9 +414,9 @@ describe('column diagnostics', () => {
 
     expect(whereExists?.references).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ columnName: 'id', nodeId: 'table_customers', roles: ['row_lineage'] }),
-        expect.objectContaining({ columnName: 'customer_id', nodeId: 'table_customer_favorites', roles: ['row_lineage'] }),
-        expect.objectContaining({ columnName: 'is_active', nodeId: 'table_customer_favorites', roles: ['row_lineage'] }),
+        expect.objectContaining({ columnName: 'id', nodeId: 'table_customers', provenance: 'anchor', roles: ['row_lineage'] }),
+        expect.objectContaining({ columnName: 'customer_id', nodeId: 'table_customer_favorites', provenance: 'related', roles: ['row_lineage'] }),
+        expect.objectContaining({ columnName: 'is_active', nodeId: 'table_customer_favorites', provenance: 'related', roles: ['row_lineage'] }),
       ]),
     );
     expect(whereExists?.references.flatMap((reference) => reference.usages.map((usage) => usage.usageKind))).not.toContain('join_on');
