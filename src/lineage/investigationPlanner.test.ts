@@ -68,7 +68,11 @@ describe('createInvestigationPlan', () => {
     ]);
     expect(property).toMatchObject({
       kind: 'property',
-      property: { kind: 'matching_related_record', relationNodeIds: expect.arrayContaining(['table_customers', 'table_customer_favorites']) },
+      property: {
+        anchorRelationNodeIds: ['table_customer_favorites', 'table_customers'],
+        kind: 'matching_related_record',
+        relatedRelationNodeIds: [],
+      },
       status: 'to_verify',
     });
     expect(JSON.stringify(checklist)).not.toContain('secret-active-value');
@@ -88,7 +92,7 @@ describe('createInvestigationPlan', () => {
       id: 'influence:join',
       kind: 'join' as const,
       mechanism: 'join' as const,
-      references: [{ ...first.rowLineage.influences[0].references[0], nodeId: 'table:customers', nodeLabel: 'customers', columnName: 'id' }],
+      references: [{ ...first.rowLineage.influences[0].references[0], nodeId: 'table:customers', nodeLabel: 'customers', columnName: 'id', scopeId: 'scope:customers-subquery' }],
     };
     const concerns = [
       { ...first.candidateConcerns[0], evidence: ['status = :status'], influenceIds: ['influence:where', 'influence:join'] },
@@ -99,6 +103,7 @@ describe('createInvestigationPlan', () => {
       candidateConcerns: concerns,
       rowLineage: { ...first.rowLineage, influences: [...first.rowLineage.influences, secondInfluence] },
     });
+    expect(plan.candidateConcerns.map((concern) => concern.id)).toEqual(['concern:where:01', 'concern:where:02']);
     expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'condition').map((item) => ({ id: item.id, concernIds: item.condition.candidateConcernIds }))).toEqual([
       { id: 'next-evidence:condition:01', concernIds: ['concern:where:02'] },
       { id: 'next-evidence:condition:02', concernIds: ['concern:where:01', 'concern:where:02'] },
