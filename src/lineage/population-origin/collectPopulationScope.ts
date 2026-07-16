@@ -23,6 +23,7 @@ export interface PopulationOriginDeps {
   collectNestedQueryReferences: (value: unknown) => LineageColumnRef[];
   formatExpressionSql: (value: unknown) => string | undefined;
   formatScopeQuerySql: (query: SimpleSelectQuery) => string | undefined;
+  getInlineQueryShadowedAliases?: (inlineQuery: InlineQuery) => ReadonlySet<string>;
 }
 
 export interface CollectPopulationScopeInput {
@@ -135,7 +136,10 @@ function collectConditionInfluences(
   const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
   return conditions.flatMap((item, index) => {
     const expressionSql = deps.formatExpressionSql(item);
-    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources), { skipUnqualifiedInInlineQueries: true }), scopeId, 'row_lineage', 'anchor');
+    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources), {
+      getInlineQueryShadowedAliases: deps.getInlineQueryShadowedAliases,
+      skipUnqualifiedInInlineQueries: true,
+    }), scopeId, 'row_lineage', 'anchor');
     const relatedReferences = toSourceReferences(deps.collectNestedQueryReferences(item), scopeId, 'row_lineage', 'related');
     const references = [...anchorReferences, ...relatedReferences].filter((reference, index, all) =>
       all.findIndex((candidate) => candidate.nodeId === reference.nodeId && candidate.columnName === reference.columnName && candidate.provenance === reference.provenance) === index,

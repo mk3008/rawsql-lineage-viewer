@@ -1538,7 +1538,21 @@ function createPopulationOriginDeps(options: CollectQueryEdgesOptions): Populati
     collectNestedQueryReferences: (value) => collectNestedQueryReferences(value, options),
     formatExpressionSql,
     formatScopeQuerySql,
+    getInlineQueryShadowedAliases: (inlineQuery) => collectInlineQueryLocalAliases(inlineQuery),
   };
+}
+
+function collectInlineQueryLocalAliases(inlineQuery: InlineQuery): ReadonlySet<string> {
+  const query = inlineQuery.selectQuery;
+  if (!(query instanceof SimpleSelectQuery)) {
+    return new Set();
+  }
+  return new Set(
+    (query.fromClause?.getSources() ?? [])
+      .filter((source) => Boolean(source.aliasExpression))
+      .map((source) => source.getAliasName())
+      .filter((alias): alias is string => Boolean(alias)),
+  );
 }
 
 function createOutputColumnDeps(options: CollectQueryEdgesOptions): OutputColumnDeps {

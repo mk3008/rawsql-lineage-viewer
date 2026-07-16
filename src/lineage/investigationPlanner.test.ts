@@ -122,6 +122,20 @@ describe('createInvestigationPlan', () => {
         anchor: [],
         related: ['table_customer_favorites'],
       },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites c WHERE c.customer_id > 0)',
+        mechanism: 'exists',
+        propertyKind: 'matching_related_record',
+        anchor: [],
+        related: ['table_customer_favorites'],
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites c WHERE c.customer_id > 0)',
+        mechanism: 'not_exists',
+        propertyKind: 'no_matching_related_record',
+        anchor: [],
+        related: ['table_customer_favorites'],
+      },
     ] as const;
 
     for (const testCase of cases) {
