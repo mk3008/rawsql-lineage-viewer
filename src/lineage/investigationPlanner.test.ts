@@ -158,14 +158,14 @@ describe('createInvestigationPlan', () => {
         related: ['table_public_customers'],
       },
       {
-        sql: 'SELECT orders.id FROM orders WHERE EXISTS (SELECT 1 FROM public.customers WHERE customers.id > 0)',
+        sql: 'SELECT customers.id FROM orders customers WHERE EXISTS (SELECT 1 FROM public.customers WHERE customers.id > 0)',
         mechanism: 'exists',
         propertyKind: 'matching_related_record',
         anchor: [],
         related: ['table_public_customers'],
       },
       {
-        sql: 'SELECT orders.id FROM orders WHERE NOT EXISTS (SELECT 1 FROM public.customers WHERE customers.id > 0)',
+        sql: 'SELECT customers.id FROM orders customers WHERE NOT EXISTS (SELECT 1 FROM public.customers WHERE customers.id > 0)',
         mechanism: 'not_exists',
         propertyKind: 'no_matching_related_record',
         anchor: [],
