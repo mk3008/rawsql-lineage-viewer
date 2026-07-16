@@ -143,7 +143,7 @@ function collectConditionInfluences(
     if (!expressionSql && references.length === 0) {
       return [];
     }
-    return [{
+    const result: LineageCondition = {
       expressionSql: expressionSql ?? 'unknown expression',
       id: `${scopeId}_${kind}_${index + 1}`,
       impact,
@@ -151,8 +151,56 @@ function collectConditionInfluences(
       references,
       scopeId,
       splitStrategy,
-    }];
+    };
+    const existencePolarity = classifyExistencePredicate(item);
+    if (existencePolarity) {
+      Object.defineProperty(result, 'existencePolarity', { configurable: true, value: existencePolarity });
+    }
+    return [result];
   });
+}
+
+function classifyExistencePredicate(value: unknown): LineageCondition['existencePolarity'] {
+  const expression = unwrapParenthesized(value);
+  if (!isUnaryExpressionLike(expression)) {
+    return undefined;
+  }
+  const operator = expression.operator.value.toLowerCase();
+  if (operator === 'exists' && isInlineQueryLike(expression.expression)) {
+    return 'exists';
+  }
+  if (operator === 'not exists' && isInlineQueryLike(expression.expression)) {
+    return 'not_exists';
+  }
+  if (operator === 'not') {
+    const nested = classifyExistencePredicate(expression.expression);
+    return nested === 'exists' ? 'not_exists' : nested === 'not_exists' ? 'exists' : undefined;
+  }
+  return undefined;
+}
+
+function unwrapParenthesized(value: unknown): unknown {
+  let current = value;
+  while (isParenExpressionLike(current)) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function isParenExpressionLike(value: unknown): value is { expression: unknown } {
+  return value != null && typeof value === 'object' && value.constructor?.name === 'ParenExpression' && 'expression' in value;
+}
+
+function isUnaryExpressionLike(value: unknown): value is { expression: unknown; operator: { value: string } } {
+  return value != null
+    && typeof value === 'object'
+    && value.constructor?.name === 'UnaryExpression'
+    && 'expression' in value
+    && typeof (value as { operator?: { value?: unknown } }).operator?.value === 'string';
+}
+
+function isInlineQueryLike(value: unknown): boolean {
+  return value != null && typeof value === 'object' && value.constructor?.name === 'InlineQuery';
 }
 
 function collectOrderByInfluences(

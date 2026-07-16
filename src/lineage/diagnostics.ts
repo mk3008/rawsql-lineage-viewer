@@ -880,7 +880,7 @@ function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): L
 
 function conditionToInfluence(model: LineageModel, condition: LineageCondition): PopulationInfluence {
   const effects = effectsFromImpacts(condition.impact);
-  const mechanism = mechanismFromKind(condition.kind, condition.expressionSql);
+  const mechanism = mechanismFromKind(condition.kind, condition.expressionSql, condition.existencePolarity);
   return {
     effects,
     expressionSql: condition.expressionSql,
@@ -1107,12 +1107,9 @@ function impactsFromEffects(effects: PopulationEffect[]): LineageImpact[] {
   });
 }
 
-function mechanismFromKind(kind: string, expressionSql?: string): PopulationMechanism {
-  if (kind === 'where' && /^\s*not\s+exists\b/i.test(expressionSql ?? '')) {
-    return 'not_exists';
-  }
-  if (kind === 'where' && /^\s*exists\b/i.test(expressionSql ?? '')) {
-    return 'exists';
+function mechanismFromKind(kind: string, _expressionSql?: string, existencePolarity?: 'exists' | 'not_exists'): PopulationMechanism {
+  if (kind === 'where' && existencePolarity) {
+    return existencePolarity;
   }
   switch (kind) {
     case 'aggregate_filter':

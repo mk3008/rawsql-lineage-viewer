@@ -143,6 +143,40 @@ describe('createInvestigationPlan', () => {
     }
   });
 
+  it('preserves proven polarity through neutral parentheses and split predicates, but rejects comparison wrappers safely', () => {
+    const classified = [
+      {
+        sql: 'SELECT c.id FROM customers c WHERE (EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id))',
+        mechanism: 'exists',
+        propertyKind: 'matching_related_record',
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE true AND (NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id))',
+        mechanism: 'not_exists',
+        propertyKind: 'no_matching_related_record',
+      },
+      {
+        sql: 'SELECT c.id FROM customers c WHERE NOT (EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id))',
+        mechanism: 'not_exists',
+        propertyKind: 'no_matching_related_record',
+      },
+    ] as const;
+    for (const testCase of classified) {
+      const plan = createInvestigationPlan({ sql: testCase.sql, target: { columnName: 'id', nodeId: 'main_output' } });
+      expect(plan.nextEvidenceChecklist.find((item) => item.kind === 'condition')).toMatchObject({ condition: { mechanism: testCase.mechanism } });
+      expect(plan.nextEvidenceChecklist.find((item) => item.kind === 'property')).toMatchObject({ property: { kind: testCase.propertyKind } });
+    }
+
+    for (const sql of [
+      'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id) = false',
+      'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id) = false',
+    ]) {
+      const plan = createInvestigationPlan({ sql, target: { columnName: 'id', nodeId: 'main_output' } });
+      expect(plan.nextEvidenceChecklist.some((item) => item.kind === 'property')).toBe(false);
+      expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'condition').every((item) => item.condition.mechanism === 'where')).toBe(true);
+    }
+  });
+
   it('links shared conditions to every source concern and relation to its condition items deterministically', () => {
     const first = packet();
     const secondInfluence: typeof first.rowLineage.influences[number] = {

@@ -82,6 +82,7 @@ export interface LineageSourceReference {
 }
 
 export interface LineageCondition {
+  existencePolarity?: 'exists' | 'not_exists';
   expressionSql: string;
   id: string;
   impact: LineageImpact[];
