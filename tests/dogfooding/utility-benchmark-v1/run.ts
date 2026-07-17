@@ -45,7 +45,7 @@ let scenarioSubphase = 'not_started';
     const version = (await client.query('select version()')).rows[0]?.version as string;
     evidence.serverVersion = version?.split(' on ')[0] ?? 'redacted';
     for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id, value => { scenarioSubphase = value; }) }; }
-  } catch { failureCode = phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase, scenarioSubphase }; }
+  } catch (error) { failureCode = phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase, scenarioSubphase, exceptionClass: error instanceof Error ? error.name : typeof error }; }
   finally {
     finalizationPhase = 'client_close'; try { await client?.end(); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CLIENT_CLOSE' : failureCode; }
     finalizationPhase = 'mount_inspect'; let mounts: unknown[] = []; try { mounts = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', container], { encoding: 'utf8' })); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_MOUNT_INSPECT' : failureCode; }
@@ -62,8 +62,8 @@ let scenarioSubphase = 'not_started';
     try { privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
     evidence.parameterLeakageCount = countScalarLeakage(evidence, privateBindings);
     evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
-    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-16.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
-    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-16.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 16\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 7752c3038904a457d253f2af2c653554e7638a00\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-17.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
+    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-17.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 17\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 9a66c0c1fdbeb9ed1c643b978bfb41d5285a498d\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
     if (failureCode !== 'OK') process.exitCode = 1;
   }
 }
@@ -71,12 +71,18 @@ let scenarioSubphase = 'not_started';
 async function runScenario(client: Client, temp: string, id: string, setSubphase: (phase: string) => void): Promise<unknown> {
   const pub = resolve(root, 'scenarios', id, 'public');
   const priv = resolve(root, 'scenarios', id, 'private');
+  setSubphase('schema_reset');
   await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  setSubphase('schema_load');
   await client.query(readFileSync(resolve(pub, 'schema.sql'), 'utf8'));
+  setSubphase('faulty_fixture_load');
   await client.query(readFileSync(resolve(priv, 'seed-faulty.sql'), 'utf8'));
+  setSubphase('binding_definition_load');
   const bindings = json<Record<string, Scalar>>(resolve(priv, 'bindings.json'));
   const parameterFile = resolve(temp, `${id}-parameters.json`);
+  setSubphase('parameter_file_write');
   writeFileSync(parameterFile, JSON.stringify({ bindings, definitions: json(resolve(pub, 'parameter-definitions.json')) }));
+  setSubphase('case_load');
   const c = json<{ targetColumn: string; symptom: string }>(resolve(pub, 'case.json'));
   setSubphase('plan_generation');
   const plan = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'query.sql', '--ddl-dir', '.', '--parameters', parameterFile, '--target-node', 'main_output', '--target-column', c.targetColumn, '--symptom', c.symptom], { cwd: pub, encoding: 'utf8' })) as Plan;
@@ -84,9 +90,11 @@ async function runScenario(client: Client, temp: string, id: string, setSubphase
   const execute = async () => Object.fromEntries(await Promise.all(plan.recommendedProbes.map(async probe => { validateProbe(plan, probe, bindings); const startedProbe = Date.now(); const result = await executeProbe(client, probe, bindings); return [probe.id, { raw: result, elapsedMs: Date.now() - startedProbe, plannedArtifactHash: hash(probe.sql), safetyAccepted: true }] as const; })));
   setSubphase('faulty_execution');
   const faulty = await execute();
-  setSubphase('reset');
+  setSubphase('schema_reset');
   await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
+  setSubphase('schema_load');
   await client.query(readFileSync(resolve(pub, 'schema.sql'), 'utf8'));
+  setSubphase('control_fixture_load');
   await client.query(readFileSync(resolve(priv, 'seed-control.sql'), 'utf8'));
   setSubphase('control_execution');
   const control = await execute();

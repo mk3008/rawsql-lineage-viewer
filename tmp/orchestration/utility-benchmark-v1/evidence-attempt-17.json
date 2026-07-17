@@ -1,0 +1,38 @@
+{
+  "image": "postgres:16-alpine",
+  "scenarios": {},
+  "imageId": "sha256:79c06d285ed9186efbbc45c73413b3c3510c3c94ffede2f25d1e523f74d07f28",
+  "serverVersion": "PostgreSQL 16.11",
+  "error": {
+    "code": "RUN_FAULTY_FIXTURE_LOAD",
+    "phase": "scenario_sql-defect",
+    "scenarioSubphase": "faulty_fixture_load",
+    "exceptionClass": "Error"
+  },
+  "boundary": {
+    "changedPathCategoryCounts": {
+      "benchmark": 18,
+      "core": 0,
+      "cli": 0,
+      "mcp": 0
+    },
+    "changedPathHash": "8acd0c1ca6891b4fbba7ba6987e2322bcb767f734566721f764a025c96dc42e2",
+    "noCoreCliMcpDbConfig": true
+  },
+  "teardown": {
+    "containerAbsent": true,
+    "mountCount": 0,
+    "volumeAbsent": true,
+    "dynamicLoopbackPortClosed": true,
+    "tempCredentialRemoved": true,
+    "tempDirectoryRemoved": true,
+    "host": "127.0.0.1",
+    "loopbackOnly": true
+  },
+  "parameterLeakageCount": 0,
+  "finalization": {
+    "phase": "container_verify",
+    "code": "RUN_FAULTY_FIXTURE_LOAD",
+    "containerAbsent": true
+  }
+}
