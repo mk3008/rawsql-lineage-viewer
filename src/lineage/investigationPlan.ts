@@ -268,11 +268,11 @@ export function createInvestigationPlan(input: InvestigationPlanInputV1): Invest
 /** @internal Test seam for planning behavior after the pure parser/diagnostics boundary. */
 export function createInvestigationPlanFromDiagnosticPacket(
   packet: ColumnDiagnosticPacket,
-  parameters: InvestigationPlannerParametersV1 = { definitions: [] },
+  parameterInput: InvestigationPlannerParametersV1 = { definitions: [] },
   symptom: string = DEFAULT_INVESTIGATION_SYMPTOM,
   nodeQueryContext?: InvestigationNodeQueryContextV1,
 ): Omit<InvestigationPlanV1, 'originalQuery'> {
-  const inputs = normalizePlannerParameters(parameters);
+  const inputs = normalizePlannerParameters(parameterInput);
   assertParameterInput(inputs);
   const indexedConcerns = indexCandidateConcerns(packet.candidateConcerns);
   const candidateConcerns = indexedConcerns.map(({ concern, id }) => toCandidateConcern(concern, id));
