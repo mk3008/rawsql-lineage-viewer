@@ -32,6 +32,16 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(createInvestigationPlan(input).target.symptom).toBe('logic_review');
   });
 
+  it('round-trips a discovery target id through the same Core plan target', () => {
+    const workspace = temporaryWorkspace();
+    const request = { sql: 'select status from orders', targetId: 'target:001' };
+    const input = normalizeCreateInvestigationPlanInput(workspace, request);
+
+    expect(input.target).toEqual({ columnName: 'status', nodeId: 'main_output' });
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, targetColumn: 'status' }))
+      .toThrow(expect.objectContaining({ code: 'TARGET_INPUT_CONFLICT' }));
+  });
+
   it('normalizes approved parameter maps, inline DDL strings, target defaults, and duplicate file paths', () => {
     const workspace = temporaryWorkspace();
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');
@@ -150,7 +160,7 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select 1', targetColumn: 'status', parameterBindings: { customer_id: opaqueBinding }, parameterDefinitions: [{ name: 'customer_id', origin: 'investigation_key' }, { name: 'customer_id', origin: 'original_query_parameter' }] })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
-  it('serves exactly one stdio tool, returns structured input errors, isolates repeated calls, and does not write the workspace', async () => {
+  it('serves composable and high-level tools, returns structured input errors, isolates repeated calls, and does not write the workspace', async () => {
     const workspace = temporaryWorkspace();
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');
     mkdirSync(resolve(workspace, 'ddl'));
@@ -166,27 +176,32 @@ describe('create_investigation_plan MCP adapter', () => {
     await client.connect(transport);
     try {
       const listed = await client.listTools();
-      expect(listed.tools.map((tool) => tool.name)).toEqual(['create_investigation_plan']);
-      expect(listed.tools[0].description).toContain('static SQL/DDL analysis plan only');
-      expect(listed.tools[0].description).toContain('never connects to a database or executes SQL');
-      expect(listed.tools[0].description).toContain('candidate concerns are unconfirmed');
-      expect(listed.tools[0].description).toContain('investigation-only SELECT statements');
-      expect(listed.tools[0].description).toContain('not corrected or production SQL');
-      expect(listed.tools[0].description).toContain('without inventing unproven SQL');
-      expect(listed.tools[0].description).toContain('DDL must be explicitly supplied');
-      expect(listed.tools[0].description).toContain('never fetches database schema');
-      expect(listed.tools[0].description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
-      expect(listed.tools[0].description).toContain('rather than free natural-language symptoms');
-      expect(listed.tools[0].description).toContain('Parameter definitions and caller-owned bindings are separate inputs');
-      expect(listed.tools[0].description).toContain('never returned in the plan');
-      const inputProperties = listed.tools[0].inputSchema.properties as Record<string, { description?: string }>;
+      expect(listed.tools.map((tool) => tool.name)).toEqual([
+        'analyze_investigation_sql',
+        'discover_investigation_targets',
+        'create_investigation_plan',
+      ]);
+      const createTool = listed.tools.find((tool) => tool.name === 'create_investigation_plan')!;
+      expect(createTool.description).toContain('static SQL/DDL analysis plan only');
+      expect(createTool.description).toContain('never connects to a database or executes SQL');
+      expect(createTool.description).toContain('candidate concerns are unconfirmed');
+      expect(createTool.description).toContain('investigation-only SELECT statements');
+      expect(createTool.description).toContain('not corrected or production SQL');
+      expect(createTool.description).toContain('without inventing unproven SQL');
+      expect(createTool.description).toContain('DDL must be explicitly supplied');
+      expect(createTool.description).toContain('never fetches database schema');
+      expect(createTool.description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
+      expect(createTool.description).toContain('rather than free natural-language symptoms');
+      expect(createTool.description).toContain('Parameter definitions and caller-owned bindings are separate inputs');
+      expect(createTool.description).toContain('never returned in the plan');
+      const inputProperties = createTool.inputSchema.properties as Record<string, { description?: string }>;
       expect(Object.values(inputProperties).every((property) => typeof property.description === 'string' && property.description.length > 0)).toBe(true);
       expect(inputProperties.symptom.description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
       expect(inputProperties.symptom.description).toContain('rather than free natural-language symptoms');
       expect(inputProperties.parameterDefinitions.description).toContain('metadata only');
       expect(inputProperties.parameterBindings.description).toContain('never returned in the plan');
-      expect((listed.tools[0].inputSchema.required as string[])).toContain('targetColumn');
       expect((inputProperties.targetColumn as { type?: string }).type).toBe('string');
+      expect((inputProperties.targetId as { type?: string }).type).toBe('string');
       expect((inputProperties.symptom as { enum?: string[] }).enum).toEqual(['value_too_high', 'value_too_low', 'value_missing', 'missing_rows', 'duplicate_rows']);
       expect((inputProperties.sql as { type?: string }).type).toBe('string');
       expect((inputProperties.ddlDirectories as { type?: string; items?: { type?: string } }).type).toBe('array');
@@ -194,6 +209,40 @@ describe('create_investigation_plan MCP adapter', () => {
       const parameterDefinitionItems = (inputProperties.parameterDefinitions as { items?: { properties?: { origin?: { enum?: string[] }; value?: unknown } } }).items;
       expect(parameterDefinitionItems?.properties?.origin?.enum).toEqual(['investigation_key', 'original_query_parameter', 'derived_parameter', 'environment_parameter']);
       expect(parameterDefinitionItems?.properties).not.toHaveProperty('value');
+
+      const staticRequest = { sqlPath: 'query.sql', ddlDirectories: ['ddl'] };
+      const analysis = await client.callTool({ name: 'analyze_investigation_sql', arguments: staticRequest });
+      const discovery = await client.callTool({ name: 'discover_investigation_targets', arguments: staticRequest });
+      expect(analysis.structuredContent).toMatchObject({ analysisMode: 'original', kind: 'investigation-analysis-summary', version: 1 });
+      expect(discovery.structuredContent).toMatchObject({ kind: 'investigation-target-discovery', version: 1 });
+      expect((await client.callTool({ name: 'analyze_investigation_sql', arguments: staticRequest })).structuredContent).toEqual(analysis.structuredContent);
+      expect((await client.callTool({ name: 'discover_investigation_targets', arguments: staticRequest })).structuredContent).toEqual(discovery.structuredContent);
+      const discoveredTarget = (discovery.structuredContent as { targets: Array<{ id: string; identity: { column: { name: string }; node: { id: string } }; selection: { status: string } }> }).targets
+        .find((target) => target.identity.node.id === 'main_output' && target.identity.column.name === 'status' && target.selection.status === 'selectable')!;
+      const byTargetId = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { ...staticRequest, targetId: discoveredTarget.id },
+      });
+      expect(byTargetId.structuredContent).toMatchObject({ target: { columnName: 'status', nodeId: 'main_output' } });
+      const unknownTarget = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { ...staticRequest, targetId: 'target:999' },
+      });
+      expect(unknownTarget.isError).toBe(true);
+      expect(JSON.parse((unknownTarget.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'TARGET_NOT_FOUND', kind: 'invalid_input' });
+
+      const duplicateDiscovery = await client.callTool({
+        name: 'discover_investigation_targets',
+        arguments: { sql: 'SELECT 1 AS repeated, 2 AS repeated' },
+      });
+      const ambiguousTargetId = (duplicateDiscovery.structuredContent as { targets: Array<{ id: string; selection: { status: string } }> }).targets
+        .find((target) => target.selection.status === 'ambiguous')!.id;
+      const ambiguousTarget = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { sql: 'SELECT 1 AS repeated, 2 AS repeated', targetId: ambiguousTargetId },
+      });
+      expect(ambiguousTarget.isError).toBe(true);
+      expect(JSON.parse((ambiguousTarget.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'TARGET_AMBIGUOUS', kind: 'invalid_input' });
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });

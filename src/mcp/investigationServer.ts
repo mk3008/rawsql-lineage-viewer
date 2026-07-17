@@ -6,6 +6,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationParameterDefinitionInputV1, type InvestigationPlanInputV1, type InvestigationPlannerParametersV1 } from '../lineage/investigationPlan';
+import { discoverInvestigationTargets, InvestigationTargetSelectionError, resolveInvestigationTarget, type InvestigationTargetDiscoveryInputV1 } from '../lineage/investigationTargetDiscovery';
 import { diagnosticProblemIntents, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 
@@ -25,6 +26,14 @@ const parameterDefinitionFields = {
 };
 const parameterDefinitionsInputSchema = z.array(z.object(parameterDefinitionFields).strict());
 const parameterBindingsInputSchema = z.record(z.string(), parameterValueSchema);
+const staticAnalysisInputSchema = {
+  ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
+  ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
+  ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
+  schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
+  sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
+  sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
+};
 
 export interface CreateInvestigationPlanMcpInput {
   sql?: unknown;
@@ -36,10 +45,14 @@ export interface CreateInvestigationPlanMcpInput {
   /** Defaults deterministically to main_output when omitted. */
   targetNode?: unknown;
   targetColumn?: unknown;
+  targetId?: unknown;
   symptom?: unknown;
   parameterBindings?: unknown;
   parameterDefinitions?: unknown;
 }
+
+export type InvestigationStaticAnalysisMcpInput = Omit<CreateInvestigationPlanMcpInput,
+  'parameterBindings' | 'parameterDefinitions' | 'symptom' | 'targetColumn' | 'targetId' | 'targetNode'>;
 
 export class McpInputError extends Error {
   readonly code: string;
@@ -56,6 +69,34 @@ export function normalizeCreateInvestigationPlanInput(
   workspace: string,
   value: CreateInvestigationPlanMcpInput,
 ): InvestigationPlanInputV1 {
+  const input = value as Record<string, unknown>;
+  const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
+  const hasTargetId = input.targetId !== undefined;
+  const hasExplicitTarget = input.targetColumn !== undefined || input.targetNode !== undefined;
+  if (hasTargetId && hasExplicitTarget) {
+    throw new McpInputError('TARGET_INPUT_CONFLICT', 'targetId cannot be combined with targetColumn or targetNode.');
+  }
+  const target = hasTargetId
+    ? resolveInvestigationTarget(discoverInvestigationTargets(staticInput), requiredNonEmptyString(input.targetId, 'targetId'))
+    : {
+        columnName: requiredNonEmptyString(input.targetColumn, 'targetColumn'),
+        nodeId: input.targetNode === undefined ? DEFAULT_TARGET_NODE : requiredNonEmptyString(input.targetNode, 'targetNode'),
+      };
+  const symptom = input.symptom === undefined ? undefined : parseSymptom(input.symptom);
+  const parameters = normalizeParameters(input.parameterDefinitions, input.parameterBindings);
+
+  return {
+    ...staticInput,
+    ...(parameters ? { parameters } : {}),
+    ...(symptom ? { symptom } : {}),
+    target,
+  };
+}
+
+export function normalizeInvestigationStaticAnalysisInput(
+  workspace: string,
+  value: InvestigationStaticAnalysisMcpInput,
+): InvestigationTargetDiscoveryInputV1 {
   const workspaceRoot = workspaceRealpath(workspace);
   const input = value as Record<string, unknown>;
   const hasSql = input.sql !== undefined;
@@ -66,29 +107,19 @@ export function normalizeCreateInvestigationPlanInput(
   const sql = hasSql
     ? validateInlineSql(requiredNonEmptyString(input.sql, 'sql'), 'sql')
     : readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.sqlPath, 'sqlPath'));
-  const targetNode = input.targetNode === undefined ? DEFAULT_TARGET_NODE : requiredNonEmptyString(input.targetNode, 'targetNode');
-  const targetColumn = requiredNonEmptyString(input.targetColumn, 'targetColumn');
-  const symptom = input.symptom === undefined ? undefined : parseSymptom(input.symptom);
-
   const hasSchemaFacts = input.schemaFactsPath !== undefined;
   const hasDdl = input.ddl !== undefined || input.ddlFiles !== undefined || input.ddlDirectories !== undefined;
   if (hasSchemaFacts && hasDdl) {
     throw new McpInputError('SCHEMA_INPUT_CONFLICT', 'schemaFactsPath cannot be combined with ddl, ddlFiles, or ddlDirectories.');
   }
-
   const ddl = hasDdl ? loadDdlInputs(workspaceRoot, input) : [];
   const schemaFacts = hasSchemaFacts
     ? parseSchemaFacts(readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.schemaFactsPath, 'schemaFactsPath')))
     : undefined;
-  const parameters = normalizeParameters(input.parameterDefinitions, input.parameterBindings);
-
   return {
     ...(ddl.length > 0 ? { ddl } : {}),
-    ...(parameters ? { parameters } : {}),
     ...(schemaFacts ? { schemaFacts } : {}),
     sql,
-    ...(symptom ? { symptom } : {}),
-    target: { columnName: targetColumn, nodeId: targetNode },
   };
 }
 
@@ -96,39 +127,78 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
   const workspaceRoot = workspaceRealpath(workspace);
   const server = new McpServer({ name: 'rawsql-lineage-investigation', version: '1.0.0' });
   server.registerTool(
+    'analyze_investigation_sql',
+    {
+      description: 'Summarize deterministic static analysis of supplied SQL/DDL. This tool does not connect to a database, execute SQL, choose a target, or determine a root cause.',
+      inputSchema: staticAnalysisInputSchema,
+    },
+    async (request) => {
+      try {
+        const result = discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)).analysis;
+        return mcpSuccess(result);
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
+    'discover_investigation_targets',
+    {
+      description: 'Discover stable static investigation target identities from supplied SQL/DDL. Ambiguous and unsupported outputs remain explicit and cannot be selected for plan creation.',
+      inputSchema: staticAnalysisInputSchema,
+    },
+    async (request) => {
+      try {
+        return mcpSuccess(discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)));
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
     'create_investigation_plan',
     {
-      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Parameter definitions and caller-owned bindings are separate inputs; bindings are reduced to non-secret presence metadata and are never returned in the plan. targetNode defaults to main_output.',
+      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Parameter definitions and caller-owned bindings are separate inputs; bindings are reduced to non-secret presence metadata and are never returned in the plan. Supply either a discovery targetId or targetColumn with optional targetNode; targetNode defaults to main_output.',
       inputSchema: {
-        ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
-        ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
-        ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
+        ...staticAnalysisInputSchema,
         parameterBindings: parameterBindingsInputSchema.optional().describe('Optional caller-owned binding map. Values are used only to mark matching definitions as provided and are never returned in the plan.'),
         parameterDefinitions: parameterDefinitionsInputSchema.optional().describe('Optional emit-safe parameter definitions with name, origin, required, and typeHint metadata only.'),
-        schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
-        sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
-        sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
         symptom: z.enum(diagnosticProblemIntents).optional().describe('Optional normalized symptom. Use value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms.'),
-        targetColumn: z.string().min(1).describe('Target output column name to investigate.'),
+        targetColumn: z.string().min(1).optional().describe('Target output column name to investigate; use instead of targetId.'),
+        targetId: z.string().min(1).optional().describe('Target id returned by discover_investigation_targets; use instead of targetColumn and targetNode.'),
         targetNode: z.string().min(1).optional().describe('Optional target node id; defaults to main_output.'),
       },
     },
     async (request) => {
       try {
-        const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspaceRoot, request));
-        return { content: [{ type: 'text', text: JSON.stringify(plan) }], structuredContent: plan as unknown as Record<string, unknown> };
+        return mcpSuccess(createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspaceRoot, request)));
       } catch (error) {
-        if (error instanceof McpInputError) {
-          return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
-        }
-        if (error instanceof InvestigationPlanInputError) {
-          return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
-        }
+        const failure = mcpFailure(error);
+        if (failure) return failure;
         throw error;
       }
     },
   );
   return server;
+}
+
+function mcpSuccess(value: object): { content: Array<{ text: string; type: 'text' }>; structuredContent: Record<string, unknown> } {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value) }],
+    structuredContent: value as unknown as Record<string, unknown>,
+  };
+}
+
+function mcpFailure(error: unknown): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
+  if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError)) return undefined;
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }],
+    isError: true,
+  };
 }
 
 function workspaceRealpath(workspace: string): string {

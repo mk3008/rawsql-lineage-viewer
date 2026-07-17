@@ -9,6 +9,8 @@ This is a static TypeScript web app intended for GitHub Pages. SQL is parsed loc
 The normative [Product Boundary Contract](docs/product-boundary.md) defines how
 Core, Viewer, CLI, and MCP support static investigation and where responsibility
 passes to an external investigator.
+The additive Core and MCP selection surface is defined in the
+[Target Discovery Contract](docs/target-discovery-contract.md).
 
 ## MVP Scope
 
