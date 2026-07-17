@@ -1,0 +1,6 @@
+{
+  "id": "where-parameter-mismatch",
+  "targetColumn": "paid_amount",
+  "symptom": "value_too_low",
+  "scenario": "sql-defect-and-data-anomaly"
+}
