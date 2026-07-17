@@ -54,6 +54,35 @@ export interface CreateInvestigationPlanMcpInput {
 export type InvestigationStaticAnalysisMcpInput = Omit<CreateInvestigationPlanMcpInput,
   'parameterBindings' | 'parameterDefinitions' | 'symptom' | 'targetColumn' | 'targetId' | 'targetNode'>;
 
+export type PrepareSqlInvestigationMcpInput = InvestigationStaticAnalysisMcpInput & {
+  symptom?: unknown;
+  targetColumn?: unknown;
+  targetId?: unknown;
+  targetNode?: unknown;
+};
+
+export type PrepareSqlInvestigationResultV1 =
+  | {
+      discovery: ReturnType<typeof discoverInvestigationTargets>;
+      kind: 'sql-investigation-preparation';
+      plan: ReturnType<typeof createInvestigationPlan>;
+      selection: { mode: 'explicit_target' | 'single_selectable_target'; targetId?: string };
+      status: 'plan_created';
+      version: 1;
+    }
+  | {
+      discovery: ReturnType<typeof discoverInvestigationTargets>;
+      kind: 'sql-investigation-preparation';
+      selection: {
+        ambiguityCount: number;
+        reason: 'multiple_selectable_targets' | 'no_selectable_targets';
+        selectableTargetIds: string[];
+        unsupportedIssueCount: number;
+      };
+      status: 'selection_required';
+      version: 1;
+    };
+
 export class McpInputError extends Error {
   readonly code: string;
 
@@ -123,6 +152,61 @@ export function normalizeInvestigationStaticAnalysisInput(
   };
 }
 
+/**
+ * High-level static workflow from an unknown-target starting state. It never
+ * guesses among multiple selectable targets.
+ */
+export function prepareSqlInvestigation(
+  workspace: string,
+  value: PrepareSqlInvestigationMcpInput,
+): PrepareSqlInvestigationResultV1 {
+  const input = value as Record<string, unknown>;
+  const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
+  const discovery = discoverInvestigationTargets(staticInput);
+  const hasExplicitTarget = input.targetId !== undefined || input.targetColumn !== undefined || input.targetNode !== undefined;
+  if (hasExplicitTarget) {
+    const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspace, value));
+    return {
+      discovery,
+      kind: 'sql-investigation-preparation',
+      plan,
+      selection: {
+        mode: 'explicit_target',
+        ...(typeof input.targetId === 'string' ? { targetId: input.targetId } : {}),
+      },
+      status: 'plan_created',
+      version: 1,
+    };
+  }
+  const selectable = discovery.targets.filter((target) => target.selection.status === 'selectable');
+  if (selectable.length !== 1) {
+    return {
+      discovery,
+      kind: 'sql-investigation-preparation',
+      selection: {
+        ambiguityCount: discovery.ambiguities.length,
+        reason: selectable.length === 0 ? 'no_selectable_targets' : 'multiple_selectable_targets',
+        selectableTargetIds: selectable.map((target) => target.id),
+        unsupportedIssueCount: discovery.unsupported.length,
+      },
+      status: 'selection_required',
+      version: 1,
+    };
+  }
+  const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspace, {
+    ...value,
+    targetId: selectable[0].id,
+  }));
+  return {
+    discovery,
+    kind: 'sql-investigation-preparation',
+    plan,
+    selection: { mode: 'single_selectable_target', targetId: selectable[0].id },
+    status: 'plan_created',
+    version: 1,
+  };
+}
+
 export function createInvestigationMcpServer(workspace: string): McpServer {
   const workspaceRoot = workspaceRealpath(workspace);
   const server = new McpServer({ name: 'rawsql-lineage-investigation', version: '1.0.0' });
@@ -152,6 +236,28 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
     async (request) => {
       try {
         return mcpSuccess(discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)));
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
+    'prepare_sql_investigation',
+    {
+      description: 'Prepare a static investigation from supplied SQL/DDL without a pre-known target. The tool creates a plan only when exactly one selectable target exists or a target is explicitly supplied; otherwise it returns discovery with selection_required and never guesses among candidates. It does not connect to a database, execute SQL, inspect results, or determine a root cause.',
+      inputSchema: {
+        ...staticAnalysisInputSchema,
+        symptom: z.enum(diagnosticProblemIntents).optional().describe('Optional normalized symptom used only if a plan can be created.'),
+        targetColumn: z.string().min(1).optional().describe('Optional explicit target column; use instead of targetId.'),
+        targetId: z.string().min(1).optional().describe('Optional explicit target id returned by discovery; use instead of targetColumn and targetNode.'),
+        targetNode: z.string().min(1).optional().describe('Optional explicit target node used with targetColumn; defaults to main_output.'),
+      },
+    },
+    async (request) => {
+      try {
+        return mcpSuccess(prepareSqlInvestigation(workspaceRoot, request));
       } catch (error) {
         const failure = mcpFailure(error);
         if (failure) return failure;

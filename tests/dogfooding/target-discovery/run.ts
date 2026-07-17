@@ -1,9 +1,10 @@
 export interface McpWorkflowEvidenceV1 {
-  boundaryClarity: 'contract_mismatch' | 'explicit_static_stages' | 'not_attempted' | 'single_request_static_contract';
+  boundaryClarity: 'contract_mismatch' | 'explicit_static_stages' | 'high_level_static_contract';
   callCount: number;
   completed: boolean;
-  errorLocalization: 'not_attempted' | 'plan_creation' | 'target_discovery';
+  errorLocalization: 'analysis' | 'none' | 'plan_creation' | 'preparation' | 'target_discovery';
   intermediateJsonBytes: number;
+  selectionOutcome: 'failed' | 'plan_created' | 'selection_required';
 }
 
 export interface TargetDiscoveryScenarioEvidenceV1 {
@@ -16,40 +17,54 @@ export interface TargetDiscoveryScenarioEvidenceV1 {
   version: 1;
 }
 
-type StructuredToolResult = { structuredContent?: unknown };
+type StructuredToolResult = { isError?: boolean; structuredContent?: unknown };
 
 /**
- * Measures only static MCP response shapes. It does not execute SQL, ingest probe
- * results, or infer how a real LLM would choose tools.
+ * Measures actual static MCP response shapes from the same unknown-target
+ * starting input. It does not execute SQL, ingest results, or infer how a real
+ * LLM would choose tools.
  */
 export function measureTargetDiscoveryWorkflows(input: {
   analysis: StructuredToolResult;
-  discovery: StructuredToolResult;
-  highLevelPlan?: StructuredToolResult;
-  scenarioId: string;
   composablePlan?: StructuredToolResult;
+  discovery?: StructuredToolResult;
+  highLevelPreparation: StructuredToolResult;
+  scenarioId: string;
 }): TargetDiscoveryScenarioEvidenceV1 {
-  const discovery = input.discovery.structuredContent as { ambiguities?: unknown[] } | undefined;
+  const discovery = input.discovery?.structuredContent as { ambiguities?: unknown[] } | undefined;
+  const preparation = input.highLevelPreparation.structuredContent as { kind?: unknown; plan?: unknown; status?: unknown } | undefined;
   const hasAmbiguity = (discovery?.ambiguities?.length ?? 0) > 0;
+  const composableCompleted = isPlan(input.composablePlan?.structuredContent);
+  const highLevelCompleted = preparation?.status === 'plan_created' && isPlan(preparation.plan);
   const explicitStaticStages = hasKind(input.analysis.structuredContent, 'investigation-analysis-summary')
-    && hasKind(input.discovery.structuredContent, 'investigation-target-discovery');
+    && hasKind(input.discovery?.structuredContent, 'investigation-target-discovery');
+  const validHighLevelContract = preparation?.kind === 'sql-investigation-preparation'
+    && (preparation.status === 'plan_created' || preparation.status === 'selection_required');
   return {
     ambiguityHandling: hasAmbiguity ? 'explicit_before_planning' : 'not_present',
     composable: {
       boundaryClarity: explicitStaticStages ? 'explicit_static_stages' : 'contract_mismatch',
-      callCount: input.composablePlan ? 3 : 2,
-      completed: isPlan(input.composablePlan?.structuredContent),
-      errorLocalization: hasAmbiguity ? 'target_discovery' : 'plan_creation',
-      intermediateJsonBytes: jsonBytes(input.analysis.structuredContent) + jsonBytes(input.discovery.structuredContent),
+      callCount: 1 + (input.discovery ? 1 : 0) + (input.composablePlan ? 1 : 0),
+      completed: composableCompleted,
+      errorLocalization: input.analysis.isError
+        ? 'analysis'
+        : input.discovery?.isError
+          ? 'target_discovery'
+          : input.composablePlan?.isError ? 'plan_creation' : 'none',
+      intermediateJsonBytes: jsonBytes(input.analysis.structuredContent) + jsonBytes(input.discovery?.structuredContent),
+      selectionOutcome: input.analysis.isError || input.discovery?.isError || input.composablePlan?.isError
+        ? 'failed'
+        : composableCompleted ? 'plan_created' : 'selection_required',
     },
     highLevel: {
-      boundaryClarity: input.highLevelPlan
-        ? isPlan(input.highLevelPlan.structuredContent) ? 'single_request_static_contract' : 'contract_mismatch'
-        : 'not_attempted',
-      callCount: input.highLevelPlan ? 1 : 0,
-      completed: isPlan(input.highLevelPlan?.structuredContent),
-      errorLocalization: input.highLevelPlan ? 'plan_creation' : 'not_attempted',
+      boundaryClarity: validHighLevelContract ? 'high_level_static_contract' : 'contract_mismatch',
+      callCount: 1,
+      completed: highLevelCompleted,
+      errorLocalization: input.highLevelPreparation.isError ? 'preparation' : 'none',
       intermediateJsonBytes: 0,
+      selectionOutcome: input.highLevelPreparation.isError
+        ? 'failed'
+        : highLevelCompleted ? 'plan_created' : 'selection_required',
     },
     kind: 'target-discovery-workflow-evidence',
     realLlmToolSelection: 'UNCONFIRMED',
@@ -67,5 +82,5 @@ function hasKind(value: unknown, kind: string): boolean {
 }
 
 function jsonBytes(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value ?? null), 'utf8');
+  return value === undefined ? 0 : Buffer.byteLength(JSON.stringify(value), 'utf8');
 }

@@ -179,8 +179,14 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(listed.tools.map((tool) => tool.name)).toEqual([
         'analyze_investigation_sql',
         'discover_investigation_targets',
+        'prepare_sql_investigation',
         'create_investigation_plan',
       ]);
+      const prepareTool = listed.tools.find((tool) => tool.name === 'prepare_sql_investigation')!;
+      expect(prepareTool.description).toContain('without a pre-known target');
+      expect(prepareTool.description).toContain('exactly one selectable target');
+      expect(prepareTool.description).toContain('never guesses among candidates');
+      expect(prepareTool.inputSchema.properties).not.toHaveProperty('parameterBindings');
       const createTool = listed.tools.find((tool) => tool.name === 'create_investigation_plan')!;
       expect(createTool.description).toContain('static SQL/DDL analysis plan only');
       expect(createTool.description).toContain('never connects to a database or executes SQL');
@@ -224,6 +230,35 @@ describe('create_investigation_plan MCP adapter', () => {
         arguments: { ...staticRequest, targetId: discoveredTarget.id },
       });
       expect(byTargetId.structuredContent).toMatchObject({ target: { columnName: 'status', nodeId: 'main_output' } });
+      const preparedSingle = await client.callTool({ name: 'prepare_sql_investigation', arguments: staticRequest });
+      expect(preparedSingle.structuredContent).toMatchObject({
+        discovery: { kind: 'investigation-target-discovery' },
+        kind: 'sql-investigation-preparation',
+        plan: { kind: 'investigation-plan', target: { columnName: 'status', nodeId: 'main_output' } },
+        selection: { mode: 'single_selectable_target', targetId: discoveredTarget.id },
+        status: 'plan_created',
+        version: 1,
+      });
+      expect((preparedSingle.structuredContent as { plan: unknown }).plan).toEqual(byTargetId.structuredContent);
+      const preparedMultiple = await client.callTool({
+        name: 'prepare_sql_investigation',
+        arguments: { sql: 'SELECT customer_id, status FROM orders' },
+      });
+      expect(preparedMultiple.structuredContent).toMatchObject({
+        kind: 'sql-investigation-preparation',
+        selection: { ambiguityCount: 0, reason: 'multiple_selectable_targets', selectableTargetIds: ['target:001', 'target:002'] },
+        status: 'selection_required',
+      });
+      expect(preparedMultiple.structuredContent).not.toHaveProperty('plan');
+      const preparedExplicit = await client.callTool({
+        name: 'prepare_sql_investigation',
+        arguments: { sql: 'SELECT customer_id, status FROM orders', targetId: 'target:002' },
+      });
+      expect(preparedExplicit.structuredContent).toMatchObject({
+        plan: { target: { columnName: 'status', nodeId: 'main_output' } },
+        selection: { mode: 'explicit_target', targetId: 'target:002' },
+        status: 'plan_created',
+      });
       const unknownTarget = await client.callTool({
         name: 'create_investigation_plan',
         arguments: { ...staticRequest, targetId: 'target:999' },
@@ -235,6 +270,15 @@ describe('create_investigation_plan MCP adapter', () => {
         name: 'discover_investigation_targets',
         arguments: { sql: 'SELECT 1 AS repeated, 2 AS repeated' },
       });
+      const preparedDuplicate = await client.callTool({
+        name: 'prepare_sql_investigation',
+        arguments: { sql: 'SELECT 1 AS repeated, 2 AS repeated' },
+      });
+      expect(preparedDuplicate.structuredContent).toMatchObject({
+        selection: { ambiguityCount: 1, reason: 'no_selectable_targets', selectableTargetIds: [] },
+        status: 'selection_required',
+      });
+      expect(preparedDuplicate.structuredContent).not.toHaveProperty('plan');
       const ambiguousTargetId = (duplicateDiscovery.structuredContent as { targets: Array<{ id: string; selection: { status: string } }> }).targets
         .find((target) => target.selection.status === 'ambiguous')!.id;
       const ambiguousTarget = await client.callTool({
