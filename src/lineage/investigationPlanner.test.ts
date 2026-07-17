@@ -1,9 +1,18 @@
 import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, SimpleSelectQuery, SqlParser, UpdateQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
-import type { InvestigationNodeQueryContextV1 } from './investigationPlan';
+import type { InvestigationNodeQueryContextV1, InvestigationParameterDefinitionInputV1, InvestigationPlannerParametersV1 } from './investigationPlan';
 import type { ColumnDiagnosticPacket } from './diagnostics';
 import { createInvestigationPlan, createInvestigationPlanFromDiagnosticPacket } from './investigationPlan';
 import { analyzeSql } from './rawsqlAdapter';
+
+const opaqueBinding = 'opaque-binding-sentinel';
+
+function parameterInput(
+  definitions: InvestigationParameterDefinitionInputV1[],
+  providedNames: string[] = [],
+): InvestigationPlannerParametersV1 {
+  return { definitions, ...(providedNames.length > 0 ? { bindingPresence: { providedNames } } : {}) };
+}
 
 function packet(overrides: Partial<ColumnDiagnosticPacket> = {}): ColumnDiagnosticPacket {
   return {
@@ -18,7 +27,7 @@ function packet(overrides: Partial<ColumnDiagnosticPacket> = {}): ColumnDiagnost
 
 describe('createInvestigationPlan', () => {
   it('is deterministic and analyzes only the original diagnostic packet', () => {
-    const input = { sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, symptom: 'missing_rows' as const, parameters: [{ name: 'status', origin: 'original_query_parameter' as const, required: true, value: 'paid' }] };
+    const input = { sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, symptom: 'missing_rows' as const, parameters: parameterInput([{ name: 'status', origin: 'original_query_parameter', required: true }], ['status']) };
     const plan = createInvestigationPlan(input);
     expect(plan).toEqual(createInvestigationPlan(input));
     expect(JSON.stringify(plan)).toBe(JSON.stringify(createInvestigationPlan(input)));
@@ -48,7 +57,7 @@ describe('createInvestigationPlan', () => {
       sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
       target: { columnName: 'id', nodeId: 'main_output' },
       symptom: 'missing_rows',
-      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+      parameters: parameterInput([{ name: 'is_active', origin: 'original_query_parameter' }], ['is_active']),
     });
     const checklist = plan.nextEvidenceChecklist;
     const property = checklist.find((item) => item.kind === 'property');
@@ -88,13 +97,12 @@ describe('createInvestigationPlan', () => {
       },
       status: 'to_verify',
     });
-    expect(JSON.stringify(checklist)).not.toContain('secret-active-value');
     expect(JSON.stringify(checklist)).not.toContain('SELECT');
     expect(createInvestigationPlan({
       sql: 'SELECT c.id FROM customers c WHERE EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = :is_active)',
       target: { columnName: 'id', nodeId: 'main_output' },
       symptom: 'missing_rows',
-      parameters: [{ name: 'is_active', origin: 'original_query_parameter', value: 'secret-active-value' }],
+      parameters: parameterInput([{ name: 'is_active', origin: 'original_query_parameter' }], ['is_active']),
     }).nextEvidenceChecklist).toEqual(checklist);
   });
 
@@ -197,7 +205,7 @@ describe('createInvestigationPlan', () => {
       const plan = createInvestigationPlan({
         sql: testCase.sql,
         target: { columnName: 'id', nodeId: 'main_output' },
-        parameters: [{ name: 'active', origin: 'original_query_parameter', value: 'secret-value' }],
+        parameters: parameterInput([{ name: 'active', origin: 'original_query_parameter' }], ['active']),
       });
       const condition = plan.nextEvidenceChecklist.find((item) => item.kind === 'condition');
       const property = plan.nextEvidenceChecklist.find((item) => item.kind === 'property');
@@ -209,12 +217,11 @@ describe('createInvestigationPlan', () => {
           relatedRelationNodeIds: testCase.related,
         },
       });
-      expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('secret-value');
       expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('SELECT');
       expect(plan).toEqual(createInvestigationPlan({
         sql: testCase.sql,
         target: { columnName: 'id', nodeId: 'main_output' },
-        parameters: [{ name: 'active', origin: 'original_query_parameter', value: 'secret-value' }],
+        parameters: parameterInput([{ name: 'active', origin: 'original_query_parameter' }], ['active']),
       }));
     }
   });
@@ -289,7 +296,7 @@ describe('createInvestigationPlan', () => {
   });
 
   it('uses submitted SQL and parser-backed fragments for syntax-classified SELECT probes without inlining values', () => {
-    const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
+    const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: parameterInput([{ name: 'status', origin: 'original_query_parameter' }], ['status']) });
     expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'SELECT status FROM orders WHERE status IS NOT NULL' });
     expect(plan.recommendedProbes).toHaveLength(1);
     expect(plan.recommendedProbes[0]).toMatchObject({
@@ -304,32 +311,32 @@ describe('createInvestigationPlan', () => {
         version: 1,
       },
     });
-    expect(plan.recommendedProbes[0].sql).not.toContain('paid');
     for (const probe of plan.recommendedProbes) {
       expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
     }
   });
 
-  it('derives candidate probe parameters from completed SQL, preserving provided values and unresolved placeholders', () => {
+  it('derives candidate probe definitions from completed SQL while preserving binding status and unresolved placeholders', () => {
     const candidate = packet({
       rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'status = :status AND tenant_id = :tenant_id AND status = :status' }] },
     });
-    const plan = createInvestigationPlanFromDiagnosticPacket(candidate, [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(candidate, parameterInput([{ name: 'status', origin: 'original_query_parameter' }], ['status']));
     const probe = plan.recommendedProbes.find((item) => item.kind === 'candidate_row_count');
 
     expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['status', 'tenant_id']);
-    expect(probe?.parameters.find((parameter) => parameter.name === 'status')).toMatchObject({ origin: 'original_query_parameter', value: 'paid' });
+    expect(probe?.parameters.find((parameter) => parameter.name === 'status')).toMatchObject({ origin: 'original_query_parameter', status: 'provided' });
+    expect(probe?.parameters.find((parameter) => parameter.name === 'status')).not.toHaveProperty('value');
     expect(probe?.parameters.find((parameter) => parameter.name === 'tenant_id')).toMatchObject({ origin: 'unresolved_parameter', status: 'unresolved' });
     expect(plan.parameters.find((parameter) => parameter.name === 'tenant_id')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
   });
 
-  it('keeps parameter origins separate and marks absent required values unresolved', () => {
-    const plan = createInvestigationPlan({ sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [
-      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+  it('keeps parameter origins separate and marks absent required bindings unresolved', () => {
+    const plan = createInvestigationPlan({ sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, parameters: parameterInput([
+      { name: 'status', origin: 'original_query_parameter' },
       { name: 'customer_id', origin: 'investigation_key', required: true },
-      { name: 'start_date', origin: 'derived_parameter', value: '2026-01-01' },
+      { name: 'start_date', origin: 'derived_parameter' },
       { name: 'database_timezone', origin: 'environment_parameter' },
-    ] });
+    ], ['status', 'start_date']) });
     expect(plan.parameters.map((item) => item.origin)).toEqual(['derived_parameter', 'environment_parameter', 'original_query_parameter', 'unresolved_parameter']);
     expect(plan.unresolvedParameters).toMatchObject([{ name: 'customer_id', status: 'unresolved' }]);
   });
@@ -367,7 +374,7 @@ describe('createInvestigationPlan', () => {
     ]);
     const plan = createInvestigationPlanFromDiagnosticPacket(
       { ...base, candidateConcerns: concerns },
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']),
       'value_too_low',
       context,
     );
@@ -443,10 +450,10 @@ describe('createInvestigationPlan', () => {
       sql: query,
       target: { columnName: 'paid_amount', nodeId: 'main_output' },
       symptom: 'value_too_low',
-      parameters: [
-        { name: 'customer_id', origin: 'investigation_key', value: 10 },
-        { name: 'status', origin: 'original_query_parameter', value: 'succeeded' },
-      ],
+      parameters: parameterInput([
+        { name: 'customer_id', origin: 'investigation_key' },
+        { name: 'status', origin: 'original_query_parameter' },
+      ], ['customer_id', 'status']),
     });
     const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
 
@@ -465,8 +472,6 @@ describe('createInvestigationPlan', () => {
     });
     expect(probe?.sql).toContain(`FROM (\n${nodeQuery}\n) AS investigation_node`);
     expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id');
-    expect(probe?.sql).not.toContain('= 10');
-    expect(probe?.sql).not.toContain('succeeded');
     expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
     expect(plan.parameters.find((parameter) => parameter.name === 'customer_id')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
     expect(plan.parameters.find((parameter) => parameter.name === 'status')?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
@@ -477,11 +482,11 @@ describe('createInvestigationPlan', () => {
     const context = contextFor('SELECT customer_id, amount FROM payments WHERE status = :status', [
       { name: 'customer_id', outputIndex: 0 }, { name: 'amount', outputIndex: 1 },
     ]);
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
-      { name: 'scenario_marker', origin: 'original_query_parameter', value: 'marker' },
-    ], 'value_too_low', context);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([
+      { name: 'customer_id', origin: 'investigation_key' },
+      { name: 'status', origin: 'original_query_parameter' },
+      { name: 'scenario_marker', origin: 'original_query_parameter' },
+    ], ['customer_id', 'status', 'scenario_marker']), 'value_too_low', context);
     const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
 
     expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'status']);
@@ -493,31 +498,54 @@ describe('createInvestigationPlan', () => {
     [[{ name: 'status', origin: 'original_query_parameter' as const }, { name: 'status', origin: 'investigation_key' as const }]],
     [[{ name: 'status', origin: 'investigation_key' as const }, { name: 'status', origin: 'original_query_parameter' as const }]],
   ])('rejects duplicate parameter names at both Core Planner public entry points', (inputs) => {
-    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: inputs })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
-    expect(() => createInvestigationPlanFromDiagnosticPacket(packet(), inputs)).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: parameterInput(inputs) })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+    expect(() => createInvestigationPlanFromDiagnosticPacket(packet(), parameterInput(inputs))).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
   it('keeps distinct parameter names at the Core boundary', () => {
-    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [
-      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-    ] })).not.toThrow();
+    expect(() => createInvestigationPlan({ sql: 'SELECT status FROM orders', target: { columnName: 'status', nodeId: 'main_output' }, parameters: parameterInput([
+      { name: 'status', origin: 'original_query_parameter' },
+      { name: 'customer_id', origin: 'investigation_key' },
+    ], ['status', 'customer_id']) })).not.toThrow();
+  });
+
+  it('rejects binding presence without a matching definition', () => {
+    expect(() => createInvestigationPlan({
+      sql: 'SELECT status FROM orders',
+      target: { columnName: 'status', nodeId: 'main_output' },
+      parameters: parameterInput([{ name: 'status', origin: 'original_query_parameter' }], ['missing']),
+    })).toThrow(expect.objectContaining({ code: 'PARAMETER_BINDING_DEFINITION_MISMATCH' }));
+  });
+
+  it('rejects concrete bindings at the Core definition boundary without echoing them', () => {
+    let thrown: unknown;
+    try {
+      createInvestigationPlan({
+        sql: 'SELECT status FROM orders',
+        target: { columnName: 'status', nodeId: 'main_output' },
+        parameters: {
+          definitions: [{ name: 'status', origin: 'original_query_parameter', value: opaqueBinding }],
+        } as unknown as InvestigationPlannerParametersV1,
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toMatchObject({ code: 'PARAMETER_BINDING_INPUT_INVALID' });
+    expect(String((thrown as Error).message)).not.toContain(opaqueBinding);
   });
 
   it('requires every investigation key, sorts them, and applies each as an outer AND condition', () => {
     const context = contextFor('SELECT customer_id, region_id, amount FROM payments WHERE status = :status', [
       { name: 'customer_id', outputIndex: 0 }, { name: 'region_id', outputIndex: 1 }, { name: 'amount', outputIndex: 2 },
     ]);
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
-      { name: 'region_id', origin: 'investigation_key', value: 20 },
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-      { name: 'status', origin: 'original_query_parameter', value: 'paid' },
-    ], 'value_too_low', context);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([
+      { name: 'region_id', origin: 'investigation_key' },
+      { name: 'customer_id', origin: 'investigation_key' },
+      { name: 'status', origin: 'original_query_parameter' },
+    ], ['region_id', 'customer_id', 'status']), 'value_too_low', context);
     const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
 
     expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id AND investigation_node."region_id" = :region_id');
-    expect(probe?.sql).not.toContain('= 10');
-    expect(probe?.sql).not.toContain('= 20');
     expect(probe?.parameters.map((parameter) => parameter.name)).toEqual(['customer_id', 'region_id', 'status']);
     for (const name of ['customer_id', 'region_id']) {
       expect(plan.parameters.find((parameter) => parameter.name === name)?.usedBy).toContainEqual({ kind: 'probe', probeId: probe?.id });
@@ -525,24 +553,24 @@ describe('createInvestigationPlan', () => {
   });
 
   it('blocks the whole node query probe when any investigation key is not exactly exposed', () => {
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-      { name: 'missing_key', origin: 'investigation_key', value: 20 },
-    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]));
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([
+      { name: 'customer_id', origin: 'investigation_key' },
+      { name: 'missing_key', origin: 'investigation_key' },
+    ], ['customer_id', 'missing_key']), 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]));
 
     expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
     expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'INVESTIGATION_KEY_NOT_EXPOSED' }));
   });
 
   it('rejects duplicate investigation key names at the Core boundary', () => {
-    expect(() => createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-      { name: 'customer_id', origin: 'investigation_key', value: 11 },
-    ], 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]))).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+    expect(() => createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([
+      { name: 'customer_id', origin: 'investigation_key' },
+      { name: 'customer_id', origin: 'investigation_key' },
+    ], ['customer_id']), 'value_too_low', contextFor('SELECT customer_id FROM payments WHERE status = :status', [{ name: 'customer_id', outputIndex: 0 }]))).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
   it('collects only parser-recognized parameters, not cast names, strings, comments, or quoted identifiers', () => {
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', contextFor(
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']), 'value_too_low', contextFor(
       "SELECT customer_id FROM payments WHERE status = :status::text AND note <> ':fake' /* :comment */",
       [{ name: 'customer_id', outputIndex: 0 }],
     ));
@@ -554,7 +582,7 @@ describe('createInvestigationPlan', () => {
     const invalidPacket = packet({
       rowLineage: { ...packet().rowLineage, influences: [{ ...packet().rowLineage.influences[0], expressionSql: 'status = (1' }] },
     });
-    const plan = createInvestigationPlanFromDiagnosticPacket(invalidPacket, [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]);
+    const plan = createInvestigationPlanFromDiagnosticPacket(invalidPacket, parameterInput([{ name: 'status', origin: 'original_query_parameter' }], ['status']));
     expect(plan.recommendedProbes).toEqual([]);
     expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_REPARSE_FAILED', status: 'blocked' }));
     expect(plan.parameters).toEqual([expect.objectContaining({ name: 'status', usedBy: [{ analysisMode: 'original', kind: 'original_analysis' }] })]);
@@ -575,7 +603,7 @@ describe('createInvestigationPlan', () => {
 
     const plan = createInvestigationPlanFromDiagnosticPacket(
       nodeQueryPacket(),
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']),
       'value_too_low',
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
@@ -589,7 +617,7 @@ describe('createInvestigationPlan', () => {
     const querySql = 'WITH first_rows AS (SELECT customer_id, status FROM payments), selected_rows AS (SELECT customer_id FROM first_rows WHERE status = :status) SELECT customer_id FROM selected_rows';
     const plan = createInvestigationPlanFromDiagnosticPacket(
       nodeQueryPacket(),
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }, { name: 'status', origin: 'original_query_parameter' }], ['customer_id', 'status']),
       'value_too_low',
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
@@ -601,7 +629,7 @@ describe('createInvestigationPlan', () => {
     const querySql = 'WITH selected_rows AS (WITH changed AS (DELETE FROM payments WHERE status = \'cancelled\' RETURNING customer_id) SELECT customer_id FROM changed) SELECT customer_id FROM selected_rows';
     const plan = createInvestigationPlanFromDiagnosticPacket(
       nodeQueryPacket(),
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']),
       'value_too_low',
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
@@ -615,7 +643,7 @@ describe('createInvestigationPlan', () => {
     const querySql = "SELECT customer_id FROM (WITH changed AS (DELETE FROM payments WHERE status = 'cancelled' RETURNING customer_id) SELECT customer_id FROM changed) nested_rows";
     const plan = createInvestigationPlanFromDiagnosticPacket(
       nodeQueryPacket(),
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']),
       'value_too_low',
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
@@ -629,7 +657,7 @@ describe('createInvestigationPlan', () => {
     const querySql = 'SELECT customer_id FROM (WITH selected_rows AS (SELECT customer_id FROM payments WHERE status = :status) SELECT customer_id FROM selected_rows) nested_rows';
     const plan = createInvestigationPlanFromDiagnosticPacket(
       nodeQueryPacket(),
-      [{ name: 'customer_id', origin: 'investigation_key', value: 10 }, { name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+      parameterInput([{ name: 'customer_id', origin: 'investigation_key' }, { name: 'status', origin: 'original_query_parameter' }], ['customer_id', 'status']),
       'value_too_low',
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
@@ -646,7 +674,7 @@ describe('createInvestigationPlan', () => {
     ['unparseable node query', contextFor('SELECT FROM', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_REPARSE_FAILED'],
     ['source alias only', contextFor('SELECT p.amount FROM payments p', [{ name: 'amount', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
   ])('blocks the outer-filter probe for %s', (_label, context, code) => {
-    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), [{ name: 'customer_id', origin: 'investigation_key', value: 10 }], 'value_too_low', context);
+    const plan = createInvestigationPlanFromDiagnosticPacket(nodeQueryPacket(), parameterInput([{ name: 'customer_id', origin: 'investigation_key' }], ['customer_id']), 'value_too_low', context);
     expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
     expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code, status: 'blocked' }));
   });

@@ -19,11 +19,11 @@ npx tsx src/cli/diagnose.ts investigate \
 ```
 
 Add `--parameters <parameter-input.json>` only when the scenario requires
-explicit investigation keys or known original-query parameter values. The JSON
-file is an array of parameter objects with a fixed origin, for example
-`[{"name":"customer_id","origin":"investigation_key","value":10}]`.
-Do not create placeholder parameters merely to make a dogfooding command look
-complete.
+explicit investigation keys or known original-query parameter bindings. The
+JSON object separates emit-safe `definitions` from a caller-owned `bindings`
+map. Definitions contain only `name`, `origin`, optional `required`, and
+optional `typeHint`; they never contain a `value` field. Do not create
+placeholder parameters merely to make a dogfooding command look complete.
 
 Save the command's JSON only as ephemeral evidence under
 `tmp/orchestration/<task-id>/raw/<scenario>.json`. Do not copy a generated plan
@@ -44,9 +44,11 @@ tracked documentation.
 | `<scenario>` | `<node>.<column>` / `<symptom>` | `<count>` | `<n>` / `<n>` / `<n>` | `<summary>` | `tmp/orchestration/<task-id>/raw/<scenario>.json` |
 
 Record parameter handling separately: whether each parameter is `provided`,
-`required`, or `unresolved`, and whether a supplied marker value was absent from
-all proposed probe SQL. The static planner may emit parameter metadata but must
-not cause a DB call, SQL execution, network request, or AI request.
+`required`, or `unresolved`, and confirm that plans, probes, transcripts, and
+raw evidence contain no binding values or `value` fields. Binding input files
+must remain temporary and outside raw evidence. The static planner may emit
+parameter definitions and binding-presence status but must not cause a DB call,
+SQL execution, network request, or AI request.
 
 ## Separation of responsibilities
 

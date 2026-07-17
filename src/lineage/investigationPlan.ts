@@ -72,7 +72,6 @@ export interface InvestigationParameterV1 {
   status: InvestigationParameterStatusV1;
   typeHint?: string;
   usedBy: InvestigationParameterUseV1[];
-  value?: boolean | number | string | null;
 }
 
 export type UnresolvedParameterV1 = InvestigationParameterV1 & {
@@ -187,13 +186,23 @@ export interface InvestigationPlanV1 {
   version: 1;
 }
 
-/** A supplied value that the planner may reference by name, but never inline in SQL. */
-export interface InvestigationPlannerParameterInputV1 {
+/** Non-secret parameter metadata that may be emitted in an investigation plan. */
+export interface InvestigationParameterDefinitionInputV1 {
   name: string;
   origin: InvestigationInputParameterOriginV1;
   required?: boolean;
   typeHint?: string;
-  value?: boolean | number | string | null;
+}
+
+/** Non-secret evidence that a separate caller-owned binding exists for a definition. */
+export interface InvestigationParameterBindingPresenceV1 {
+  providedNames: string[];
+}
+
+/** Planner input separates emit-safe definitions from binding-presence metadata. */
+export interface InvestigationPlannerParametersV1 {
+  bindingPresence?: InvestigationParameterBindingPresenceV1;
+  definitions: InvestigationParameterDefinitionInputV1[];
 }
 
 /** Pure inputs to create an investigation plan from already-computed diagnostics. */
@@ -204,7 +213,7 @@ export interface InvestigationPlanInputV1 {
   symptom?: ProblemIntent;
   ddl?: DdlInput[];
   schemaFacts?: SchemaFacts;
-  parameters?: InvestigationPlannerParameterInputV1[];
+  parameters?: InvestigationPlannerParametersV1;
 }
 
 /** Parser-backed node context used only to construct a syntax-classified outer-filter probe. */
@@ -216,12 +225,16 @@ export interface InvestigationNodeQueryContextV1 {
 
 /** A stable input error shared by the Planner's public entry points. */
 export class InvestigationPlanInputError extends Error {
-  readonly code: 'PARAMETER_NAME_COLLISION';
+  readonly code: 'PARAMETER_BINDING_DEFINITION_MISMATCH' | 'PARAMETER_BINDING_INPUT_INVALID' | 'PARAMETER_NAME_COLLISION';
 
-  constructor() {
-    super('Parameter names must be unique across all supplied parameter origins.');
+  constructor(code: InvestigationPlanInputError['code'] = 'PARAMETER_NAME_COLLISION') {
+    super(code === 'PARAMETER_NAME_COLLISION'
+      ? 'Parameter names must be unique across all supplied parameter definitions.'
+      : code === 'PARAMETER_BINDING_DEFINITION_MISMATCH'
+        ? 'Every supplied binding name must identify exactly one parameter definition.'
+        : 'Concrete bindings must not be included in Core parameter definitions.');
     this.name = 'InvestigationPlanInputError';
-    this.code = 'PARAMETER_NAME_COLLISION';
+    this.code = code;
   }
 }
 
@@ -240,13 +253,14 @@ const DEFAULT_INVESTIGATION_SYMPTOM: ProblemIntent = 'logic_review';
  * This function does not analyze altered SQL or execute a probe.
  */
 export function createInvestigationPlan(input: InvestigationPlanInputV1): InvestigationPlanV1 {
-  assertUniqueParameterNames(input.parameters ?? []);
+  const parameters = normalizePlannerParameters(input.parameters);
+  assertParameterInput(parameters);
   const schemaFacts = input.schemaFacts ?? (input.ddl ? parseSchemaFactsFromDdl(input.ddl) : undefined);
   const symptom = input.symptom ?? DEFAULT_INVESTIGATION_SYMPTOM;
   const { lineage } = analyzeSql(input.sql, { analysisMode: 'original', optimizeConditions: false, schemaFacts });
   const packet = buildColumnDiagnosticPacket(lineage, input.target, { schemaFacts, symptom });
   return {
-    ...createInvestigationPlanFromDiagnosticPacket(packet, input.parameters, symptom, lineage),
+    ...createInvestigationPlanFromDiagnosticPacket(packet, parameters, symptom, lineage),
     originalQuery: { artifactKind: 'original_query', sql: input.sql },
   };
 }
@@ -254,11 +268,12 @@ export function createInvestigationPlan(input: InvestigationPlanInputV1): Invest
 /** @internal Test seam for planning behavior after the pure parser/diagnostics boundary. */
 export function createInvestigationPlanFromDiagnosticPacket(
   packet: ColumnDiagnosticPacket,
-  inputs: InvestigationPlannerParameterInputV1[] = [],
+  parameters: InvestigationPlannerParametersV1 = { definitions: [] },
   symptom: string = DEFAULT_INVESTIGATION_SYMPTOM,
   nodeQueryContext?: InvestigationNodeQueryContextV1,
 ): Omit<InvestigationPlanV1, 'originalQuery'> {
-  assertUniqueParameterNames(inputs);
+  const inputs = normalizePlannerParameters(parameters);
+  assertParameterInput(inputs);
   const indexedConcerns = indexCandidateConcerns(packet.candidateConcerns);
   const candidateConcerns = indexedConcerns.map(({ concern, id }) => toCandidateConcern(concern, id));
   const parameterEntries = buildParameters(inputs);
@@ -299,7 +314,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
     successfulProbes.push(probe.probe);
   }
 
-  const nodeQueryProbe = createNodeQueryOuterFilterProbe(packet, inputs, nodeQueryContext, parameterEntries);
+  const nodeQueryProbe = createNodeQueryOuterFilterProbe(packet, inputs.definitions, nodeQueryContext, parameterEntries);
   if (nodeQueryProbe.probe) {
     successfulProbes.push(nodeQueryProbe.probe);
   } else if (nodeQueryProbe.blocked) {
@@ -442,7 +457,7 @@ function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket, indexedConce
 
 function createNodeQueryOuterFilterProbe(
   packet: ColumnDiagnosticPacket,
-  inputs: InvestigationPlannerParameterInputV1[],
+  inputs: InvestigationParameterDefinitionInputV1[],
   context: InvestigationNodeQueryContextV1 | undefined,
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked?: BlockedProbeV1; probe?: ProbeSpecV1 } {
@@ -611,21 +626,21 @@ function isValidParameterName(value: string): boolean {
   return /^[A-Za-z_][A-Za-z0-9_]*$/.test(value);
 }
 
-function buildParameters(inputs: InvestigationPlannerParameterInputV1[]): Map<string, InvestigationParameterV1> {
+function buildParameters(inputs: InvestigationPlannerParametersV1): Map<string, InvestigationParameterV1> {
   const result = new Map<string, InvestigationParameterV1>();
-  for (const input of [...inputs].sort((left, right) => `${left.origin}:${left.name}`.localeCompare(`${right.origin}:${right.name}`))) {
-    const hasValue = Object.prototype.hasOwnProperty.call(input, 'value');
-    const origin = input.required && !hasValue ? 'unresolved_parameter' : input.origin;
+  const providedNames = new Set(inputs.bindingPresence?.providedNames ?? []);
+  for (const input of [...inputs.definitions].sort((left, right) => `${left.origin}:${left.name}`.localeCompare(`${right.origin}:${right.name}`))) {
+    const bindingProvided = providedNames.has(input.name);
+    const origin = input.required && !bindingProvided ? 'unresolved_parameter' : input.origin;
     const id = `parameter:${origin}:${input.name}`;
     result.set(id, {
       id,
       name: input.name,
       origin,
       required: input.required ?? false,
-      status: origin === 'unresolved_parameter' ? 'unresolved' : hasValue ? 'provided' : 'required',
+      status: origin === 'unresolved_parameter' ? 'unresolved' : bindingProvided ? 'provided' : 'required',
       ...(input.typeHint ? { typeHint: input.typeHint } : {}),
       usedBy: input.origin === 'original_query_parameter' ? [{ analysisMode: 'original', kind: 'original_analysis' }] : [],
-      ...(hasValue ? { value: input.value } : {}),
     });
   }
   return result;
@@ -763,7 +778,23 @@ function collectParameterNames(statement: unknown): string[] {
   return [...names].sort();
 }
 
-function assertUniqueParameterNames(inputs: InvestigationPlannerParameterInputV1[]): void {
+function normalizePlannerParameters(input: InvestigationPlannerParametersV1 | undefined): InvestigationPlannerParametersV1 {
+  return input ?? { definitions: [] };
+}
+
+function assertParameterInput(input: InvestigationPlannerParametersV1): void {
+  if (Object.prototype.hasOwnProperty.call(input, 'bindings') || input.definitions.some((definition) => Object.prototype.hasOwnProperty.call(definition, 'value'))) {
+    throw new InvestigationPlanInputError('PARAMETER_BINDING_INPUT_INVALID');
+  }
+  assertUniqueParameterNames(input.definitions);
+  const definitionNames = new Set(input.definitions.map((definition) => definition.name));
+  const providedNames = input.bindingPresence?.providedNames ?? [];
+  if (new Set(providedNames).size !== providedNames.length || providedNames.some((name) => !definitionNames.has(name))) {
+    throw new InvestigationPlanInputError('PARAMETER_BINDING_DEFINITION_MISMATCH');
+  }
+}
+
+function assertUniqueParameterNames(inputs: InvestigationParameterDefinitionInputV1[]): void {
   const names = new Set<string>();
   for (const input of inputs) {
     if (names.has(input.name)) throw new InvestigationPlanInputError();

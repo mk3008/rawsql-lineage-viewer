@@ -22,9 +22,11 @@ transaction, a five-second statement timeout, and a 100-row output cap.  Raw
 captures are deliberately written only to `tmp/dogfooding/product-gate-1/raw/`.
 
 The executor performs deterministic placeholder conversion (`:name` to `$n`)
-and an outer output cap only; it does not rewrite probe meaning.  It passes
-fixture-safe values only through a PostgreSQL `PREPARE`/`EXECUTE` wrapper, so
-the generated or prepared probe SQL never has parameter values inlined.
-Seed/control/
-oracle files are used solely by this local harness and are never input to the
-CLI or MCP server.
+and an outer output cap only; it does not rewrite probe meaning.  Definitions
+remain in the public request while fixture-only bindings live under `private/`.
+The harness passes those bindings only through a temporary CLI input and the
+PostgreSQL `PREPARE`/`EXECUTE` wrapper.  It never writes bindings, invocation
+arguments, or parameter input files to raw evidence.  Generated and prepared
+probe SQL contains placeholders only.  Seed/control/oracle files are never
+sent as planning context.  Private binding files are supplied only through the
+explicit CLI/MCP binding inputs and are never copied into plans or evidence.

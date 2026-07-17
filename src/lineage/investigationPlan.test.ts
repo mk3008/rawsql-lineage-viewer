@@ -21,7 +21,6 @@ describe('InvestigationPlanV1 contract', () => {
       id: 'parameter:status', name: 'status', origin: 'original_query_parameter', required: true,
       status: 'provided', typeHint: 'text',
       usedBy: [{ analysisMode: 'original', kind: 'original_analysis' }, { kind: 'probe', probeId: 'probe:status-count' }],
-      value: 'paid',
     };
     const plan = {
       analysisMode: 'original',
@@ -36,7 +35,7 @@ describe('InvestigationPlanV1 contract', () => {
       parameters: [
         originalStatus,
         { id: 'parameter:investigation-key', name: 'customer_id', origin: 'investigation_key', required: true, status: 'required', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
-        { id: 'parameter:derived', name: 'start_date', origin: 'derived_parameter', required: false, status: 'provided', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }], value: '2026-01-01' },
+        { id: 'parameter:derived', name: 'start_date', origin: 'derived_parameter', required: false, status: 'provided', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
         { id: 'parameter:environment', name: 'database_timezone', origin: 'environment_parameter', required: false, status: 'required', typeHint: 'iana-timezone', usedBy: [] },
         { id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
       ],
@@ -51,6 +50,8 @@ describe('InvestigationPlanV1 contract', () => {
     expect(plan.recommendedProbes[0].artifactKind).toBe('investigation_probe');
     expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' });
     expect(plan.parameters.map((parameter) => parameter.origin)).toEqual(['original_query_parameter', 'investigation_key', 'derived_parameter', 'environment_parameter', 'unresolved_parameter']);
+    expect(plan.parameters.every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
+    expect(plan.recommendedProbes.flatMap((probe) => probe.parameters).every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
     expect(plan.recommendedProbes[0].staticSafetyEvidence).toEqual(staticSafetyEvidence);
     expect(plan.recommendedProbes[0].staticSafetyEvidence.assumptions).not.toHaveLength(0);
     expect(plan.recommendedProbes[0].staticSafetyEvidence.executionCaveats).not.toHaveLength(0);
@@ -60,6 +61,7 @@ describe('InvestigationPlanV1 contract', () => {
     const serialized = JSON.stringify(plan);
     expect(serialized).not.toContain('corrected_query');
     expect(serialized).not.toContain('readOnly');
+    expect(serialized).not.toContain('"value"');
     for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
       expect(serialized).not.toContain(unsafeAssuranceTerm);
     }

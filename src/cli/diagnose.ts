@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildColumnDiagnosticPacket } from '../lineage/diagnostics';
 import type { AnalysisWarning } from '../domain/lineage';
-import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationPlanV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationParameterDefinitionInputV1, type InvestigationPlanV1, type InvestigationPlannerParametersV1 } from '../lineage/investigationPlan';
 import { diagnosticProblemIntents, problemIntentOptions, symptomEffectMap, type DiagnosticConcernEffect, type DiagnosticProblemIntent, type ProblemIntent } from '../lineage/problemIntent';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
@@ -185,7 +185,7 @@ export function createInvestigationPlanForCli(
 
   const ddl = loadDdlInputs(args);
   const schemaFacts = args.schemaFacts ? normalizeLoadedSchemaFacts(JSON.parse(readTextFile(args.schemaFacts))) : undefined;
-  const parameters = args.parameters ? parseParameters(JSON.parse(readTextFile(args.parameters))) : undefined;
+  const parameters = args.parameters ? parseParameterFile(args.parameters) : undefined;
   return dependencies.createPlan({
     ...(ddl.length > 0 ? { ddl } : {}),
     ...(parameters ? { parameters } : {}),
@@ -326,11 +326,18 @@ function parseInvestigationSymptom(value: string): ProblemIntent {
   throw new Error(`Unknown symptom: ${value}. Expected one of: ${[...validInvestigationSymptoms].join(', ')}.`);
 }
 
-function parseParameters(value: unknown): InvestigationPlannerParameterInputV1[] {
-  if (!Array.isArray(value)) {
-    throw new Error('Parameters JSON must be an array of parameter objects.');
+function parseParameters(value: unknown): InvestigationPlannerParametersV1 {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Parameters JSON must contain separate definitions and bindings fields.');
   }
-  return value.map((parameter, index) => {
+  const envelope = value as Record<string, unknown>;
+  if (!Array.isArray(envelope.definitions)) {
+    throw new Error('Parameters JSON definitions must be an array of parameter objects.');
+  }
+  if (envelope.bindings !== undefined && (!envelope.bindings || typeof envelope.bindings !== 'object' || Array.isArray(envelope.bindings))) {
+    throw new Error('Parameters JSON bindings must be an object keyed by parameter name.');
+  }
+  const definitions = envelope.definitions.map((parameter, index): InvestigationParameterDefinitionInputV1 => {
     if (!parameter || typeof parameter !== 'object' || Array.isArray(parameter)) {
       throw new Error(`Parameter at index ${index} must be an object.`);
     }
@@ -347,17 +354,38 @@ function parseParameters(value: unknown): InvestigationPlannerParameterInputV1[]
     if (input.typeHint !== undefined && typeof input.typeHint !== 'string') {
       throw new Error(`Parameter ${input.name} typeHint must be a string.`);
     }
-    if (input.value !== undefined && input.value !== null && !['boolean', 'number', 'string'].includes(typeof input.value)) {
-      throw new Error(`Parameter ${input.name} value must be null, boolean, number, or string.`);
+    if (Object.prototype.hasOwnProperty.call(input, 'value')) {
+      throw new Error('Parameter definitions must not contain binding values; use the top-level bindings object.');
     }
     return {
       name: input.name as string,
-      origin: input.origin as InvestigationPlannerParameterInputV1['origin'],
+      origin: input.origin as InvestigationParameterDefinitionInputV1['origin'],
       ...(input.required !== undefined ? { required: input.required as boolean } : {}),
       ...(input.typeHint !== undefined ? { typeHint: input.typeHint as string } : {}),
-      ...(Object.prototype.hasOwnProperty.call(input, 'value') ? { value: input.value as boolean | number | string | null } : {}),
     };
   });
+  const bindings = (envelope.bindings ?? {}) as Record<string, unknown>;
+  for (const [name, binding] of Object.entries(bindings)) {
+    if (name.length === 0 || binding !== null && !['boolean', 'number', 'string'].includes(typeof binding)) {
+      throw new Error('Each parameter binding must have a non-empty name and a scalar or null value.');
+    }
+  }
+  const providedNames = Object.keys(bindings).sort();
+  return {
+    definitions,
+    ...(providedNames.length > 0 ? { bindingPresence: { providedNames } } : {}),
+  };
+}
+
+function parseParameterFile(filePath: string): InvestigationPlannerParametersV1 {
+  const text = readTextFile(filePath);
+  let value: unknown;
+  try {
+    value = JSON.parse(text);
+  } catch {
+    throw new Error('Parameters file must contain valid JSON.');
+  }
+  return parseParameters(value);
 }
 
 function printHelp(): void {
@@ -365,7 +393,7 @@ function printHelp(): void {
 }
 
 function printInvestigateHelp(): void {
-  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <file>]\n');
+  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <definitions-and-bindings-file>]\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

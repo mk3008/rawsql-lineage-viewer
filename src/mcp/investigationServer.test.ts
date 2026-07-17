@@ -9,6 +9,7 @@ import { createInvestigationPlan } from '../lineage/investigationPlan';
 import { McpInputError, normalizeCreateInvestigationPlanInput } from './investigationServer';
 
 const temporaryDirectories: string[] = [];
+const opaqueBinding = 'opaque-binding-sentinel';
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) rmSync(directory, { force: true, recursive: true });
@@ -36,12 +37,18 @@ describe('create_investigation_plan MCP adapter', () => {
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');
     mkdirSync(resolve(workspace, 'ddl'));
     writeFileSync(resolve(workspace, 'ddl', 'schema.sql'), 'create table orders (status text);');
-    writeFileSync(resolve(workspace, 'parameters.json'), JSON.stringify([{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]));
+    writeFileSync(resolve(workspace, 'parameters.json'), JSON.stringify({
+      bindings: { status: opaqueBinding },
+      definitions: [{ name: 'status', origin: 'original_query_parameter' }],
+    }));
 
     const inline = normalizeCreateInvestigationPlanInput(workspace, {
       ddl: 'create table orders (status text);',
-      investigationKeys: { customer_id: 10 },
-      knownParameters: { status: 'paid' },
+      parameterBindings: { customer_id: opaqueBinding, status: opaqueBinding },
+      parameterDefinitions: [
+        { name: 'customer_id', origin: 'investigation_key' },
+        { name: 'status', origin: 'original_query_parameter' },
+      ],
       sql: 'select status from orders where status = :status',
       symptom: 'missing_rows',
       targetColumn: 'status',
@@ -49,21 +56,27 @@ describe('create_investigation_plan MCP adapter', () => {
     const fromFiles = normalizeCreateInvestigationPlanInput(workspace, {
       ddlDirectories: ['ddl'],
       ddlFiles: ['ddl/schema.sql'],
-      knownParameters: { status: 'paid' },
+      parameterBindings: { status: opaqueBinding },
+      parameterDefinitions: [{ name: 'status', origin: 'original_query_parameter' }],
       sqlPath: 'query.sql',
       symptom: 'missing_rows',
       targetColumn: 'status',
     });
 
     expect(inline).toMatchObject({
-      parameters: [
-        { name: 'customer_id', origin: 'investigation_key', value: 10 },
-        { name: 'status', origin: 'original_query_parameter', value: 'paid' },
-      ],
+      parameters: {
+        bindingPresence: { providedNames: ['customer_id', 'status'] },
+        definitions: [
+          { name: 'customer_id', origin: 'investigation_key' },
+          { name: 'status', origin: 'original_query_parameter' },
+        ],
+      },
       sql: fromFiles.sql,
       symptom: fromFiles.symptom,
       target: fromFiles.target,
     });
+    expect(JSON.stringify(inline)).not.toContain(opaqueBinding);
+    expect(JSON.stringify(inline)).not.toContain('"value"');
     expect(inline.target.nodeId).toBe('main_output');
     expect(fromFiles.ddl).toEqual([{ filePath: resolve(workspace, 'ddl', 'schema.sql'), sql: 'create table orders (status text);' }]);
     const cliPlan = createInvestigationPlanForCli([
@@ -83,17 +96,19 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(serializedPlan).not.toContain('equivalent_rewrite');
     expect(serializedPlan).not.toContain('corrected_query');
     expect(serializedPlan).not.toContain('readOnly');
+    expect(serializedPlan).not.toContain(opaqueBinding);
+    expect(serializedPlan).not.toContain('"value"');
     for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
       expect(serializedPlan).not.toContain(unsafeAssuranceTerm);
     }
     expect(mcpPlan.nextEvidenceChecklist).toEqual(cliPlan.nextEvidenceChecklist);
     expect(createInvestigationPlan(fromFiles)).toEqual(mcpPlan);
     expect(() => normalizeCreateInvestigationPlanInput(workspace, {
-      sql: 'select status from orders', targetColumn: 'status', investigationKeys: [{ name: 'customer_id', origin: 'original_query_parameter', value: 10 }],
-    })).toThrow(expect.objectContaining({ code: 'PARAMETER_ORIGIN_MISMATCH' }));
+      sql: 'select status from orders', targetColumn: 'status', parameterDefinitions: [{ name: 'customer_id', origin: 'not_an_origin' }],
+    })).toThrow(expect.objectContaining({ code: 'PARAMETER_ORIGIN_INVALID' }));
     expect(() => normalizeCreateInvestigationPlanInput(workspace, {
-      sql: 'select status from orders', targetColumn: 'status', knownParameters: [{ name: 'status', origin: 'investigation_key', value: 'paid' }],
-    })).toThrow(expect.objectContaining({ code: 'PARAMETER_ORIGIN_MISMATCH' }));
+      sql: 'select status from orders', targetColumn: 'status', parameterBindings: { missing: opaqueBinding }, parameterDefinitions: [],
+    })).toThrow(expect.objectContaining({ code: 'PARAMETER_BINDING_DEFINITION_MISMATCH' }));
   });
 
   it('rejects external paths, traversal, excluded folders, binary files, and schema input conflicts before planning', () => {
@@ -119,10 +134,10 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, ddlDirectories: ['node_modules'] })).toThrow('excluded directory');
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, ddlFiles: ['binary.sql'] })).toThrow('Binary files are not accepted');
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, ddlFiles: ['query.sql'], schemaFactsPath: 'facts.json' })).toThrow('cannot be combined');
-    expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, knownParameters: { 'not-valid': 'paid' } })).toThrow('valid SQL parameter identifier');
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { ...request, parameterBindings: { 'not-valid': opaqueBinding }, parameterDefinitions: [{ name: 'not-valid', origin: 'original_query_parameter' }] })).toThrow('valid SQL parameter identifier');
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: `select '${'é'.repeat(1024 * 1024)}'`, targetColumn: 'status' })).toThrow(expect.objectContaining({ code: 'FILE_SIZE_LIMIT' }));
     expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select \0', targetColumn: 'status' })).toThrow(expect.objectContaining({ code: 'BINARY_FILE' }));
-    expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select 1', targetColumn: 'status', investigationKeys: { customer_id: 10 }, knownParameters: { customer_id: 20 } })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
+    expect(() => normalizeCreateInvestigationPlanInput(workspace, { sql: 'select 1', targetColumn: 'status', parameterBindings: { customer_id: opaqueBinding }, parameterDefinitions: [{ name: 'customer_id', origin: 'investigation_key' }, { name: 'customer_id', origin: 'original_query_parameter' }] })).toThrow(expect.objectContaining({ code: 'PARAMETER_NAME_COLLISION' }));
   });
 
   it('serves exactly one stdio tool, returns structured input errors, isolates repeated calls, and does not write the workspace', async () => {
@@ -152,25 +167,23 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(listed.tools[0].description).toContain('never fetches database schema');
       expect(listed.tools[0].description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
       expect(listed.tools[0].description).toContain('rather than free natural-language symptoms');
-      expect(listed.tools[0].description).toContain('for example, {customer_id: 10}');
-      expect(listed.tools[0].description).toContain('instead of inferring a key from DDL, primary-key status, or columns');
+      expect(listed.tools[0].description).toContain('Parameter definitions and caller-owned bindings are separate inputs');
+      expect(listed.tools[0].description).toContain('never returned in the plan');
       const inputProperties = listed.tools[0].inputSchema.properties as Record<string, { description?: string }>;
       expect(Object.values(inputProperties).every((property) => typeof property.description === 'string' && property.description.length > 0)).toBe(true);
       expect(inputProperties.symptom.description).toContain('value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows');
       expect(inputProperties.symptom.description).toContain('rather than free natural-language symptoms');
-      expect(inputProperties.investigationKeys.description).toContain('for example {customer_id: 10}');
-      expect(inputProperties.investigationKeys.description).toContain('ask for its name and value');
-      expect(inputProperties.investigationKeys.description).toContain('never infer it from DDL, primary-key status, or columns');
+      expect(inputProperties.parameterDefinitions.description).toContain('metadata only');
+      expect(inputProperties.parameterBindings.description).toContain('never returned in the plan');
       expect((listed.tools[0].inputSchema.required as string[])).toContain('targetColumn');
       expect((inputProperties.targetColumn as { type?: string }).type).toBe('string');
       expect((inputProperties.symptom as { enum?: string[] }).enum).toEqual(['value_too_high', 'value_too_low', 'value_missing', 'missing_rows', 'duplicate_rows']);
       expect((inputProperties.sql as { type?: string }).type).toBe('string');
       expect((inputProperties.ddlDirectories as { type?: string; items?: { type?: string } }).type).toBe('array');
       expect((inputProperties.ddlDirectories as { items?: { type?: string } }).items?.type).toBe('string');
-      const investigationArray = (inputProperties.investigationKeys as { anyOf?: Array<{ items?: { properties?: { origin?: { const?: string } } } }> }).anyOf?.find((entry) => entry.items)?.items;
-      const knownArray = (inputProperties.knownParameters as { anyOf?: Array<{ items?: { properties?: { origin?: { const?: string } } } }> }).anyOf?.find((entry) => entry.items)?.items;
-      expect(investigationArray?.properties?.origin?.const).toBe('investigation_key');
-      expect(knownArray?.properties?.origin?.const).toBe('original_query_parameter');
+      const parameterDefinitionItems = (inputProperties.parameterDefinitions as { items?: { properties?: { origin?: { enum?: string[] }; value?: unknown } } }).items;
+      expect(parameterDefinitionItems?.properties?.origin?.enum).toEqual(['investigation_key', 'original_query_parameter', 'derived_parameter', 'environment_parameter']);
+      expect(parameterDefinitionItems?.properties).not.toHaveProperty('value');
 
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
@@ -203,19 +216,24 @@ describe('create_investigation_plan MCP adapter', () => {
         name: 'create_investigation_plan',
         arguments: {
           ddl: 'create table orders (status text);',
-          investigationKeys: { customer_id: 10 },
-          knownParameters: { status: 'paid' },
+          parameterBindings: { customer_id: opaqueBinding, status: opaqueBinding },
+          parameterDefinitions: [
+            { name: 'customer_id', origin: 'investigation_key' },
+            { name: 'status', origin: 'original_query_parameter' },
+          ],
           sql: 'select status from orders where status = :status',
           targetColumn: 'status',
         },
       });
       expect(mapAndDefault.structuredContent).toMatchObject({
         parameters: [
-          { name: 'customer_id', origin: 'investigation_key', value: 10 },
-          { name: 'status', origin: 'original_query_parameter', value: 'paid' },
+          { name: 'customer_id', origin: 'investigation_key', status: 'provided' },
+          { name: 'status', origin: 'original_query_parameter', status: 'provided' },
         ],
         target: { nodeId: 'main_output' },
       });
+      expect(JSON.stringify(mapAndDefault)).not.toContain(opaqueBinding);
+      expect(JSON.stringify(mapAndDefault.structuredContent)).not.toContain('"value"');
 
       const duplicateDdl = await client.callTool({
         name: 'create_investigation_plan',
@@ -226,10 +244,19 @@ describe('create_investigation_plan MCP adapter', () => {
 
       const duplicateParameter = await client.callTool({
         name: 'create_investigation_plan',
-        arguments: { sql: 'select status from orders', targetColumn: 'status', investigationKeys: { customer_id: 10 }, knownParameters: { customer_id: 20 } },
+        arguments: {
+          parameterBindings: { customer_id: opaqueBinding },
+          parameterDefinitions: [
+            { name: 'customer_id', origin: 'investigation_key' },
+            { name: 'customer_id', origin: 'original_query_parameter' },
+          ],
+          sql: 'select status from orders',
+          targetColumn: 'status',
+        },
       });
       expect(duplicateParameter.isError).toBe(true);
       expect(JSON.parse((duplicateParameter.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'PARAMETER_NAME_COLLISION', kind: 'invalid_input' });
+      expect(JSON.stringify(duplicateParameter)).not.toContain(opaqueBinding);
     } finally {
       await client.close();
     }

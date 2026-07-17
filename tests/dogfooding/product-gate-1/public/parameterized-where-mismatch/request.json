@@ -1,1 +1,1 @@
-{"targetColumn":"paid_amount","symptom":"value_too_low","knownParameters":{"status":"succeeded"},"investigationKeys":{"customer_id":10}}
+{"targetColumn":"paid_amount","symptom":"value_too_low","parameterDefinitions":[{"name":"customer_id","origin":"investigation_key"},{"name":"status","origin":"original_query_parameter"}]}

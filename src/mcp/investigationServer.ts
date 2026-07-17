@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationPlanInputV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationParameterDefinitionInputV1, type InvestigationPlanInputV1, type InvestigationPlannerParametersV1 } from '../lineage/investigationPlan';
 import { diagnosticProblemIntents, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 
@@ -17,20 +17,14 @@ const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TARGET_NODE = 'main_output';
 const SQL_PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const parameterValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const parameterObjectFields = {
+const parameterDefinitionFields = {
   name: z.string().min(1),
+  origin: z.enum(investigationInputParameterOrigins),
   required: z.boolean().optional(),
   typeHint: z.string().optional(),
-  value: parameterValueSchema.optional(),
 };
-const investigationKeyParameterInputSchema = z.union([
-  z.record(z.string(), parameterValueSchema),
-  z.array(z.object({ ...parameterObjectFields, origin: z.literal('investigation_key').optional() })),
-]);
-const knownParameterInputSchema = z.union([
-  z.record(z.string(), parameterValueSchema),
-  z.array(z.object({ ...parameterObjectFields, origin: z.literal('original_query_parameter').optional() })),
-]);
+const parameterDefinitionsInputSchema = z.array(z.object(parameterDefinitionFields).strict());
+const parameterBindingsInputSchema = z.record(z.string(), parameterValueSchema);
 
 export interface CreateInvestigationPlanMcpInput {
   sql?: unknown;
@@ -43,8 +37,8 @@ export interface CreateInvestigationPlanMcpInput {
   targetNode?: unknown;
   targetColumn?: unknown;
   symptom?: unknown;
-  investigationKeys?: unknown;
-  knownParameters?: unknown;
+  parameterBindings?: unknown;
+  parameterDefinitions?: unknown;
 }
 
 export class McpInputError extends Error {
@@ -86,11 +80,11 @@ export function normalizeCreateInvestigationPlanInput(
   const schemaFacts = hasSchemaFacts
     ? parseSchemaFacts(readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.schemaFactsPath, 'schemaFactsPath')))
     : undefined;
-  const parameters = normalizeParameters(input.investigationKeys, input.knownParameters);
+  const parameters = normalizeParameters(input.parameterDefinitions, input.parameterBindings);
 
   return {
     ...(ddl.length > 0 ? { ddl } : {}),
-    ...(parameters.length > 0 ? { parameters } : {}),
+    ...(parameters ? { parameters } : {}),
     ...(schemaFacts ? { schemaFacts } : {}),
     sql,
     ...(symptom ? { symptom } : {}),
@@ -104,13 +98,13 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
   server.registerTool(
     'create_investigation_plan',
     {
-      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Record-specific investigation may require explicit investigationKeys name/value pairs (for example, {customer_id: 10}); ask for the key name and value instead of inferring a key from DDL, primary-key status, or columns. targetNode defaults to main_output.',
+      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Parameter definitions and caller-owned bindings are separate inputs; bindings are reduced to non-secret presence metadata and are never returned in the plan. targetNode defaults to main_output.',
       inputSchema: {
         ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
         ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
         ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
-        investigationKeys: investigationKeyParameterInputSchema.optional().describe('Optional explicit record-specific key name/value map, for example {customer_id: 10}. When a record-specific investigation needs a key, ask for its name and value; never infer it from DDL, primary-key status, or columns.'),
-        knownParameters: knownParameterInputSchema.optional().describe('Optional known original-query parameter name/value map.'),
+        parameterBindings: parameterBindingsInputSchema.optional().describe('Optional caller-owned binding map. Values are used only to mark matching definitions as provided and are never returned in the plan.'),
+        parameterDefinitions: parameterDefinitionsInputSchema.optional().describe('Optional emit-safe parameter definitions with name, origin, required, and typeHint metadata only.'),
         schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
         sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
         sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
@@ -254,54 +248,59 @@ function readBoundedText(filePath: string): string {
   return bytes.toString('utf8');
 }
 
-function normalizeParameters(investigationKeys: unknown, knownParameters: unknown): InvestigationPlannerParameterInputV1[] {
-  const keys = optionalParameters(investigationKeys, 'investigationKeys', 'investigation_key');
-  const known = optionalParameters(knownParameters, 'knownParameters', 'original_query_parameter');
-  const names = new Set<string>();
-  for (const parameter of [...keys, ...known]) {
-    if (names.has(parameter.name)) throw new McpInputError('PARAMETER_NAME_COLLISION', 'Parameter names must not appear in both investigationKeys and knownParameters or more than once.');
-    names.add(parameter.name);
+function normalizeParameters(definitionsValue: unknown, bindingsValue: unknown): InvestigationPlannerParametersV1 | undefined {
+  const definitions = parameterDefinitions(definitionsValue);
+  const bindings = parameterBindings(bindingsValue);
+  if (definitions.length === 0 && bindings.length === 0) return undefined;
+
+  const definitionNames = new Set<string>();
+  for (const definition of definitions) {
+    if (definitionNames.has(definition.name)) throw new McpInputError('PARAMETER_NAME_COLLISION', 'Parameter definition names must be unique.');
+    definitionNames.add(definition.name);
   }
-  return [...keys, ...known];
+  if (bindings.some((name) => !definitionNames.has(name))) {
+    throw new McpInputError('PARAMETER_BINDING_DEFINITION_MISMATCH', 'Every binding must identify exactly one parameter definition.');
+  }
+  return {
+    definitions,
+    ...(bindings.length > 0 ? { bindingPresence: { providedNames: bindings } } : {}),
+  };
 }
 
-function optionalParameters(
-  value: unknown,
-  field: string,
-  mapOrigin: InvestigationInputParameterOriginV1,
-): InvestigationPlannerParameterInputV1[] {
+function parameterDefinitions(value: unknown): InvestigationParameterDefinitionInputV1[] {
   if (value === undefined) return [];
-  if (Array.isArray(value)) return value.map((item, index) => parameterFromObject(item, `${field}[${index}]`, mapOrigin));
-  if (!value || typeof value !== 'object') throw new McpInputError('PARAMETERS_INVALID', `${field} must be a parameter map or array.`);
-  return Object.entries(value as Record<string, unknown>).map(([name, parameterValue]) => {
-    validateParameterName(name, `${field} key`);
-    validateParameterValue(parameterValue, `${field}.${name}`);
-    return { name, origin: mapOrigin, value: parameterValue as boolean | number | string | null };
-  });
-}
-
-function parameterFromObject(item: unknown, field: string, defaultOrigin: InvestigationInputParameterOriginV1): InvestigationPlannerParameterInputV1 {
+  if (!Array.isArray(value)) throw new McpInputError('PARAMETERS_INVALID', 'parameterDefinitions must be an array.');
+  return value.map((item, index) => {
+    const field = `parameterDefinitions[${index}]`;
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new McpInputError('PARAMETERS_INVALID', `${field} must be an object.`);
     const parameter = item as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(parameter, 'value')) {
+      throw new McpInputError('PARAMETERS_INVALID', 'Parameter definitions must not contain binding values.');
+    }
     const name = requiredNonEmptyString(parameter.name, `${field}.name`);
     validateParameterName(name, `${field}.name`);
-    const origin = parameter.origin === undefined ? defaultOrigin : parameter.origin;
-    if (!investigationInputParameterOrigins.includes(origin as InvestigationInputParameterOriginV1)) {
+    if (!investigationInputParameterOrigins.includes(parameter.origin as InvestigationInputParameterOriginV1)) {
       throw new McpInputError('PARAMETER_ORIGIN_INVALID', `${field}.origin is invalid.`);
-    }
-    if (origin !== defaultOrigin) {
-      throw new McpInputError('PARAMETER_ORIGIN_MISMATCH', `${field}.origin must be ${defaultOrigin}.`);
     }
     if (parameter.required !== undefined && typeof parameter.required !== 'boolean') throw new McpInputError('PARAMETERS_INVALID', `${field}.required must be boolean.`);
     if (parameter.typeHint !== undefined && typeof parameter.typeHint !== 'string') throw new McpInputError('PARAMETERS_INVALID', `${field}.typeHint must be a string.`);
-    if (Object.prototype.hasOwnProperty.call(parameter, 'value')) validateParameterValue(parameter.value, `${field}.value`);
     return {
       name,
-      origin: defaultOrigin,
+      origin: parameter.origin as InvestigationInputParameterOriginV1,
       ...(parameter.required !== undefined ? { required: parameter.required as boolean } : {}),
       ...(parameter.typeHint !== undefined ? { typeHint: parameter.typeHint as string } : {}),
-      ...(Object.prototype.hasOwnProperty.call(parameter, 'value') ? { value: parameter.value as boolean | number | string | null } : {}),
     };
+  });
+}
+
+function parameterBindings(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new McpInputError('PARAMETERS_INVALID', 'parameterBindings must be an object keyed by parameter name.');
+  return Object.entries(value as Record<string, unknown>).map(([name, binding]) => {
+    validateParameterName(name, 'parameterBindings key');
+    validateParameterValue(binding, 'parameterBindings value');
+    return name;
+  }).sort();
 }
 
 function parseSchemaFacts(text: string): SchemaFacts {

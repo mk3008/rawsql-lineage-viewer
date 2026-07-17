@@ -17,7 +17,7 @@ const scenarioNames = readdirSync(scenarioRoot)
   .filter((entry) => existsSync(join(scenarioRoot, entry, 'expected.json')))
   .sort();
 const temporaryDirectories: string[] = [];
-const parameterValue = 'must-not-appear-in-probe-sql';
+const opaqueBinding = 'opaque-binding-sentinel';
 
 afterEach(() => {
   for (const directory of temporaryDirectories.splice(0)) {
@@ -30,9 +30,10 @@ describe('rawsql-lineage investigate scenario fixtures', () => {
     const scenarioDir = join(scenarioRoot, scenarioName);
     const expected = readJson<ScenarioExpectation>(join(scenarioDir, 'expected.json'));
     const parametersPath = join(await temporaryDirectory(), 'parameters.json');
-    writeFileSync(parametersPath, JSON.stringify([
-      { name: 'scenario_marker', origin: 'original_query_parameter', value: parameterValue },
-    ]));
+    writeFileSync(parametersPath, JSON.stringify({
+      bindings: { scenario_marker: opaqueBinding },
+      definitions: [{ name: 'scenario_marker', origin: 'original_query_parameter' }],
+    }));
 
     const plan = createInvestigationPlanForCli([
       '--sql', join(scenarioDir, 'query.sql'),
@@ -43,17 +44,20 @@ describe('rawsql-lineage investigate scenario fixtures', () => {
       '--parameters', parametersPath,
     ]);
 
-    assertStaticInvestigationPlan(plan, expected, parameterValue);
+    assertStaticInvestigationPlan(plan, expected, opaqueBinding);
   });
 
   it.each(scenarioNames)('only recommends a proven node-query outer filter for the eligible %s fixture', async (scenarioName) => {
     const scenarioDir = join(scenarioRoot, scenarioName);
     const expected = readJson<ScenarioExpectation>(join(scenarioDir, 'expected.json'));
     const parametersPath = join(await temporaryDirectory(), 'parameters.json');
-    writeFileSync(parametersPath, JSON.stringify([
-      { name: 'customer_id', origin: 'investigation_key', value: 10 },
-      { name: 'scenario_marker', origin: 'original_query_parameter', value: parameterValue },
-    ]));
+    writeFileSync(parametersPath, JSON.stringify({
+      bindings: { customer_id: opaqueBinding, scenario_marker: opaqueBinding },
+      definitions: [
+        { name: 'customer_id', origin: 'investigation_key' },
+        { name: 'scenario_marker', origin: 'original_query_parameter' },
+      ],
+    }));
 
     const plan = createInvestigationPlanForCli([
       '--sql', join(scenarioDir, 'query.sql'),
@@ -95,6 +99,8 @@ function assertStaticInvestigationPlan(plan: InvestigationPlanV1, expected: Scen
     expect.objectContaining({ code: 'no_database_access' }),
     expect.objectContaining({ code: 'original_analysis_only' }),
   ]));
+  expect(JSON.stringify(plan)).not.toContain(forbiddenParameterValue);
+  expect(JSON.stringify(plan)).not.toContain('"value"');
 
   for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
     expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
