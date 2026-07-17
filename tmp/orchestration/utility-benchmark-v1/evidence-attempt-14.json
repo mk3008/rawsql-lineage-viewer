@@ -1,0 +1,36 @@
+{
+  "image": "postgres:16-alpine",
+  "scenarios": {},
+  "imageId": "sha256:79c06d285ed9186efbbc45c73413b3c3510c3c94ffede2f25d1e523f74d07f28",
+  "serverVersion": "PostgreSQL 16.11",
+  "error": {
+    "code": "RUN_SCENARIO_SQL-DEFECT",
+    "phase": "scenario_sql-defect"
+  },
+  "boundary": {
+    "changedPathCategoryCounts": {
+      "benchmark": 18,
+      "core": 0,
+      "cli": 0,
+      "mcp": 0
+    },
+    "changedPathHash": "c12e6a4753e249229bed5e2046f4914b3021e01ce4932ad623af7ff4ccb14647",
+    "noCoreCliMcpDbConfig": true
+  },
+  "teardown": {
+    "containerAbsent": true,
+    "mountCount": 1,
+    "volumeAbsent": false,
+    "dynamicLoopbackPortClosed": true,
+    "tempCredentialRemoved": true,
+    "tempDirectoryRemoved": true,
+    "host": "127.0.0.1",
+    "loopbackOnly": true
+  },
+  "parameterLeakageCount": 0,
+  "finalization": {
+    "phase": "container_verify",
+    "code": "RUN_SCENARIO_SQL-DEFECT",
+    "containerAbsent": true
+  }
+}
