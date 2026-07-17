@@ -36,7 +36,10 @@ Observation contracts describe metadata for `source_row_count`,
 `aggregate_input_non_null_count`, and `aggregate_input_value_summary`. They are
 not probe artifacts and contain no SQL. Each contract declares expected column
 semantics, linked facts and concerns, assumptions, non-conclusions,
-inconclusive conditions, and structured blocked reasons.
+inconclusive conditions, and structured blocked reasons. Source row counts are
+represented as one contract per exact source. Aggregate-input observations are
+represented as one contract per exact aggregate fact and are blocked for
+`COUNT(*)`, unresolved inputs, or inputs without exactly one resolved source.
 
 An `available` observation contract means only that its static prerequisites
 are represented. It does not authorize execution, prove a root cause, show
