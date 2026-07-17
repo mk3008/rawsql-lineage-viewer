@@ -19,9 +19,15 @@ function packet(overrides: Partial<ColumnDiagnosticPacket> = {}): ColumnDiagnost
 describe('createInvestigationPlan', () => {
   it('is deterministic and analyzes only the original diagnostic packet', () => {
     const input = { sql: 'SELECT o.status FROM orders o WHERE o.status = :status', target: { columnName: 'status', nodeId: 'main_output' }, symptom: 'missing_rows' as const, parameters: [{ name: 'status', origin: 'original_query_parameter' as const, required: true, value: 'paid' }] };
-    expect(createInvestigationPlan(input)).toEqual(createInvestigationPlan(input));
-    expect(createInvestigationPlan(input).analysisMode).toBe('original');
-    expect(createInvestigationPlan(input).diagnostics[0].code).toBe('original_sql_only');
+    const plan = createInvestigationPlan(input);
+    expect(plan).toEqual(createInvestigationPlan(input));
+    expect(JSON.stringify(plan)).toBe(JSON.stringify(createInvestigationPlan(input)));
+    expect(plan.analysisMode).toBe('original');
+    expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: input.sql });
+    expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
+    expect(plan.diagnostics[0].code).toBe('original_sql_only');
+    expect(JSON.stringify(plan)).not.toContain('equivalent_rewrite');
+    expect(JSON.stringify(plan)).not.toContain('corrected_query');
   });
 
   it('preserves the supplied symptom on the investigation target and defaults deterministically', () => {
@@ -277,8 +283,9 @@ describe('createInvestigationPlan', () => {
 
   it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
     const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
+    expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'SELECT status FROM orders WHERE status IS NOT NULL' });
     expect(plan.recommendedProbes).toHaveLength(1);
-    expect(plan.recommendedProbes[0]).toMatchObject({ readOnly: true, sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)' });
+    expect(plan.recommendedProbes[0]).toMatchObject({ artifactKind: 'investigation_probe', readOnly: true, sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)' });
     expect(plan.recommendedProbes[0].sql).not.toContain('paid');
     for (const probe of plan.recommendedProbes) {
       expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
@@ -325,6 +332,7 @@ describe('createInvestigationPlan', () => {
     expect(plan.deferredProbes).toHaveLength(1);
     expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
     for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+      expect(probe.artifactKind).toBe('investigation_probe');
       expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
     }
   });
@@ -425,6 +433,7 @@ describe('createInvestigationPlan', () => {
     const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
 
     expect(probe).toMatchObject({
+      artifactKind: 'investigation_probe',
       id: 'probe:node-query-outer-filter:01',
       kind: 'node_query_outer_filter',
       nodeId: 'main_output',

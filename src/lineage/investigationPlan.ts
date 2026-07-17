@@ -22,6 +22,24 @@ import {
 /** The only SQL mode used to diagnose the submitted statement. */
 export type InvestigationAnalysisModeV1 = 'original';
 
+/**
+ * Exhaustive SQL artifact roles supported by the version 1 public contract.
+ * Rewrites use `equivalent_rewrite` only when an explicit rewrite artifact is emitted;
+ * diagnostic statements are always `investigation_probe`, never corrected queries.
+ */
+export const sqlArtifactKinds = [
+  'original_query',
+  'equivalent_rewrite',
+  'investigation_probe',
+] as const;
+
+export type SqlArtifactKindV1 = (typeof sqlArtifactKinds)[number];
+
+export interface SqlArtifactV1<TKind extends SqlArtifactKindV1 = SqlArtifactKindV1> {
+  artifactKind: TKind;
+  sql: string;
+}
+
 export type InvestigationParameterOriginV1 =
   | 'investigation_key'
   | 'original_query_parameter'
@@ -87,7 +105,7 @@ export interface InvestigationLimitationV1 {
   message: string;
 }
 
-export interface ProbeSpecV1 {
+export interface ProbeSpecV1 extends SqlArtifactV1<'investigation_probe'> {
   /** A deterministic identifier within the plan. */
   id: string;
   confidence: 'high' | 'low' | 'medium' | 'possible' | 'unknown';
@@ -101,7 +119,6 @@ export interface ProbeSpecV1 {
   question: string;
   readOnly: true;
   reason: string;
-  sql: string;
 }
 
 export interface BlockedProbeV1 {
@@ -151,6 +168,8 @@ export interface InvestigationPlanV1 {
   limitations: InvestigationLimitationV1[];
   /** Required in plan version 1; item provenance fields are additive within this field. */
   nextEvidenceChecklist: NextEvidenceChecklistItemV1[];
+  /** The submitted statement, preserved and labeled without rewriting or execution. */
+  originalQuery: SqlArtifactV1<'original_query'>;
   parameters: InvestigationParameterV1[];
   recommendedProbes: ProbeSpecV1[];
   target: InvestigationTargetV1;
@@ -216,7 +235,10 @@ export function createInvestigationPlan(input: InvestigationPlanInputV1): Invest
   const symptom = input.symptom ?? DEFAULT_INVESTIGATION_SYMPTOM;
   const { lineage } = analyzeSql(input.sql, { analysisMode: 'original', optimizeConditions: false, schemaFacts });
   const packet = buildColumnDiagnosticPacket(lineage, input.target, { schemaFacts, symptom });
-  return createInvestigationPlanFromDiagnosticPacket(packet, input.parameters, symptom, lineage);
+  return {
+    ...createInvestigationPlanFromDiagnosticPacket(packet, input.parameters, symptom, lineage),
+    originalQuery: { artifactKind: 'original_query', sql: input.sql },
+  };
 }
 
 /** @internal Test seam for planning behavior after the pure parser/diagnostics boundary. */
@@ -225,7 +247,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
   inputs: InvestigationPlannerParameterInputV1[] = [],
   symptom: string = DEFAULT_INVESTIGATION_SYMPTOM,
   nodeQueryContext?: InvestigationNodeQueryContextV1,
-): InvestigationPlanV1 {
+): Omit<InvestigationPlanV1, 'originalQuery'> {
   assertUniqueParameterNames(inputs);
   const indexedConcerns = indexCandidateConcerns(packet.candidateConcerns);
   const candidateConcerns = indexedConcerns.map(({ concern, id }) => toCandidateConcern(concern, id));
@@ -465,6 +487,7 @@ function createNodeQueryOuterFilterProbe(
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return {
     probe: {
+      artifactKind: 'investigation_probe',
       confidence: 'possible',
       hypothesis: 'Filtering the selected node query by the explicitly supplied investigation key can isolate the relevant output rows without changing its internal SQL.',
       id,
@@ -598,6 +621,7 @@ function createProbe(
   const parameterNames = collectParameterNames(generatedProbeReadOnly.statement);
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return { probe: {
+    artifactKind: 'investigation_probe',
     confidence: concern.confidence,
     hypothesis: `${concern.reason} This remains a candidate concern until the read-only probe is evaluated.`,
     id,

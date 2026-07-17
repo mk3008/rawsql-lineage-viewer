@@ -71,6 +71,11 @@ describe('create_investigation_plan MCP adapter', () => {
     ]);
     const mcpPlan = createInvestigationPlan(fromFiles);
     expect(mcpPlan).toEqual(cliPlan);
+    expect(JSON.stringify(mcpPlan)).toBe(JSON.stringify(cliPlan));
+    expect(mcpPlan.originalQuery).toEqual({ artifactKind: 'original_query', sql: fromFiles.sql });
+    expect([...mcpPlan.recommendedProbes, ...mcpPlan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
+    expect(JSON.stringify(mcpPlan)).not.toContain('equivalent_rewrite');
+    expect(JSON.stringify(mcpPlan)).not.toContain('corrected_query');
     expect(mcpPlan.nextEvidenceChecklist).toEqual(cliPlan.nextEvidenceChecklist);
     expect(createInvestigationPlan(fromFiles)).toEqual(mcpPlan);
     expect(() => normalizeCreateInvestigationPlanInput(workspace, {
@@ -164,8 +169,13 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(first.structuredContent).toMatchObject({
         kind: 'investigation-plan',
         nextEvidenceChecklist: expect.arrayContaining([expect.objectContaining({ kind: 'condition', status: 'to_verify' })]),
+        originalQuery: { artifactKind: 'original_query', sql: 'select status from orders where status = :status' },
         target: { columnName: 'status', nodeId: 'main_output' },
       });
+      const firstPlan = first.structuredContent as { deferredProbes: Array<{ artifactKind: string }>; recommendedProbes: Array<{ artifactKind: string }> };
+      expect([...firstPlan.recommendedProbes, ...firstPlan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
+      expect(JSON.stringify(first.structuredContent)).not.toContain('equivalent_rewrite');
+      expect(JSON.stringify(first.structuredContent)).not.toContain('corrected_query');
 
       const invalid = await client.callTool({ name: 'create_investigation_plan', arguments: { sql: 'select 1', sqlPath: 'query.sql', targetColumn: 'x', targetNode: 'main_output' } });
       expect(invalid.isError).toBe(true);

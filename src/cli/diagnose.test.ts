@@ -49,16 +49,20 @@ describe('rawsql-lineage diagnose CLI', () => {
       const stdout = execFileSync(process.execPath, [
         '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath,
       ], { encoding: 'utf8' });
-      const plan = JSON.parse(stdout) as { diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; recommendedProbes: Array<{ sql: string }>; target: { columnName: string; nodeId: string } };
+      const plan = JSON.parse(stdout) as { deferredProbes: Array<{ artifactKind: string; sql: string }>; diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; originalQuery: { artifactKind: string; sql: string }; recommendedProbes: Array<{ artifactKind: string; sql: string }>; target: { columnName: string; nodeId: string } };
 
       expect(plan.kind).toBe('investigation-plan');
+      expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'select status from orders where status = :status' });
       expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'logic_review' });
       expect(plan.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'original_sql_only' })]));
       expect(plan.nextEvidenceChecklist).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'condition', status: 'to_verify' }),
         expect.objectContaining({ kind: 'relation', status: 'to_verify' }),
       ]));
+      expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
       expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+      expect(stdout).not.toContain('equivalent_rewrite');
+      expect(stdout).not.toContain('corrected_query');
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { InvestigationParameterV1, InvestigationPlanV1 } from './investigationPlan';
+import { sqlArtifactKinds, type InvestigationParameterV1, type InvestigationPlanV1 } from './investigationPlan';
 
 describe('InvestigationPlanV1 contract', () => {
+  it('exports only the accepted SQL artifact taxonomy', () => {
+    expect(sqlArtifactKinds).toEqual(['original_query', 'equivalent_rewrite', 'investigation_probe']);
+    expect(sqlArtifactKinds).not.toContain('corrected_query');
+  });
+
   it('represents the Phase A target, parameter origins, and direct probe groups', () => {
     const originalStatus: InvestigationParameterV1 = {
       id: 'parameter:status', name: 'status', origin: 'original_query_parameter', required: true,
@@ -18,6 +23,7 @@ describe('InvestigationPlanV1 contract', () => {
       kind: 'investigation-plan',
       limitations: [{ code: 'no_database_access', message: 'No database result was inspected.' }],
       nextEvidenceChecklist: [],
+      originalQuery: { artifactKind: 'original_query', sql: 'select status from orders where status = :status' },
       parameters: [
         originalStatus,
         { id: 'parameter:investigation-key', name: 'customer_id', origin: 'investigation_key', required: true, status: 'required', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
@@ -25,18 +31,21 @@ describe('InvestigationPlanV1 contract', () => {
         { id: 'parameter:environment', name: 'database_timezone', origin: 'environment_parameter', required: false, status: 'required', typeHint: 'iana-timezone', usedBy: [] },
         { id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
       ],
-      recommendedProbes: [{ confidence: 'possible', hypothesis: 'The status predicate may exclude rows.', id: 'probe:status-count', kind: 'row_count_comparison', limitations: ['Results require a read-only execution environment.'], nodeId: 'table_orders', parameters: [originalStatus], priority: 1, priorityReasons: ['Directly tests the candidate predicate.'], question: 'How many rows match the supplied status?', readOnly: true, reason: 'Compare the predicate-constrained row count.', sql: 'select count(*) from orders where status = :status' }],
+      recommendedProbes: [{ artifactKind: 'investigation_probe', confidence: 'possible', hypothesis: 'The status predicate may exclude rows.', id: 'probe:status-count', kind: 'row_count_comparison', limitations: ['Results require a read-only execution environment.'], nodeId: 'table_orders', parameters: [originalStatus], priority: 1, priorityReasons: ['Directly tests the candidate predicate.'], question: 'How many rows match the supplied status?', readOnly: true, reason: 'Compare the predicate-constrained row count.', sql: 'select count(*) from orders where status = :status' }],
       target: { columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' },
       unresolvedParameters: [{ id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] }],
       version: 1,
     } satisfies InvestigationPlanV1;
 
     expect(plan.analysisMode).toBe('original');
+    expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'select status from orders where status = :status' });
+    expect(plan.recommendedProbes[0].artifactKind).toBe('investigation_probe');
     expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' });
     expect(plan.parameters.map((parameter) => parameter.origin)).toEqual(['original_query_parameter', 'investigation_key', 'derived_parameter', 'environment_parameter', 'unresolved_parameter']);
     expect(plan.recommendedProbes[0].readOnly).toBe(true);
     expect(plan.deferredProbes).toEqual([]);
     expect(plan.blockedProbes[0]).toMatchObject({ code: 'JOIN_KEY_UNAVAILABLE', reason: expect.any(String) });
     expect(plan.unresolvedParameters[0].status).toBe('unresolved');
+    expect(JSON.stringify(plan)).not.toContain('corrected_query');
   });
 });
