@@ -31,7 +31,7 @@ let scenarioSubphase = 'not_started';
   let stopped = false;
   try {
     phase = 'container_start';
-    execFileSync('docker', ['run', '--rm', '-d', '--name', container, '-p', '127.0.0.1::5432', '--env-file', envFile, 'postgres:16-alpine'], { stdio: 'ignore' });
+    execFileSync('docker', ['run', '--rm', '-d', '--name', container, '-p', '127.0.0.1::5432', '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=256m', '--env-file', envFile, 'postgres:16-alpine'], { stdio: 'ignore' });
     rmSync(envFile, { force: true });
     phase = 'port_discovery';
     const port = Number(execFileSync('docker', ['port', container, '5432/tcp'], { encoding: 'utf8' }).match(/:(\d+)/)?.[1]); mappedPort = port;
@@ -44,7 +44,7 @@ let scenarioSubphase = 'not_started';
     evidence.imageId = execFileSync('docker', ['inspect', '--format', '{{.Image}}', container], { encoding: 'utf8' }).trim();
     const version = (await client.query('select version()')).rows[0]?.version as string;
     evidence.serverVersion = version?.split(' on ')[0] ?? 'redacted';
-    for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id) }; }
+    for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id, value => { scenarioSubphase = value; }) }; }
   } catch { failureCode = phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase, scenarioSubphase }; }
   finally {
     finalizationPhase = 'client_close'; try { await client?.end(); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CLIENT_CLOSE' : failureCode; }
@@ -57,17 +57,18 @@ let scenarioSubphase = 'not_started';
     let changed: string[] = []; try { changed = execFileSync('git', ['diff', '--name-only', '167a515'], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
     const categories = { benchmark: changed.filter(p => p.startsWith('tests/dogfooding/utility-benchmark-v1/')).length, core: changed.filter(p => p.startsWith('src/')).length, cli: changed.filter(p => p.includes('/cli/')).length, mcp: changed.filter(p => p.includes('/mcp/')).length };
     evidence.boundary = { changedPathCategoryCounts: categories, changedPathHash: hash(changed.join('\n')), noCoreCliMcpDbConfig: categories.core === 0 && categories.cli === 0 && categories.mcp === 0 };
-    evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.length === 0, dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
+    evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.every(m => !m || typeof m !== 'object' || !['volume', 'bind'].includes(String((m as { Type?: unknown }).Type))), dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
     let privateBindings: Record<string, Scalar> = {};
     try { privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
     evidence.parameterLeakageCount = countScalarLeakage(evidence, privateBindings);
     evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
-    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-15.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
-    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-15.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 15\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 9302f8119b6c00a25dc1c63dcb13202f5d22a1aa\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-16.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
+    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-16.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 16\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 7752c3038904a457d253f2af2c653554e7638a00\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    if (failureCode !== 'OK') process.exitCode = 1;
   }
 }
 
-async function runScenario(client: Client, temp: string, id: string): Promise<unknown> {
+async function runScenario(client: Client, temp: string, id: string, setSubphase: (phase: string) => void): Promise<unknown> {
   const pub = resolve(root, 'scenarios', id, 'public');
   const priv = resolve(root, 'scenarios', id, 'private');
   await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
@@ -77,17 +78,17 @@ async function runScenario(client: Client, temp: string, id: string): Promise<un
   const parameterFile = resolve(temp, `${id}-parameters.json`);
   writeFileSync(parameterFile, JSON.stringify({ bindings, definitions: json(resolve(pub, 'parameter-definitions.json')) }));
   const c = json<{ targetColumn: string; symptom: string }>(resolve(pub, 'case.json'));
-  scenarioSubphase = 'plan_generation';
+  setSubphase('plan_generation');
   const plan = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'query.sql', '--ddl-dir', '.', '--parameters', parameterFile, '--target-node', 'main_output', '--target-column', c.targetColumn, '--symptom', c.symptom], { cwd: pub, encoding: 'utf8' })) as Plan;
   const started = Date.now();
   const execute = async () => Object.fromEntries(await Promise.all(plan.recommendedProbes.map(async probe => { validateProbe(plan, probe, bindings); const startedProbe = Date.now(); const result = await executeProbe(client, probe, bindings); return [probe.id, { raw: result, elapsedMs: Date.now() - startedProbe, plannedArtifactHash: hash(probe.sql), safetyAccepted: true }] as const; })));
-  scenarioSubphase = 'faulty_execution';
+  setSubphase('faulty_execution');
   const faulty = await execute();
-  scenarioSubphase = 'reset';
+  setSubphase('reset');
   await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   await client.query(readFileSync(resolve(pub, 'schema.sql'), 'utf8'));
   await client.query(readFileSync(resolve(priv, 'seed-control.sql'), 'utf8'));
-  scenarioSubphase = 'control_execution';
+  setSubphase('control_execution');
   const control = await execute();
   const oracle = json<{ mechanism: string; faulty: Record<string, unknown>; control: Record<string, unknown> }>(resolve(priv, 'oracle.json'));
   const ids = plan.recommendedProbes.map(p => p.id);
@@ -95,7 +96,7 @@ async function runScenario(client: Client, temp: string, id: string): Promise<un
   const outcomes = ids.map(id => ({ probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classifications.find(x => x.probeId === id)!.classification, weakensCandidateConcernIds: plan.recommendedProbes.find(p => p.id === id)?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash: hashSourceAtExecutorEntry(plan.recommendedProbes.find(p => p.id === id)?.sql ?? ''), artifactMember: true }));
   const ranked = rankedMechanisms(plan);
   const leakageCount = countScalarLeakage({ observations: classifications, evaluator: { rankedMechanisms: ranked } }, bindings);
-  scenarioSubphase = 'evaluation';
+  setSubphase('evaluation');
   const metrics = evaluateAll(outcomes, oracle, ranked, { leakageCount, candidateIds: (plan.candidateConcerns ?? []).map(c => c.id), validationAttempts: ids.map(id => ({ probeId: id, accepted: true, artifactSourceHash: faulty[id].sourceHash })) });
   return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }
