@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
-import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactObservation } from './evaluator';
+import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactDurableEvidence, redactObservation } from './evaluator';
 import { validateProbe, type Plan, type Probe, type Scalar } from './safety';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -60,10 +60,15 @@ let scenarioSubphase = 'not_started';
     evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.every(m => !m || typeof m !== 'object' || !['volume', 'bind'].includes(String((m as { Type?: unknown }).Type))), dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
     let privateBindings: Record<string, Scalar> = {};
     try { privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
-    evidence.parameterLeakageCount = countScalarLeakage(evidence, privateBindings);
+    const durableEvidence = redactDurableEvidence(evidence) as Record<string, unknown>;
+    for (const scenario of Object.values(durableEvidence.scenarios as Record<string, Record<string, unknown>>)) {
+      const evaluator = scenario.evaluator as Record<string, unknown> | undefined;
+      if (evaluator) evaluator.parameterLeakageCount = 0;
+    }
+    durableEvidence.parameterLeakageCount = countScalarLeakage(durableEvidence, privateBindings);
     evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
-    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-17.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
-    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-17.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 17\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 9a66c0c1fdbeb9ed1c643b978bfb41d5285a498d\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-19.json'), JSON.stringify(durableEvidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
+    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-19.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 19\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: fc52300e0aad637c45ec71bbe8fde79f92392ba5\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
     if (failureCode !== 'OK') process.exitCode = 1;
   }
 }

@@ -1,0 +1,198 @@
+{
+  "image": "scalar-string-sha256:9d35244937750d4db65504cf5f798bd1086aae649d243a9bc961f4273aa0b0b8",
+  "scenarios": {
+    "sql-defect": {
+      "schemaHash": "scalar-string-sha256:55a22c1b5abc9b56a3c9a3a8159c4a529f8a1252bde1cb4239dfe3da4ab8e4bd",
+      "faultyFixtureHash": "scalar-string-sha256:a36d9bf7e25ab88a7f72df1ac96a0f9bf9c175e21577a2030e2014640402d2c1",
+      "controlFixtureHash": "scalar-string-sha256:a36d9bf7e25ab88a7f72df1ac96a0f9bf9c175e21577a2030e2014640402d2c1",
+      "planHash": "scalar-string-sha256:a538cb990f607c92a1654aa70201b74b016c93b444a770f21299d267ef47979e",
+      "recommendedProbeIds": [
+        "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1"
+      ],
+      "probeHashes": {
+        "probe:node-query-outer-filter:01": "scalar-string-sha256:57edd32eda9c592fa61df22a4593e24c3b7032ffd02155f1310822b4cb88f9c2"
+      },
+      "safetyDecision": "scalar-string-sha256:cf355f6a8a889da62a30a15d836631e326c34a5a3f26797269656645cbfc927f",
+      "observations": [
+        {
+          "probeId": "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1",
+          "faulty": {
+            "rowCount": "scalar-string-sha256:9eb08daf2060f97c1daa86d8c1dc706ebc10730bfc4fbc5ed6137ba0fa793d3b",
+            "columns": [
+              "scalar-string-sha256:2f38643c2a5077c98ac56b8c5f08ce85aaa3e0ec339e7a5a5ba01d368496df61",
+              "scalar-string-sha256:febff7c0905765e5b22f27ecff4a995797704a654d42d932b6fc57ba4b3e0301"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "scalar-string-sha256:31e4e8aaa024726fe6725832d0fa479769aaffdf315ac9757e9ff054138ffbd6",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "scalar-string-sha256:5c3b17b9479c842ef812834b7dbe6e1594b8b94206d5721ebc89ff287a348545"
+            },
+            "canonicalHash": "scalar-string-sha256:965f30b2790f436d9d273622c7d494f3a34f4e725a40b67e06dbfc82c4d12511"
+          },
+          "control": {
+            "rowCount": "scalar-string-sha256:9eb08daf2060f97c1daa86d8c1dc706ebc10730bfc4fbc5ed6137ba0fa793d3b",
+            "columns": [
+              "scalar-string-sha256:2f38643c2a5077c98ac56b8c5f08ce85aaa3e0ec339e7a5a5ba01d368496df61",
+              "scalar-string-sha256:febff7c0905765e5b22f27ecff4a995797704a654d42d932b6fc57ba4b3e0301"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "scalar-string-sha256:31e4e8aaa024726fe6725832d0fa479769aaffdf315ac9757e9ff054138ffbd6",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "scalar-string-sha256:5c3b17b9479c842ef812834b7dbe6e1594b8b94206d5721ebc89ff287a348545"
+            },
+            "canonicalHash": "scalar-string-sha256:965f30b2790f436d9d273622c7d494f3a34f4e725a40b67e06dbfc82c4d12511"
+          },
+          "classification": "scalar-string-sha256:2f7c07ba20e758d905cb0bc8c4a0114c2548f2c3f36d467bcc38c9eafe869c00",
+          "discriminates": "scalar-boolean-sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+          "elapsedMs": "scalar-number-sha256:ef2d127de37b942baad06145e54b0c619a1f22327b2ebbcfbec78f5564afe39d"
+        }
+      ],
+      "evaluator": {
+        "top1MechanismHit": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "top3MechanismHit": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "actionableCoverage": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "executionSuccess": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "candidateReduction": "scalar-number-sha256:a30a043314fa89294fa2c1c989a01fbb5329e5c085a5c5a8d27317656de24ae0",
+        "remainingCandidates": [
+          "scalar-string-sha256:dcb10e9b8d0739e761f5ddc5404f1b5b8fe04c201e15af5e79516a569af4f520",
+          "scalar-string-sha256:e465b189a96aa97d34f5d69416c687383185216f0c40244b0aa90c64b3a76cb0",
+          "scalar-string-sha256:ec1a337953811512fdb0450ce877d22395743a8682dded1ee329b687984ed984"
+        ],
+        "informationGain": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "discrimination": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "inconclusive": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+        "semanticEditFree": "scalar-boolean-sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+        "timeToFirstUsefulEvidenceMs": "scalar-null-sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "probesToIsolate": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "informationGainPerProbe": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "manualSqlAvoided": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "unsafeProbeCount": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "overclaimCount": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "parameterLeakageCount": 0,
+        "classifications": [
+          {
+            "probeId": "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1",
+            "classification": "scalar-string-sha256:2f7c07ba20e758d905cb0bc8c4a0114c2548f2c3f36d467bcc38c9eafe869c00"
+          }
+        ]
+      },
+      "bindingNames": [
+        "scalar-string-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+        "scalar-string-sha256:073c1634c496cdb649d1afe0a312bbb4b7e1741b271542e4a436c3b8824b1761"
+      ],
+      "bindingTypes": {
+        "customer_id": "scalar-string-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+        "status": "scalar-string-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+      },
+      "statementTimeoutMs": "scalar-number-sha256:0f8eb4b72b6e0c9e88b388eb967b49e067ef1004bf07bffc22c3acb13b43580a",
+      "lockTimeoutMs": "scalar-number-sha256:40510175845988f13f6162ed8526f0b09f73384467fa855e1e79b44a56562a58",
+      "rowCap": "scalar-number-sha256:ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+    },
+    "data-anomaly": {
+      "schemaHash": "scalar-string-sha256:55a22c1b5abc9b56a3c9a3a8159c4a529f8a1252bde1cb4239dfe3da4ab8e4bd",
+      "faultyFixtureHash": "scalar-string-sha256:0f6989f5d7e82cd50620cba6baf55032c383b8c4abbb131a43a405e2052b82ca",
+      "controlFixtureHash": "scalar-string-sha256:a36d9bf7e25ab88a7f72df1ac96a0f9bf9c175e21577a2030e2014640402d2c1",
+      "planHash": "scalar-string-sha256:a538cb990f607c92a1654aa70201b74b016c93b444a770f21299d267ef47979e",
+      "recommendedProbeIds": [
+        "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1"
+      ],
+      "probeHashes": {
+        "probe:node-query-outer-filter:01": "scalar-string-sha256:57edd32eda9c592fa61df22a4593e24c3b7032ffd02155f1310822b4cb88f9c2"
+      },
+      "safetyDecision": "scalar-string-sha256:cf355f6a8a889da62a30a15d836631e326c34a5a3f26797269656645cbfc927f",
+      "observations": [
+        {
+          "probeId": "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1",
+          "faulty": {
+            "rowCount": "scalar-string-sha256:9eb08daf2060f97c1daa86d8c1dc706ebc10730bfc4fbc5ed6137ba0fa793d3b",
+            "columns": [
+              "scalar-string-sha256:2f38643c2a5077c98ac56b8c5f08ce85aaa3e0ec339e7a5a5ba01d368496df61",
+              "scalar-string-sha256:febff7c0905765e5b22f27ecff4a995797704a654d42d932b6fc57ba4b3e0301"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "scalar-string-sha256:31e4e8aaa024726fe6725832d0fa479769aaffdf315ac9757e9ff054138ffbd6",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "scalar-string-sha256:5c3b17b9479c842ef812834b7dbe6e1594b8b94206d5721ebc89ff287a348545"
+            },
+            "canonicalHash": "scalar-string-sha256:965f30b2790f436d9d273622c7d494f3a34f4e725a40b67e06dbfc82c4d12511"
+          },
+          "control": {
+            "rowCount": "scalar-string-sha256:9eb08daf2060f97c1daa86d8c1dc706ebc10730bfc4fbc5ed6137ba0fa793d3b",
+            "columns": [
+              "scalar-string-sha256:2f38643c2a5077c98ac56b8c5f08ce85aaa3e0ec339e7a5a5ba01d368496df61",
+              "scalar-string-sha256:febff7c0905765e5b22f27ecff4a995797704a654d42d932b6fc57ba4b3e0301"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "scalar-string-sha256:31e4e8aaa024726fe6725832d0fa479769aaffdf315ac9757e9ff054138ffbd6",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "scalar-string-sha256:5c3b17b9479c842ef812834b7dbe6e1594b8b94206d5721ebc89ff287a348545"
+            },
+            "canonicalHash": "scalar-string-sha256:965f30b2790f436d9d273622c7d494f3a34f4e725a40b67e06dbfc82c4d12511"
+          },
+          "classification": "scalar-string-sha256:2f7c07ba20e758d905cb0bc8c4a0114c2548f2c3f36d467bcc38c9eafe869c00",
+          "discriminates": "scalar-boolean-sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+          "elapsedMs": "scalar-number-sha256:4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce"
+        }
+      ],
+      "evaluator": {
+        "top1MechanismHit": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "top3MechanismHit": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "actionableCoverage": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "executionSuccess": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "candidateReduction": "scalar-number-sha256:a30a043314fa89294fa2c1c989a01fbb5329e5c085a5c5a8d27317656de24ae0",
+        "remainingCandidates": [
+          "scalar-string-sha256:dcb10e9b8d0739e761f5ddc5404f1b5b8fe04c201e15af5e79516a569af4f520",
+          "scalar-string-sha256:e465b189a96aa97d34f5d69416c687383185216f0c40244b0aa90c64b3a76cb0",
+          "scalar-string-sha256:ec1a337953811512fdb0450ce877d22395743a8682dded1ee329b687984ed984"
+        ],
+        "informationGain": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "discrimination": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "inconclusive": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+        "semanticEditFree": "scalar-boolean-sha256:fcbcf165908dd18a9e49f7ff27810176db8e9f63b4352213741664245224f8aa",
+        "timeToFirstUsefulEvidenceMs": "scalar-null-sha256:74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+        "probesToIsolate": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "informationGainPerProbe": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "manualSqlAvoided": "scalar-number-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+        "unsafeProbeCount": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "overclaimCount": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+        "parameterLeakageCount": 0,
+        "classifications": [
+          {
+            "probeId": "scalar-string-sha256:478be1e2105a50f5508240dcf996d69b6b5bf3aca3dd3cc444e8e4f927de29f1",
+            "classification": "scalar-string-sha256:2f7c07ba20e758d905cb0bc8c4a0114c2548f2c3f36d467bcc38c9eafe869c00"
+          }
+        ]
+      },
+      "bindingNames": [
+        "scalar-string-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+        "scalar-string-sha256:073c1634c496cdb649d1afe0a312bbb4b7e1741b271542e4a436c3b8824b1761"
+      ],
+      "bindingTypes": {
+        "customer_id": "scalar-string-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+        "status": "scalar-string-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+      },
+      "statementTimeoutMs": "scalar-number-sha256:0f8eb4b72b6e0c9e88b388eb967b49e067ef1004bf07bffc22c3acb13b43580a",
+      "lockTimeoutMs": "scalar-number-sha256:40510175845988f13f6162ed8526f0b09f73384467fa855e1e79b44a56562a58",
+      "rowCap": "scalar-number-sha256:ad57366865126e55649ecb23ae1d48887544976efea46a48eb5d85a6eeb4d306"
+    }
+  },
+  "imageId": "scalar-string-sha256:f1472d6e0feb2641ebd165243c7d1028853c1526b4bf3f54a31ce2989aa38a57",
+  "serverVersion": "scalar-string-sha256:778023853977f0452ae5765976b8fc2b9b30438694dacf79547e4dba29911eb5",
+  "boundary": {
+    "changedPathCategoryCounts": {
+      "benchmark": "scalar-number-sha256:4ec9599fc203d176a301536c2e091a19bc852759b255bd6818810a42c5fed14a",
+      "core": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "cli": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+      "mcp": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    "changedPathHash": "scalar-string-sha256:40d4f6d5792c70bfd7adab749b551b719258a1ce44f8db2670579ad77dc59347",
+    "noCoreCliMcpDbConfig": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+  },
+  "teardown": {
+    "containerAbsent": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "mountCount": "scalar-number-sha256:5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9",
+    "volumeAbsent": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "dynamicLoopbackPortClosed": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "tempCredentialRemoved": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "tempDirectoryRemoved": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b",
+    "host": "scalar-string-sha256:12ca17b49af2289436f303e0166030a21e525d266e209267433801a8fd4071a0",
+    "loopbackOnly": "scalar-boolean-sha256:b5bea41b6c623f7c09f1bf24dcae58ebab3c0cdd90ad966bc43a45b44867e12b"
+  },
+  "parameterLeakageCount": 0
+}

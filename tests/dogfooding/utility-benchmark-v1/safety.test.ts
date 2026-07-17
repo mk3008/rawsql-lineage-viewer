@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactObservation } from './evaluator';
+import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactDurableEvidence, redactObservation } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -19,12 +19,17 @@ describe('benchmark probe safety', () => {
     expect(durable).not.toContain('SENTINEL_PRIVATE');
     expect(durable).not.toContain('"count":7');
     expect(durable).toContain('rowCount');
+    expect(durable).not.toMatch(/"rowCount":\s*\d/);
   });
   it('scans string, number, boolean, and null leaves without emitting values', () => {
     expect(countScalarLeakage({ a: 'secret', b: 42, c: true, d: null }, { s: 'secret', n: 42, b: true, z: null })).toBe(4);
     const durable = JSON.stringify({ leakageCount: 4 });
     expect(durable).not.toContain('secret');
     expect(durable).not.toContain('42');
+  });
+  it('does not strictly collide after durable scalar namespacing', () => {
+    const durable = redactDurableEvidence({ string: 'secret', number: 1, boolean: true, null: null });
+    expect(countScalarLeakage(durable, { s: 'secret', n: 1, b: true, z: null })).toBe(0);
   });
   it('derives actionable coverage and mechanism hits from every outcome', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });

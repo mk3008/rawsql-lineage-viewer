@@ -7,7 +7,7 @@ export type ProbeOutcome = { probeId: string; faulty: Observation; control: Obse
 function hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
 export function redactObservation(observation: Observation): Record<string, unknown> {
   const columns = observation.rows.length ? Object.keys(observation.rows[0]) : [];
-  return { rowCount: observation.rows.length, columns, columnTypes: Object.fromEntries(columns.map(column => [column, typeof observation.rows[0][column]])), canonicalHash: hash(JSON.stringify(observation.rows)) };
+  return { rowCount: `row-count-sha256:${hash(String(observation.rows.length))}`, columns: columns.map(column => `column-sha256:${hash(column)}`), columnTypes: Object.fromEntries(columns.map(column => [`column-sha256:${hash(column)}`, `type-sha256:${hash(typeof observation.rows[0][column])}`])), canonicalHash: `observation-sha256:${hash(JSON.stringify(observation.rows))}` };
 }
 export function rankedMechanisms(plan: Plan): string[] {
   const seen = new Set<string>(); const result: string[] = [];
@@ -48,4 +48,12 @@ export function countScalarLeakage(durable: unknown, privateBindings: Record<str
   const visit = (value: unknown): void => { if (value === null || ['string', 'number', 'boolean'].includes(typeof value)) leaves.push(value); else if (Array.isArray(value)) value.forEach(visit); else if (typeof value === 'object' && value) Object.values(value).forEach(visit); };
   visit(durable);
   return Object.values(privateBindings).filter(binding => leaves.some(leaf => typeof leaf === typeof binding && leaf === binding)).length;
+}
+export function redactDurableEvidence(value: unknown): unknown {
+  if (value === null) return 'scalar-null-sha256:' + hash('null');
+  if (typeof value === 'string') return 'scalar-string-sha256:' + hash(value);
+  if (typeof value === 'number' || typeof value === 'boolean') return `scalar-${typeof value}-sha256:` + hash(String(value));
+  if (Array.isArray(value)) return value.map(redactDurableEvidence);
+  if (typeof value === 'object' && value) return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactDurableEvidence(child)]));
+  return value;
 }
