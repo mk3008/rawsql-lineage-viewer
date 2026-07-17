@@ -1,0 +1,43 @@
+report_version: 1
+task_id: utility-benchmark-v1
+attempt: 12
+worker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2
+parent_thread_id: 019f6ad2-9019-7473-98a1-8b09959d90a6
+status: not_done
+base_state:
+  commit: 9a34b0988138b6bcee052c51eec86ee981162323
+changed_paths:
+  - tests/dogfooding/utility-benchmark-v1/evaluator.ts
+  - tests/dogfooding/utility-benchmark-v1/run.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.test.ts
+acceptance:
+  - criterion: bounded finalization observability and derived boundary flags
+    status: done
+    evidence: tests/dogfooding/utility-benchmark-v1/run.ts
+  - criterion: complete scalar leakage scan
+    status: done
+    evidence: tests/dogfooding/utility-benchmark-v1/evaluator.ts
+  - criterion: Top3-only, miss, and SHA tests
+    status: done
+    evidence: tests/dogfooding/utility-benchmark-v1/safety.test.ts
+  - criterion: isolated runner execution and durable evidence
+    status: not_done
+    evidence: runner invocation produced no durable evidence in this environment
+verification:
+  - command: npx vitest run tests/dogfooding/utility-benchmark-v1
+    result: passed
+  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts
+    result: no_durable_output_observed
+  - command: git diff --check
+    result: passed
+human_or_external_evidence:
+  - item: isolated PostgreSQL execution
+    status: UNCONFIRMED
+    reason: no evidence artifact was produced
+stop_condition: runner evidence unavailable; no success claim made
+knowledge_candidates:
+  durable_decisions: []
+  operational_rules: []
+  task_evidence: []
+recommended_next: correction

@@ -1,7 +1,9 @@
 import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, ParenSource, SimpleSelectQuery, SqlParser, SubQuerySource, TableSource, UpdateQuery } from 'rawsql-ts';
 
-export type Probe = { id: string; artifactKind?: string; sql: string; parameters: Array<{ name: string; status: string }>; staticSafetyEvidence: { statementClassification: string; confidence: string; version: number } };
-export type Plan = { recommendedProbes: Probe[]; unresolvedParameters: Array<{ name: string }> };
+export type CandidateConcern = { id: string; mechanism?: string };
+export type EvidenceChecklistItem = { kind: string; mechanism?: string; candidateConcernIds?: string[]; condition?: string };
+export type Probe = { id: string; artifactKind?: string; sql: string; parameters: Array<{ name: string; status: string }>; staticSafetyEvidence: { statementClassification: string; confidence: string; version: number }; interpretation?: { supportsCandidateConcernIds?: string[]; weakensCandidateConcernIds?: string[]; observationRules?: unknown[] } };
+export type Plan = { recommendedProbes: Probe[]; unresolvedParameters: Array<{ name: string }>; candidateConcerns?: CandidateConcern[]; nextEvidenceChecklist?: EvidenceChecklistItem[]; sourceSql?: string };
 export type Scalar = string | number | boolean | null;
 
 function supported(q: unknown): boolean {
@@ -29,4 +31,3 @@ export function validateProbe(plan: Plan, probe: Probe, bindings: Record<string,
   const names = [...probe.sql.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)\b/g)].map(m => m[1]);
   for (const name of names) if (!probe.parameters.some(p => p.name === name) || !Object.hasOwn(bindings, name)) throw new Error('BINDING_MISMATCH');
 }
-

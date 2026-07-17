@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { evaluateAll, redactObservation } from './evaluator';
+import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactObservation } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -20,16 +20,36 @@ describe('benchmark probe safety', () => {
     expect(durable).not.toContain('"count":7');
     expect(durable).toContain('rowCount');
   });
+  it('scans string, number, boolean, and null leaves without emitting values', () => {
+    expect(countScalarLeakage({ a: 'secret', b: 42, c: true, d: null }, { s: 'secret', n: 42, b: true, z: null })).toBe(4);
+    const durable = JSON.stringify({ leakageCount: 4 });
+    expect(durable).not.toContain('secret');
+    expect(durable).not.toContain('42');
+  });
   it('derives actionable coverage and mechanism hits from every outcome', () => {
-    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12 }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });
     expect(result).toMatchObject({ top1MechanismHit: 1, top3MechanismHit: 1, actionableCoverage: 1, timeToFirstUsefulEvidenceMs: 12, overclaimCount: 0 });
   });
   it('classifies a miss as inconclusive and reports failed safety/hash evidence', () => {
-    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [{ x: 1 }] }, control: { rows: [] }, elapsedMs: 3, safetyAccepted: false, executedArtifactHash: 'a', plannedArtifactHash: 'b' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m2'], { leakageCount: 2 });
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [{ x: 1 }] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive', artifactSourceHash: 'a', plannedSourceHash: 'b' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m2'], { leakageCount: 2, validationAttempts: [{ probeId: 'p1', accepted: false }], candidateIds: ['c1'] });
     expect(result).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0, actionableCoverage: 0, executionSuccess: 0, inconclusive: true, semanticEditFree: false, unsafeProbeCount: 1, parameterLeakageCount: 2, overclaimCount: 0 });
   });
   it('rejects unsupported emitted classifications as overclaims', () => {
-    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, safetyAccepted: true, executedArtifactHash: 'a', plannedArtifactHash: 'a', classification: 'prove' as never }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, artifactSourceHash: 'a', plannedSourceHash: 'a', classification: 'prove' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
     expect(result).toMatchObject({ overclaimCount: 1, semanticEditFree: true });
+  });
+  it('derives ranked mechanisms from checklist conditions, not concern ids', () => {
+    expect(rankedMechanisms({ recommendedProbes: [], unresolvedParameters: [], candidateConcerns: [{ id: 'c1' }, { id: 'c2' }], nextEvidenceChecklist: [{ kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c1'] }, { kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c2'] }, { kind: 'condition', mechanism: 'm2', candidateConcernIds: ['c2'] }] })).toEqual(['m1', 'm2']);
+  });
+  it('weakens only linked candidates and leaves inconclusive unchanged', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, classification: 'supports', supportsCandidateConcernIds: ['c1'] }, { probeId: 'p2', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 2, classification: 'weakens', weakensCandidateConcernIds: ['c2'] }, { probeId: 'p3', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { candidateIds: ['c1', 'c2', 'c3'] });
+    expect(result.remainingCandidates).toEqual(['c1', 'c3']);
+    expect(result.candidateReduction).toBeCloseTo(1 / 3);
+  });
+  it('distinguishes Top3-only and mechanism misses, and hashes source with SHA-256', () => {
+    const oracle = { mechanism: 'm3', faulty: {}, control: {} };
+    expect(evaluateAll([], oracle, ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 1 });
+    expect(evaluateAll([], oracle, ['m1', 'm2', 'm4'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0 });
+    expect(hashSourceAtExecutorEntry('SELECT 1')).toMatch(/^[0-9a-f]{64}$/);
   });
 });
