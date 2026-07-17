@@ -222,7 +222,7 @@ export interface InvestigationPlanV1 {
   /** The submitted statement, preserved and labeled without rewriting or execution. */
   originalQuery: SqlArtifactV1<'original_query'>;
   /** Parser/lineage-backed prerequisites only; this field never contains probe SQL or observations. */
-  probePrerequisiteFacts: ProbePrerequisiteFactsV1;
+  probePrerequisiteFacts?: ProbePrerequisiteFactsV1;
   parameters: InvestigationParameterV1[];
   recommendedProbes: ProbeSpecV1[];
   target: InvestigationTargetV1;

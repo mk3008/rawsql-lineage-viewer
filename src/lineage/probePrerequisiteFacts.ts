@@ -26,6 +26,7 @@ export type PrerequisiteIssueCodeV1 =
   | 'group_ordinal_unresolved'
   | 'observation_prerequisite_missing'
   | 'source_provenance_unreconstructable'
+  | 'target_scope_unavailable'
   | 'wildcard_reference_ambiguous';
 
 export interface ProbePrerequisiteIssueV1 {
@@ -45,12 +46,15 @@ export interface ProbePrerequisiteReferenceV1 {
 }
 
 export interface ProbePrerequisiteSourceV1 {
+  directness: 'direct' | 'internal' | 'unknown';
   id: string;
   kind: 'cte' | 'derived' | 'physical_table' | 'unknown';
   nodeId: string;
+  ownerNodeId?: string;
+  ownerScopeId?: string;
   provenanceIds: string[];
   referenceIds: string[];
-  roles: Array<'aggregate_input' | 'grouping_key' | 'query_source'>;
+  roles: Array<'aggregate_input' | 'grouping_key' | 'internal_source' | 'query_source'>;
   scopeIds: string[];
   status: 'resolved' | 'ambiguous';
 }
@@ -116,6 +120,7 @@ export interface ProbePrerequisiteFactsV1 {
   provenance: Array<{ id: string; kind: 'lineage_node' | 'lineage_scope' | 'parameter_definition' | 'parser_ast' | 'schema_facts'; sourceId: string }>;
   references: ProbePrerequisiteReferenceV1[];
   sources: ProbePrerequisiteSourceV1[];
+  target: { columnName: string; nodeId: string; scopeId?: string; status: 'resolved' | 'unsupported' };
   version: 1;
 }
 
@@ -129,10 +134,9 @@ export function buildProbePrerequisiteFactsV1(input: {
   sql: string;
   target: InvestigationTargetV1;
 }): ProbePrerequisiteFactsV1 {
-  const statement = SqlParser.parse(input.sql);
-  const query = unwrapSelect(statement);
   const ownerNode = input.lineage.nodes.find((node) => node.id === input.target.nodeId);
   const ownerScope = input.lineage.scopes.find((scope) => scope.nodeId === input.target.nodeId && scope.kind !== 'set_operation');
+  const query = selectTargetQuery(input.sql, ownerNode);
   const provenance = new Map<string, ProbePrerequisiteFactsV1['provenance'][number]>();
   addProvenance(provenance, 'parser_ast', 'submitted_statement');
   if (ownerNode) addProvenance(provenance, 'lineage_node', ownerNode.id);
@@ -151,10 +155,11 @@ export function buildProbePrerequisiteFactsV1(input: {
     addProvenance(provenance, 'lineage_node', reference.nodeId);
     if (reference.scopeId) addProvenance(provenance, 'lineage_scope', reference.scopeId);
   }
-  const sources = collectSources(input.lineage, references, provenance);
+  const sources = collectSources(input.lineage, references, provenance, input.target.nodeId);
   const groupingKeys = query ? collectGroupingKeys(query, input, ownerScope?.id, references, sources) : [];
   const aggregates = query ? collectAggregates(query, input, ownerScope?.id, references, sources, groupingKeys) : [];
   const issues = collectIssues(aggregates, groupingKeys, sources);
+  if (!query) issues.push({ code: 'target_scope_unavailable', factIds: [], message: issueMessage('target_scope_unavailable'), status: 'unsupported' });
   const observations = observationContracts(aggregates, groupingKeys, sources, issues, input.candidateConcernIds ?? []);
   applySourceRoles(sources, aggregates, groupingKeys);
   return {
@@ -167,6 +172,7 @@ export function buildProbePrerequisiteFactsV1(input: {
     provenance: [...provenance.values()].sort((a, b) => a.id.localeCompare(b.id)),
     references,
     sources: sortById(sources.map((source) => ({ ...source, provenanceIds: sortedUnique(source.provenanceIds), referenceIds: sortedUnique(source.referenceIds), roles: sortedUnique(source.roles), scopeIds: sortedUnique(source.scopeIds) }))),
+    target: { columnName: input.target.columnName, nodeId: input.target.nodeId, ...(ownerScope ? { scopeId: ownerScope.id } : {}), status: query ? 'resolved' : 'unsupported' },
     version: 1,
   };
 }
@@ -176,6 +182,13 @@ function unwrapSelect(value: unknown): SimpleSelectQuery | undefined {
   if (value instanceof BinarySelectQuery) return undefined;
   const query = (value as { query?: unknown })?.query;
   return query instanceof SimpleSelectQuery ? query : undefined;
+}
+
+function selectTargetQuery(sql: string, ownerNode: LineageModel['nodes'][number] | undefined): SimpleSelectQuery | undefined {
+  if (!ownerNode) return undefined;
+  const targetSql = ownerNode.id === 'main_output' ? sql : ownerNode.querySql;
+  if (!targetSql) return undefined;
+  try { return unwrapSelect(SqlParser.parse(targetSql)); } catch { return undefined; }
 }
 
 function collectReferences(lineage: LineageModel): ProbePrerequisiteReferenceV1[] {
@@ -203,22 +216,32 @@ function collectReferences(lineage: LineageModel): ProbePrerequisiteReferenceV1[
   }));
 }
 
-function collectSources(lineage: LineageModel, references: ProbePrerequisiteReferenceV1[], provenance: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>): ProbePrerequisiteSourceV1[] {
+function collectSources(lineage: LineageModel, references: ProbePrerequisiteReferenceV1[], provenance: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>, selectedTargetNodeId: string): ProbePrerequisiteSourceV1[] {
   return [...lineage.nodes]
-    .filter((node) => node.type !== 'output' && node.type !== 'parameter_table' && node.type !== 'scalar_subquery')
+    .filter((node) => node.id !== selectedTargetNodeId && node.type !== 'output' && node.type !== 'parameter_table' && node.type !== 'scalar_subquery')
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((node, index) => {
       addProvenance(provenance, 'lineage_node', node.id);
       for (const scopeId of node.dependencyProfile?.scopeIds ?? []) addProvenance(provenance, 'lineage_scope', scopeId);
+      const ownerNodeIds = sortedUnique(lineage.edges.filter((edge) => edge.source === node.id).map((edge) => edge.target));
+      const ownerNodeId = ownerNodeIds.length === 1 ? ownerNodeIds[0] : undefined;
+      const ownerScopes = ownerNodeId ? lineage.scopes.filter((scope) => scope.nodeId === ownerNodeId && scope.kind !== 'set_operation') : [];
+      const ownerScopeId = ownerScopes.length === 1 ? ownerScopes[0].id : undefined;
+      if (ownerNodeId) addProvenance(provenance, 'lineage_node', ownerNodeId);
+      if (ownerScopeId) addProvenance(provenance, 'lineage_scope', ownerScopeId);
+      const directness = ownerNodeId === selectedTargetNodeId ? 'direct' as const : ownerNodeId ? 'internal' as const : 'unknown' as const;
       return {
+        directness,
         id: `source:${String(index + 1).padStart(3, '0')}`,
         kind: sourceKind(node.type),
         nodeId: node.id,
-        provenanceIds: sortedUnique([`lineage-node:${node.id}`, ...(node.dependencyProfile?.scopeIds ?? []).map((id) => `lineage-scope:${id}`)]),
+        ...(ownerNodeId ? { ownerNodeId } : {}),
+        ...(ownerScopeId ? { ownerScopeId } : {}),
+        provenanceIds: sortedUnique([`lineage-node:${node.id}`, ...(node.dependencyProfile?.scopeIds ?? []).map((id) => `lineage-scope:${id}`), ...(ownerScopeId ? [`lineage-scope:${ownerScopeId}`] : [])]),
         referenceIds: references.filter((reference) => reference.nodeId === node.id).map((reference) => reference.id),
-        roles: ['query_source'] as Array<'aggregate_input' | 'grouping_key' | 'query_source'>,
-        scopeIds: [...(node.dependencyProfile?.scopeIds ?? [])],
-        status: node.type === 'table' || node.type === 'cte' || node.type === 'derived' ? 'resolved' as const : 'ambiguous' as const,
+        roles: [directness === 'direct' ? 'query_source' : 'internal_source'] as Array<'aggregate_input' | 'grouping_key' | 'internal_source' | 'query_source'>,
+        scopeIds: sortedUnique([...(node.dependencyProfile?.scopeIds ?? []), ...(ownerScopeId ? [ownerScopeId] : [])]),
+        status: directness !== 'unknown' && (node.type === 'table' || node.type === 'cte' || node.type === 'derived') ? 'resolved' as const : 'ambiguous' as const,
       };
     });
 }
@@ -286,7 +309,8 @@ function observationContracts(aggregates: AggregateOperationFactV1[], groupingKe
   const contracts: ProbeObservationContractV1[] = [];
   const shared = { assumptions: ['The external evaluator observes the same query scope and source snapshot described by these static facts.'], concernIds: sortedUnique(candidateConcernIds), doesNotProve: ['A matching observation does not identify a root cause or prove that the original query is incorrect.'], inconclusiveWhen: ['Required facts are ambiguous or unsupported.', 'The observed shape does not match expected columns.', 'The observation snapshot is not comparable to the original incident.'] };
   for (const source of sources) {
-    contracts.push({ ...shared, aggregateFactIds: [], blockedReasons: source.status === 'resolved' ? [] : ['source_provenance_unreconstructable'], expectedColumns: [{ name: 'source_row_count', semanticType: 'count' }], groupingKeyIds: [], id: `observation:source-row-count:${source.id}`, kind: 'source_row_count', sourceIds: [source.id], status: source.status === 'resolved' ? 'available' : 'blocked' });
+    const available = source.status === 'resolved' && source.directness === 'direct';
+    contracts.push({ ...shared, aggregateFactIds: [], blockedReasons: available ? [] : [source.status === 'resolved' ? 'observation_prerequisite_missing' : 'source_provenance_unreconstructable'], expectedColumns: [{ name: 'source_row_count', semanticType: 'count' }], groupingKeyIds: [], id: `observation:source-row-count:${source.id}`, kind: 'source_row_count', sourceIds: [source.id], status: available ? 'available' : 'blocked' });
   }
   const groupAvailable = groupingKeys.length > 0 && groupingKeys.every((fact) => fact.status === 'available' && fact.referenceIds.length > 0 && fact.sourceIds.length > 0);
   const groupReasons = observationBlockedReasons(groupingKeys.map((fact) => fact.id), issues);
@@ -357,4 +381,4 @@ function sourceKind(type: LineageNodeType): ProbePrerequisiteSourceV1['kind'] { 
 function addProvenance(map: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>, kind: ProbePrerequisiteFactsV1['provenance'][number]['kind'], sourceId: string): void { const id = `${kind.replace(/_/g, '-')}:${sourceId}`; map.set(id, { id, kind, sourceId }); }
 function sortedUnique<T extends string>(values: T[]): T[] { return [...new Set(values)].sort((a, b) => a.localeCompare(b)); }
 function sortById<T extends { id: string }>(values: T[], _unused?: unknown): T[] { return [...values].sort((a, b) => a.id.localeCompare(b.id)); }
-function issueMessage(code: PrerequisiteIssueCodeV1): string { return ({ aggregate_input_ambiguous: 'Aggregate input references are ambiguous.', aggregate_input_multi_relation: 'Aggregate input spans multiple relations.', aggregate_input_scalar_subquery: 'Scalar-subquery aggregate input is not reconstructable as one source observation.', aggregate_operation_unsupported: 'Aggregate operation is unsupported.', aggregate_window_unsupported: 'Window aggregate observations are unsupported in version 1.', dialect_aggregate_unsupported: 'Dialect-specific aggregate semantics are unsupported.', group_alias_unresolved: 'GROUP BY alias cannot be resolved uniquely.', group_ordinal_unresolved: 'GROUP BY ordinal does not resolve to one select item.', observation_prerequisite_missing: 'A required static observation prerequisite is missing.', source_provenance_unreconstructable: 'Source provenance cannot be reconstructed.', wildcard_reference_ambiguous: 'Wildcard or unresolved reference is ambiguous.' } satisfies Record<PrerequisiteIssueCodeV1, string>)[code]; }
+function issueMessage(code: PrerequisiteIssueCodeV1): string { return ({ aggregate_input_ambiguous: 'Aggregate input references are ambiguous.', aggregate_input_multi_relation: 'Aggregate input spans multiple relations.', aggregate_input_scalar_subquery: 'Scalar-subquery aggregate input is not reconstructable as one source observation.', aggregate_operation_unsupported: 'Aggregate operation is unsupported.', aggregate_window_unsupported: 'Window aggregate observations are unsupported in version 1.', dialect_aggregate_unsupported: 'Dialect-specific aggregate semantics are unsupported.', group_alias_unresolved: 'GROUP BY alias cannot be resolved uniquely.', group_ordinal_unresolved: 'GROUP BY ordinal does not resolve to one select item.', observation_prerequisite_missing: 'A required static observation prerequisite is missing.', source_provenance_unreconstructable: 'Source provenance cannot be reconstructed.', target_scope_unavailable: 'The selected target query scope cannot be associated with parser-backed SQL.', wildcard_reference_ambiguous: 'Wildcard or unresolved reference is ambiguous.' } satisfies Record<PrerequisiteIssueCodeV1, string>)[code]; }

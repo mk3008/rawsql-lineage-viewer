@@ -19,6 +19,16 @@ node/scope, and output target identity. Grouping facts distinguish columns,
 aliases, ordinals, expressions, and multiple keys. Sources distinguish physical
 tables, CTEs, derived relations, and unknown provenance.
 
+Facts come from the parser-backed query owned by the selected target node,
+including CTE and derived targets. The root statement is used only for the root
+output. If an exact target-query association is unavailable, target identity is
+preserved with `unsupported` status and `target_scope_unavailable`; root facts
+are never relabeled as nested facts.
+
+Each source exposes its owner node/scope and directness relative to the selected
+target. Only proven direct sources carry `query_source`; nested implementation
+sources remain visible as `internal_source`.
+
 Known fields survive an ambiguity or unsupported result. The implementation
 does not choose the first aggregate, first grouping key, first source leaf, or a
 name-based match. Unresolved references, invalid aliases/ordinals, multiple
@@ -40,6 +50,9 @@ inconclusive conditions, and structured blocked reasons. Source row counts are
 represented as one contract per exact source. Aggregate-input observations are
 represented as one contract per exact aggregate fact and are blocked for
 `COUNT(*)`, unresolved inputs, or inputs without exactly one resolved source.
+Source-row-count availability additionally requires a source proven direct to
+the selected target. Internal CTE, derived, or scalar-subquery sources remain
+blocked for that target.
 
 An `available` observation contract means only that its static prerequisites
 are represented. It does not authorize execution, prove a root cause, show

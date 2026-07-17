@@ -69,6 +69,68 @@ describe('Probe Prerequisite Facts V1', () => {
     expect(facts('SELECT SUM(amount) AS total FROM (SELECT amount FROM orders) x').sources.map((source) => source.kind)).toEqual(expect.arrayContaining(['derived', 'physical_table']));
   });
 
+  it('projects aggregate and grouping facts from the exact CTE target scope', () => {
+    const sql = 'WITH x AS (SELECT customer_id, SUM(amount) AS subtotal FROM orders GROUP BY customer_id) SELECT SUM(subtotal) AS grand_total FROM x';
+    const result = createInvestigationPlan({ sql, target: { nodeId: 'cte_x', columnName: 'subtotal' } }).probePrerequisiteFacts!;
+    expect(result.target).toEqual({ columnName: 'subtotal', nodeId: 'cte_x', scopeId: 'scope_cte_x', status: 'resolved' });
+    expect(result.aggregates).toHaveLength(1);
+    expect(result.aggregates[0]).toMatchObject({ operation: 'sum', ownerNodeId: 'cte_x', target: { columnName: 'subtotal', nodeId: 'cte_x', outputIndex: 1 } });
+    expect(result.groupingKeys).toHaveLength(1);
+    expect(result.groupingKeys[0]).toMatchObject({ ownerNodeId: 'cte_x', status: 'available' });
+    expect(result.sources).toEqual([expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', ownerNodeId: 'cte_x', ownerScopeId: 'scope_cte_x', roles: expect.arrayContaining(['query_source']) })]);
+  });
+
+  it('projects a derived target from its own query and not the outer aggregate', () => {
+    const sql = 'SELECT SUM(x.amount) AS total FROM (SELECT amount FROM orders) x';
+    const result = createInvestigationPlan({ sql, target: { nodeId: 'derived_x_1', columnName: 'amount' } }).probePrerequisiteFacts!;
+    expect(result.target).toMatchObject({ nodeId: 'derived_x_1', status: 'resolved' });
+    expect(result.aggregates).toEqual([]);
+    expect(result.sources).toEqual([expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', ownerNodeId: 'derived_x_1', roles: ['query_source'] })]);
+  });
+
+  it('marks CTE and derived inputs direct while keeping their physical inputs internal for the root target', () => {
+    const cte = facts('WITH x AS (SELECT amount FROM orders) SELECT SUM(amount) AS total FROM x');
+    expect(cte.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', kind: 'cte', nodeId: 'cte_x', ownerNodeId: 'main_output', roles: expect.arrayContaining(['query_source']) }),
+      expect.objectContaining({ directness: 'internal', kind: 'physical_table', nodeId: 'table_orders', ownerNodeId: 'cte_x', roles: ['internal_source'] }),
+    ]);
+    const derived = facts('SELECT SUM(x.amount) AS total FROM (SELECT amount FROM orders) x');
+    expect(derived.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', kind: 'derived', nodeId: 'derived_x_1', ownerNodeId: 'main_output', roles: expect.arrayContaining(['query_source']) }),
+      expect.objectContaining({ directness: 'internal', kind: 'physical_table', nodeId: 'table_orders', ownerNodeId: 'derived_x_1', roles: ['internal_source'] }),
+    ]);
+    for (const result of [cte, derived]) {
+      const directIds = new Set(result.sources.filter((source) => source.directness === 'direct').map((source) => source.id));
+      expect(result.observations.filter((item) => item.kind === 'source_row_count' && item.status === 'available').every((item) => item.sourceIds.every((id) => directIds.has(id)))).toBe(true);
+    }
+  });
+
+  it('distinguishes direct and nested scalar sources and blocks nested row counts', () => {
+    const result = facts('SELECT SUM((SELECT MAX(r.rate) FROM rates r)) AS total FROM orders o');
+    expect(result.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', ownerNodeId: 'main_output', roles: ['query_source'] }),
+      expect.objectContaining({ directness: 'internal', nodeId: 'table_rates', ownerNodeId: 'scalar_subquery_total_1', ownerScopeId: 'scope_scalar_subquery_total_1', roles: ['internal_source'] }),
+    ]);
+    const rowCounts = result.observations.filter((item) => item.kind === 'source_row_count');
+    expect(rowCounts).toEqual([
+      expect.objectContaining({ sourceIds: ['source:001'], status: 'available' }),
+      expect.objectContaining({ blockedReasons: ['observation_prerequisite_missing'], sourceIds: ['source:002'], status: 'blocked' }),
+    ]);
+  });
+
+  it('fails closed when a target has no parser-backed query association', () => {
+    const sql = 'SELECT SUM(amount) AS total FROM orders';
+    const lineage = analyzeSql(sql, { analysisMode: 'original', optimizeConditions: false }).lineage;
+    const result = buildProbePrerequisiteFactsV1({
+      lineage: { ...lineage, nodes: lineage.nodes.map((node) => node.id === 'main_output' ? { ...node, id: 'detached_target', querySql: undefined } : node), scopes: lineage.scopes.map((scope) => scope.nodeId === 'main_output' ? { ...scope, nodeId: 'detached_target' } : scope) },
+      parameters: { definitions: [] }, sql, target: { columnName: 'total', nodeId: 'detached_target', symptom: 'logic_review' },
+    });
+    expect(result.target).toMatchObject({ nodeId: 'detached_target', status: 'unsupported' });
+    expect(result.aggregates).toEqual([]);
+    expect(result.groupingKeys).toEqual([]);
+    expect(result.issues).toContainEqual(expect.objectContaining({ code: 'target_scope_unavailable', status: 'unsupported' }));
+  });
+
   it('preserves ambiguous JOIN input facts instead of choosing a source', () => {
     const result = facts('SELECT SUM(amount) AS total FROM orders o JOIN refunds r ON r.order_id = o.id');
     expect(result.aggregates[0]).toMatchObject({ operation: 'sum', status: 'ambiguous' });
@@ -119,7 +181,7 @@ describe('Probe Prerequisite Facts V1', () => {
       sql: 'SELECT o.customer_id AS cid, SUM(o.amount) + COUNT(r.id) AS total FROM orders o JOIN refunds r ON r.order_id = o.id WHERE o.status = :status GROUP BY cid',
       target: { columnName: 'total', nodeId: 'main_output' },
     });
-    const result = plan.probePrerequisiteFacts;
+    const result = plan.probePrerequisiteFacts!;
     const represented = new Set<string>([
       ...result.aggregates.map((item) => item.id), ...result.groupingKeys.map((item) => item.id), ...result.observations.map((item) => item.id),
       ...result.references.map((item) => item.id), ...result.sources.map((item) => item.id), ...result.provenance.map((item) => item.id),
