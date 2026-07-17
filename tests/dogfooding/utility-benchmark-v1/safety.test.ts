@@ -33,6 +33,10 @@ describe('benchmark probe safety', () => {
     expect(countScalarLeakage(namespacePublicMetrics({ number: 7 }), { n: 7 })).toBe(0);
     expect(countScalarLeakage({ number: 7 }, { n: 7 })).toBe(1);
   });
+  it('keeps finalization code readable and container status namespaced', () => {
+    const durable = namespacePublicMetrics({ finalization: { code: 'OK', containerAbsent: true } }) as { finalization: { code: string; containerAbsent: string } };
+    expect(durable.finalization).toEqual({ code: 'OK', containerAbsent: 'metric-boolean:true' });
+  });
   it('derives actionable coverage and mechanism hits from every outcome', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });
     expect(result).toMatchObject({ top1MechanismHit: 1, top3MechanismHit: 1, actionableCoverage: 1, timeToFirstUsefulEvidenceMs: 12, overclaimCount: 0 });
