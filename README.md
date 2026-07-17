@@ -6,6 +6,10 @@ Paste SQL and see the lineage graph in the browser.
 
 This is a static TypeScript web app intended for GitHub Pages. SQL is parsed locally with `rawsql-ts`; no backend, database, or upload step is required for the MVP.
 
+The normative [Product Boundary Contract](docs/product-boundary.md) defines how
+Core, Viewer, CLI, and MCP support static investigation and where responsibility
+passes to an external investigator.
+
 ## MVP Scope
 
 - Load a sample SQL query on first visit.
