@@ -1,2 +1,3 @@
 private/
+scenarios/*/private/
 evidence-*.json
