@@ -105,6 +105,30 @@ describe('Probe Prerequisite Facts V1', () => {
     }
   });
 
+  it('excludes sibling and unused source branches from a selected target slice', () => {
+    const sql = 'WITH x AS (SELECT amount FROM orders), y AS (SELECT fee FROM fees) SELECT SUM(fee) AS total FROM y';
+    const result = createInvestigationPlan({ sql, target: { nodeId: 'cte_x', columnName: 'amount' } }).probePrerequisiteFacts!;
+    expect(result.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', ownerNodeId: 'cte_x', roles: ['query_source'] }),
+    ]);
+    expect(result.sources.map((source) => source.nodeId)).not.toEqual(expect.arrayContaining(['cte_y', 'table_fees']));
+    expect(result.references.map((reference) => reference.nodeId)).not.toEqual(expect.arrayContaining(['cte_y', 'table_fees']));
+    expect(result.observations.filter((item) => item.kind === 'source_row_count')).toEqual([
+      expect.objectContaining({ sourceIds: ['source:001'], status: 'available' }),
+    ]);
+  });
+
+  it('excludes an unused CTE with derived and physical descendants', () => {
+    const sql = 'WITH unused AS (SELECT d.fee FROM (SELECT fee FROM fees) d) SELECT SUM(amount) AS total FROM orders';
+    const result = facts(sql);
+    expect(result.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', ownerNodeId: 'main_output' }),
+    ]);
+    expect(result.sources.map((source) => source.nodeId)).not.toEqual(expect.arrayContaining(['cte_unused', 'table_fees']));
+    expect(result.references.map((reference) => reference.nodeId)).not.toEqual(expect.arrayContaining(['cte_unused', 'table_fees']));
+    expect(result.observations.filter((item) => item.kind === 'source_row_count')).toHaveLength(1);
+  });
+
   it('distinguishes direct and nested scalar sources and blocks nested row counts', () => {
     const result = facts('SELECT SUM((SELECT MAX(r.rate) FROM rates r)) AS total FROM orders o');
     expect(result.sources).toEqual([

@@ -28,6 +28,10 @@ are never relabeled as nested facts.
 Each source exposes its owner node/scope and directness relative to the selected
 target. Only proven direct sources carry `query_source`; nested implementation
 sources remain visible as `internal_source`.
+The source collection is the target-reachable dependency slice derived from
+explicit source-to-owner lineage edges. Sibling, unused, and otherwise
+unreachable branches and their observations are excluded. Cycles, multiple
+owners, and unproven ownership fail closed as unknown directness.
 
 Known fields survive an ambiguity or unsupported result. The implementation
 does not choose the first aggregate, first grouping key, first source leaf, or a
