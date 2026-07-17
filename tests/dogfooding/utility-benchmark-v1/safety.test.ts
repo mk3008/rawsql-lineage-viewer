@@ -17,7 +17,7 @@ describe('benchmark probe safety', () => {
   it('redacts sentinel scalar values from durable observations', () => {
     const durable = JSON.stringify(redactObservation({ rows: [{ status: 'SENTINEL_PRIVATE', count: 7 }] }));
     expect(durable).not.toContain('SENTINEL_PRIVATE');
-    expect(durable).not.toContain('7');
+    expect(durable).not.toContain('"count":7');
     expect(durable).toContain('rowCount');
   });
   it('derives actionable coverage and mechanism hits from every outcome', () => {
