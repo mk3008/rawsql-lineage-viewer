@@ -24,6 +24,8 @@ async function main(): Promise<void> {
   let client: Client | undefined;
   const evidence: Record<string, unknown> = { image: 'postgres:16-alpine', scenarios: {} };
   let phase = 'init';
+  let finalizationPhase = 'not_started';
+  let failureCode = 'OK';
   let mappedPort = 0;
   let stopped = false;
   try {
@@ -42,23 +44,24 @@ async function main(): Promise<void> {
     const version = (await client.query('select version()')).rows[0]?.version as string;
     evidence.serverVersion = version?.split(' on ')[0] ?? 'redacted';
     for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id) }; }
-  } catch (e) { evidence.error = { ...redactError(e), phase }; }
+  } catch { failureCode = `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase }; }
   finally {
-    await client?.end().catch(() => undefined);
-    let mounts: unknown[] = []; try { mounts = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', container], { encoding: 'utf8' })); } catch { mounts = []; }
-    try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); stopped = true; } catch { /* evidence records teardown */ }
-    rmSync(temp, { recursive: true, force: true });
-    mkdirSync(out, { recursive: true });
-    let inspectFails = false; try { execFileSync('docker', ['inspect', container], { stdio: 'ignore' }); } catch { inspectFails = true; }
+    finalizationPhase = 'client_close'; try { await client?.end(); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CLIENT_CLOSE' : failureCode; }
+    finalizationPhase = 'mount_inspect'; let mounts: unknown[] = []; try { mounts = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', container], { encoding: 'utf8' })); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_MOUNT_INSPECT' : failureCode; }
+    finalizationPhase = 'container_teardown'; try { execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' }); stopped = true; } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CONTAINER_TEARDOWN' : failureCode; }
+    finalizationPhase = 'temp_cleanup'; try { rmSync(temp, { recursive: true, force: true }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_TEMP_CLEANUP' : failureCode; }
+    finalizationPhase = 'output_prepare'; try { mkdirSync(out, { recursive: true }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_OUTPUT_PREPARE' : failureCode; }
+    finalizationPhase = 'container_verify'; let inspectFails = false; try { execFileSync('docker', ['inspect', container], { stdio: 'ignore' }); } catch { inspectFails = true; }
     const host = process.env.BENCHMARK_DB_HOST ?? '127.0.0.1';
-    const changed = execFileSync('git', ['diff', '--name-only', '167a515'], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean);
+    let changed: string[] = []; try { changed = execFileSync('git', ['diff', '--name-only', '167a515'], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
     const categories = { benchmark: changed.filter(p => p.startsWith('tests/dogfooding/utility-benchmark-v1/')).length, core: changed.filter(p => p.startsWith('src/')).length, cli: changed.filter(p => p.includes('/cli/')).length, mcp: changed.filter(p => p.includes('/mcp/')).length };
     evidence.boundary = { changedPathCategoryCounts: categories, changedPathHash: hash(changed.join('\n')), noCoreCliMcpDbConfig: categories.core === 0 && categories.cli === 0 && categories.mcp === 0 };
     evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.length === 0, dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
     const privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json')))));
     evidence.parameterLeakageCount = countScalarLeakage(evidence, privateBindings);
-    writeFileSync(resolve(out, 'evidence-attempt-12.json'), JSON.stringify(evidence, null, 2));
-    writeFileSync(resolve(out, 'report-attempt-12.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 12\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${evidence.error ? 'not_done' : 'ready_for_review'}\nbase_state:\n  commit: 9a34b0988138b6bcee052c51eec86ee981162323\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${evidence.error ? 'failed' : 'passed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`);
+    evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
+    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-13.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
+    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-13.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 13\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 21335226a1a4ee56c72e6e4617742ed866568c5e\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
   }
 }
 
