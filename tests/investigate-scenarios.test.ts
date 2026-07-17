@@ -102,15 +102,23 @@ function assertStaticInvestigationPlan(plan: InvestigationPlanV1, expected: Scen
   expect(JSON.stringify(plan)).not.toContain(forbiddenParameterValue);
   expect(JSON.stringify(plan)).not.toContain('"value"');
 
+  const concernIds = new Set(plan.candidateConcerns.map((concern) => concern.id));
   for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
     expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
     expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
     expect(probe.staticSafetyEvidence.executionCaveats.length).toBeGreaterThan(0);
+    expect(probe.interpretation.version).toBe(1);
+    expect(probe.interpretation.expectedColumns.length).toBeGreaterThan(0);
+    expect(probe.interpretation.assumptions.length).toBeGreaterThan(0);
+    expect(probe.interpretation.doesNotProve.length).toBeGreaterThan(0);
+    expect(probe.interpretation.nextEvidence.length).toBeGreaterThan(0);
+    expect(probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds).every((id) => concernIds.has(id))).toBe(true);
     expect(probe.sql).toMatch(/^SELECT\s/i);
     expect(probe.sql).not.toContain(forbiddenParameterValue);
   }
   for (const blockedProbe of plan.blockedProbes) {
     expect(blockedProbe.status).toBe('blocked');
+    expect(blockedProbe).not.toHaveProperty('interpretation');
   }
   expect(plan.recommendedProbes.length + plan.blockedProbes.length + plan.deferredProbes.length).toBeGreaterThan(0);
 }

@@ -30,3 +30,6 @@ arguments, or parameter input files to raw evidence.  Generated and prepared
 probe SQL contains placeholders only.  Seed/control/oracle files are never
 sent as planning context.  Private binding files are supplied only through the
 explicit CLI/MCP binding inputs and are never copied into plans or evidence.
+Each emitted probe also carries a static interpretation contract.  The harness
+checks its shape and concern references before external execution, but it does
+not persist a runtime interpretation, causal conclusion, or remediation claim.

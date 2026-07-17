@@ -1,6 +1,6 @@
 import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, SimpleSelectQuery, SqlParser, UpdateQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
-import type { InvestigationNodeQueryContextV1, InvestigationParameterDefinitionInputV1, InvestigationPlannerParametersV1 } from './investigationPlan';
+import type { InvestigationNodeQueryContextV1, InvestigationParameterDefinitionInputV1, InvestigationPlannerParametersV1, InvestigationPlanV1 } from './investigationPlan';
 import type { ColumnDiagnosticPacket } from './diagnostics';
 import { createInvestigationPlan, createInvestigationPlanFromDiagnosticPacket } from './investigationPlan';
 import { analyzeSql } from './rawsqlAdapter';
@@ -12,6 +12,32 @@ function parameterInput(
   providedNames: string[] = [],
 ): InvestigationPlannerParametersV1 {
   return { definitions, ...(providedNames.length > 0 ? { bindingPresence: { providedNames } } : {}) };
+}
+
+function expectCompleteInterpretation(plan: Pick<InvestigationPlanV1, 'blockedProbes' | 'candidateConcerns' | 'deferredProbes' | 'recommendedProbes'>): void {
+  const concernIds = new Set(plan.candidateConcerns.map((concern) => concern.id));
+  for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+    expect(probe.interpretation.version).toBe(1);
+    expect(probe.interpretation.expectedColumns.length).toBeGreaterThan(0);
+    expect(probe.interpretation.assumptions.length).toBeGreaterThan(0);
+    expect(probe.interpretation.doesNotProve.length).toBeGreaterThan(0);
+    expect(probe.interpretation.nextEvidence.length).toBeGreaterThan(0);
+    expect(probe.interpretation.supportsCandidateConcernIds.length).toBeGreaterThan(0);
+    expect(probe.interpretation.weakensCandidateConcernIds.length).toBeGreaterThan(0);
+    expect(probe.interpretation.inconclusiveHandling.conditions.length).toBeGreaterThan(0);
+    expect(probe.interpretation.inconclusiveHandling.nextEvidence.length).toBeGreaterThan(0);
+    expect(new Set(probe.interpretation.observationRules.map((rule) => rule.outcome))).toEqual(new Set(['supports', 'weakens', 'inconclusive']));
+    expect(probe.interpretation.observationRules.every((rule) => rule.candidateConcernIds.length > 0)).toBe(true);
+    expect(probe.interpretation.observationRules.filter((rule) => rule.outcome === 'inconclusive').every((rule) => probe.interpretation.inconclusiveHandling.conditions.includes(rule.condition))).toBe(true);
+    for (const referencedId of [
+      ...probe.interpretation.supportsCandidateConcernIds,
+      ...probe.interpretation.weakensCandidateConcernIds,
+      ...probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds),
+    ]) {
+      expect(concernIds.has(referencedId)).toBe(true);
+    }
+  }
+  expect(plan.blockedProbes.every((probe) => !Object.prototype.hasOwnProperty.call(probe, 'interpretation'))).toBe(true);
 }
 
 function packet(overrides: Partial<ColumnDiagnosticPacket> = {}): ColumnDiagnosticPacket {
@@ -39,11 +65,17 @@ describe('createInvestigationPlan', () => {
       expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
       expect(probe.staticSafetyEvidence.executionCaveats.length).toBeGreaterThan(0);
     }
+    expectCompleteInterpretation(plan);
     expect(plan.diagnostics[0].code).toBe('original_sql_only');
     const serialized = JSON.stringify(plan);
     expect(serialized).not.toContain('equivalent_rewrite');
     expect(serialized).not.toContain('corrected_query');
     expect(serialized).not.toContain('readOnly');
+    expect(serialized).not.toContain(opaqueBinding);
+    expect(serialized).not.toContain('rootCause');
+    for (const forbiddenRuntimeField of ['actualRows', 'observedRows', 'bindingValues', 'causalVerdict', 'correctedSql']) {
+      expect(serialized).not.toContain(forbiddenRuntimeField);
+    }
   });
 
   it('preserves the supplied symptom on the investigation target and defaults deterministically', () => {
@@ -301,6 +333,18 @@ describe('createInvestigationPlan', () => {
     expect(plan.recommendedProbes).toHaveLength(1);
     expect(plan.recommendedProbes[0]).toMatchObject({
       artifactKind: 'investigation_probe',
+      interpretation: {
+        expectedCardinality: 'exactly_one_row',
+        expectedColumns: [{ name: 'candidate_rows', role: 'aggregate_count', type: 'integer' }],
+        observationRules: expect.arrayContaining([
+          expect.objectContaining({ condition: 'candidate_rows_below_accepted_baseline', outcome: 'supports' }),
+          expect.objectContaining({ condition: 'candidate_rows_at_or_above_accepted_baseline', outcome: 'weakens' }),
+          expect.objectContaining({ condition: 'comparable_baseline_unavailable_or_shape_invalid', outcome: 'inconclusive' }),
+        ]),
+        supportsCandidateConcernIds: ['concern:where:01'],
+        version: 1,
+        weakensCandidateConcernIds: ['concern:where:01'],
+      },
       sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)',
       staticSafetyEvidence: {
         assumptions: expect.arrayContaining([expect.any(String)]),
@@ -346,6 +390,7 @@ describe('createInvestigationPlan', () => {
     expect(plan.recommendedProbes).toEqual([]);
     expect(plan.blockedProbes).toMatchObject([{ code: 'UNSUITABLE_PROBE_SOURCE', status: 'blocked' }]);
     expect(plan.limitations).toEqual(expect.arrayContaining([{ code: 'unsuitable_probe_source', message: expect.any(String) }]));
+    expectCompleteInterpretation(plan);
   });
 
   it('limits recommendations to three deterministic probes', () => {
@@ -360,6 +405,7 @@ describe('createInvestigationPlan', () => {
       expect(probe.artifactKind).toBe('investigation_probe');
       expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
     }
+    expectCompleteInterpretation(plan);
   });
 
   it('sorts all successful probes before splitting recommendations, including the node-query probe', () => {
@@ -460,6 +506,21 @@ describe('createInvestigationPlan', () => {
     expect(probe).toMatchObject({
       artifactKind: 'investigation_probe',
       id: 'probe:node-query-outer-filter:01',
+      interpretation: {
+        expectedCardinality: 'zero_or_more_rows',
+        expectedColumns: [
+          { name: 'customer_id', role: 'selected_node_output', type: 'source_defined' },
+          { name: 'paid_amount', role: 'selected_node_output', type: 'source_defined' },
+        ],
+        observationRules: expect.arrayContaining([
+          expect.objectContaining({ condition: 'matching_rows_absent', outcome: 'supports' }),
+          expect.objectContaining({ condition: 'matching_rows_present', outcome: 'weakens' }),
+          expect.objectContaining({ condition: 'required_parameter_unavailable_or_output_shape_invalid', outcome: 'inconclusive' }),
+        ]),
+        supportsCandidateConcernIds: ['concern:where:01'],
+        version: 1,
+        weakensCandidateConcernIds: ['concern:where:01'],
+      },
       kind: 'node_query_outer_filter',
       nodeId: 'main_output',
       priority: 1,

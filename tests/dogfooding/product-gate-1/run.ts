@@ -15,8 +15,8 @@ type Scalar = boolean | number | string | null;
 type ParameterDefinition = { name: string; origin: string; required?: boolean; typeHint?: string };
 type Request = { targetColumn: string; symptom: string; parameterDefinitions?: ParameterDefinition[] };
 type Parameter = { name: string; status: string };
-type Probe = { id: string; sql: string; parameters: Parameter[]; staticSafetyEvidence: { confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
-type Plan = { blockedProbes: Array<{ id: string; status: string }>; deferredProbes: Probe[]; recommendedProbes: Probe[]; unresolvedParameters: Parameter[] };
+type Probe = { id: string; interpretation: { assumptions: string[]; doesNotProve: string[]; expectedCardinality: string; expectedColumns: unknown[]; inconclusiveHandling: { conditions: string[]; nextEvidence: string[] }; nextEvidence: string[]; observationRules: Array<{ candidateConcernIds: string[]; condition: string; outcome: string }>; supportsCandidateConcernIds: string[]; version: number; weakensCandidateConcernIds: string[] }; sql: string; parameters: Parameter[]; staticSafetyEvidence: { confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
+type Plan = { blockedProbes: Array<{ id: string; status: string }>; candidateConcerns: Array<{ id: string }>; deferredProbes: Probe[]; recommendedProbes: Probe[]; unresolvedParameters: Parameter[] };
 
 const harnessRoot = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const rawRoot = resolve(process.cwd(), 'tmp/dogfooding/product-gate-1/raw');
@@ -104,6 +104,7 @@ async function captureMcp(workspace: string, request: Request, bindings: Record<
 function executeListedProbes(plan: Plan, scenario: string, bindings: Record<string, Scalar>): unknown {
   const allowed = new Map(plan.recommendedProbes.map((probe) => [probe.id, probe]));
   const blocked = new Set(plan.blockedProbes.map((probe) => probe.id));
+  assertStaticInterpretationContracts(plan, scenario);
   const results: unknown[] = [];
   for (const probe of plan.recommendedProbes) {
     if (!allowed.has(probe.id) || blocked.has(probe.id)) throw new Error(`${scenario}: rejected unknown or blocked probe ${probe.id}`);
@@ -173,6 +174,37 @@ export function toBindingSafeRequest(
   const safeArguments = { ...request.arguments };
   delete safeArguments.parameterBindings;
   return { arguments: { ...safeArguments, providedBindingNames: [...providedBindingNames].sort() }, name: request.name };
+}
+
+export function assertStaticInterpretationContracts(plan: Plan, scenario: string): void {
+  const concernIds = new Set(plan.candidateConcerns.map((concern) => concern.id));
+  for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+    const referencedIds = [
+      ...probe.interpretation.supportsCandidateConcernIds,
+      ...probe.interpretation.weakensCandidateConcernIds,
+      ...probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds),
+    ];
+    const outcomes = new Set(probe.interpretation.observationRules.map((rule) => rule.outcome));
+    if (probe.interpretation.version !== 1
+      || !['exactly_one_row', 'zero_or_more_rows'].includes(probe.interpretation.expectedCardinality)
+      || probe.interpretation.expectedColumns.length === 0
+      || probe.interpretation.assumptions.length === 0
+      || probe.interpretation.doesNotProve.length === 0
+      || probe.interpretation.nextEvidence.length === 0
+      || probe.interpretation.supportsCandidateConcernIds.length === 0
+      || probe.interpretation.weakensCandidateConcernIds.length === 0
+      || probe.interpretation.inconclusiveHandling.conditions.length === 0
+      || probe.interpretation.inconclusiveHandling.nextEvidence.length === 0
+      || !['supports', 'weakens', 'inconclusive'].every((outcome) => outcomes.has(outcome))
+      || probe.interpretation.observationRules.some((rule) => rule.condition.length === 0 || rule.candidateConcernIds.length === 0)
+      || probe.interpretation.observationRules.filter((rule) => rule.outcome === 'inconclusive').some((rule) => !probe.interpretation.inconclusiveHandling.conditions.includes(rule.condition))
+      || referencedIds.some((id) => !concernIds.has(id))) {
+      throw new Error(`${scenario}: rejected incomplete static interpretation contract for ${probe.id}`);
+    }
+  }
+  if (plan.blockedProbes.some((probe) => Object.prototype.hasOwnProperty.call(probe, 'interpretation'))) {
+    throw new Error(`${scenario}: rejected fabricated interpretation metadata on a blocked probe`);
+  }
 }
 
 export function toBindingSafeProbeEvidence(

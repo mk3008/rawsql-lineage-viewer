@@ -114,11 +114,52 @@ export interface ProbeStaticSafetyEvidenceV1 {
   version: 1;
 }
 
+export type ProbeExpectedColumnRoleV1 = 'aggregate_count' | 'selected_node_output';
+export type ProbeExpectedColumnTypeV1 = 'integer' | 'source_defined';
+
+export interface ProbeExpectedColumnV1 {
+  name?: string;
+  role: ProbeExpectedColumnRoleV1;
+  type: ProbeExpectedColumnTypeV1;
+}
+
+export type ProbeObservationConditionV1 =
+  | 'candidate_rows_below_accepted_baseline'
+  | 'candidate_rows_at_or_above_accepted_baseline'
+  | 'comparable_baseline_unavailable_or_shape_invalid'
+  | 'matching_rows_absent'
+  | 'matching_rows_present'
+  | 'required_parameter_unavailable_or_output_shape_invalid';
+
+export interface ProbeObservationRuleV1 {
+  candidateConcernIds: string[];
+  condition: ProbeObservationConditionV1;
+  outcome: 'inconclusive' | 'supports' | 'weakens';
+}
+
+/** Static instructions for an external evaluator; this object contains no observation. */
+export interface ProbeInterpretationV1 {
+  assumptions: string[];
+  doesNotProve: string[];
+  expectedCardinality: 'exactly_one_row' | 'zero_or_more_rows';
+  expectedColumns: ProbeExpectedColumnV1[];
+  inconclusiveHandling: {
+    conditions: ProbeObservationConditionV1[];
+    nextEvidence: string[];
+  };
+  nextEvidence: string[];
+  observationRules: ProbeObservationRuleV1[];
+  supportsCandidateConcernIds: string[];
+  version: 1;
+  weakensCandidateConcernIds: string[];
+}
+
 export interface ProbeSpecV1 extends SqlArtifactV1<'investigation_probe'> {
   /** A deterministic identifier within the plan. */
   id: string;
   confidence: 'high' | 'low' | 'medium' | 'possible' | 'unknown';
   hypothesis: string;
+  interpretation: ProbeInterpretationV1;
   kind: string;
   limitations: string[];
   nodeId: string;
@@ -306,7 +347,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
       blockedProbes.push(blockedProbe(probeId, 'UNSUITABLE_PROBE_SOURCE', 'No supported physical source relation is available for a standalone SELECT probe.'));
       continue;
     }
-    const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, indexedConcern.index + 1, parameterEntries);
+    const probe = createProbe(probeId, indexedConcern.id, concern, source.relation, source.nodeId, influence.expressionSql, indexedConcern.index + 1, parameterEntries);
     if (!probe.probe) {
       blockedProbes.push(probe.blocked);
       continue;
@@ -314,7 +355,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
     successfulProbes.push(probe.probe);
   }
 
-  const nodeQueryProbe = createNodeQueryOuterFilterProbe(packet, inputs.definitions, nodeQueryContext, parameterEntries);
+  const nodeQueryProbe = createNodeQueryOuterFilterProbe(packet, indexedConcerns, inputs.definitions, nodeQueryContext, parameterEntries);
   if (nodeQueryProbe.probe) {
     successfulProbes.push(nodeQueryProbe.probe);
   } else if (nodeQueryProbe.blocked) {
@@ -457,6 +498,7 @@ function buildNextEvidenceChecklist(packet: ColumnDiagnosticPacket, indexedConce
 
 function createNodeQueryOuterFilterProbe(
   packet: ColumnDiagnosticPacket,
+  indexedConcerns: IndexedCandidateConcern[],
   inputs: InvestigationParameterDefinitionInputV1[],
   context: InvestigationNodeQueryContextV1 | undefined,
   parameterEntries: Map<string, InvestigationParameterV1>,
@@ -476,7 +518,8 @@ function createNodeQueryOuterFilterProbe(
   if (!node?.querySql) {
     return { blocked: blockedProbe('probe:node-query-outer-filter:01', 'NODE_QUERY_UNAVAILABLE', 'The selected node has no standalone query SQL to wrap safely.') };
   }
-  if (!hasWhereConcernForTargetNode(packet, context)) {
+  const candidateConcernIds = candidateConcernIdsForTargetNodeWhere(packet, context, indexedConcerns);
+  if (candidateConcernIds.length === 0) {
     return {};
   }
   if (context.analysisWarnings.some((warning) => warning.code.includes('wildcard_unresolved'))) {
@@ -516,6 +559,7 @@ function createNodeQueryOuterFilterProbe(
       confidence: 'possible',
       hypothesis: 'Filtering the selected node query by the explicitly supplied investigation key can isolate the relevant output rows without changing its internal SQL.',
       id,
+      interpretation: createNodeQueryOuterFilterInterpretation(candidateConcernIds, node),
       kind: 'node_query_outer_filter',
       limitations: ['The original node query is preserved inside a derived-table wrapper.', 'The product did not run the proposed SELECT statement.', 'Parameter values are referenced by placeholders and are never inlined.'],
       nodeId: node.id,
@@ -530,13 +574,20 @@ function createNodeQueryOuterFilterProbe(
   };
 }
 
-function hasWhereConcernForTargetNode(packet: ColumnDiagnosticPacket, context: InvestigationNodeQueryContextV1): boolean {
+function candidateConcernIdsForTargetNodeWhere(
+  packet: ColumnDiagnosticPacket,
+  context: InvestigationNodeQueryContextV1,
+  indexedConcerns: IndexedCandidateConcern[],
+): string[] {
   const scopeNodeById = new Map(context.scopes.map((scope) => [scope.id, scope.nodeId]));
   const influenceById = new Map(packet.rowLineage.influences.map((influence) => [influence.id, influence]));
-  return packet.candidateConcerns.some((concern) => concern.kind === 'where' && concern.influenceIds.some((id) => {
-    const influence = influenceById.get(id);
-    return influence?.kind === 'where' && scopeNodeById.get(influence.scopeId) === packet.target.nodeId;
-  }));
+  return indexedConcerns
+    .filter(({ concern }) => concern.kind === 'where' && concern.influenceIds.some((id) => {
+      const influence = influenceById.get(id);
+      return influence?.kind === 'where' && scopeNodeById.get(influence.scopeId) === packet.target.nodeId;
+    }))
+    .map(({ id }) => id)
+    .sort();
 }
 
 type StaticProbeStatementInspection =
@@ -618,6 +669,74 @@ function createProbeStaticSafetyEvidence(): ProbeStaticSafetyEvidenceV1 {
   };
 }
 
+function createCandidateRowCountInterpretation(candidateConcernId: string): ProbeInterpretationV1 {
+  const candidateConcernIds = [candidateConcernId];
+  const inconclusiveCondition: ProbeObservationConditionV1 = 'comparable_baseline_unavailable_or_shape_invalid';
+  return {
+    assumptions: [
+      'An external investigator selects an accepted comparison baseline for the same source population and parameter context.',
+      'The candidate_rows column is interpreted as one non-negative integer.',
+    ],
+    doesNotProve: [
+      'A lower candidate row count does not prove that this candidate concern caused the reported symptom.',
+      'A candidate row count at or above the baseline does not prove that this candidate concern is irrelevant in another runtime context.',
+    ],
+    expectedCardinality: 'exactly_one_row',
+    expectedColumns: [{ name: 'candidate_rows', role: 'aggregate_count', type: 'integer' }],
+    inconclusiveHandling: {
+      conditions: [inconclusiveCondition],
+      nextEvidence: ['Establish an authorized, comparable baseline before evaluating this count.'],
+    },
+    nextEvidence: ['Compare the candidate_rows count with an accepted baseline for the same population and parameter context.'],
+    observationRules: [
+      { candidateConcernIds, condition: 'candidate_rows_below_accepted_baseline', outcome: 'supports' },
+      { candidateConcernIds, condition: 'candidate_rows_at_or_above_accepted_baseline', outcome: 'weakens' },
+      { candidateConcernIds, condition: inconclusiveCondition, outcome: 'inconclusive' },
+    ],
+    supportsCandidateConcernIds: candidateConcernIds,
+    version: 1,
+    weakensCandidateConcernIds: candidateConcernIds,
+  };
+}
+
+function createNodeQueryOuterFilterInterpretation(candidateConcernIdsInput: string[], node: LineageNode): ProbeInterpretationV1 {
+  const candidateConcernIds = [...new Set(candidateConcernIdsInput)].sort();
+  const knownColumns = node.columns
+    .filter((column) => column.outputIndex !== undefined)
+    .sort((left, right) => left.outputIndex! - right.outputIndex! || left.name.localeCompare(right.name))
+    .map((column): ProbeExpectedColumnV1 => ({ name: column.name, role: 'selected_node_output', type: 'source_defined' }));
+  const expectedColumns: ProbeExpectedColumnV1[] = knownColumns.length > 0
+    ? knownColumns
+    : [{ role: 'selected_node_output', type: 'source_defined' }];
+  const inconclusiveCondition: ProbeObservationConditionV1 = 'required_parameter_unavailable_or_output_shape_invalid';
+  return {
+    assumptions: [
+      'An external investigator supplies authorized bindings separately from this plan.',
+      'The investigation key identifies the externally intended target population.',
+      'Any evaluated rows correspond exactly to this probe SQL and its selected-node output shape.',
+    ],
+    doesNotProve: [
+      'No matching row does not prove that any candidate concern caused the reported symptom.',
+      'A matching row does not prove that the submitted query is correct or complete.',
+    ],
+    expectedCardinality: 'zero_or_more_rows',
+    expectedColumns,
+    inconclusiveHandling: {
+      conditions: [inconclusiveCondition],
+      nextEvidence: ['Resolve the expected output shape and required parameters before evaluating matching-row presence.'],
+    },
+    nextEvidence: ['Trace the same investigation key through the nearest upstream node when matching-row presence changes the candidate assessment.'],
+    observationRules: [
+      { candidateConcernIds, condition: 'matching_rows_absent', outcome: 'supports' },
+      { candidateConcernIds, condition: 'matching_rows_present', outcome: 'weakens' },
+      { candidateConcernIds, condition: inconclusiveCondition, outcome: 'inconclusive' },
+    ],
+    supportsCandidateConcernIds: candidateConcernIds,
+    version: 1,
+    weakensCandidateConcernIds: candidateConcernIds,
+  };
+}
+
 function quoteIdentifier(value: string): string {
   return `"${value.replaceAll('"', '""')}"`;
 }
@@ -648,6 +767,7 @@ function buildParameters(inputs: InvestigationPlannerParametersV1): Map<string, 
 
 function createProbe(
   id: string,
+  candidateConcernId: string,
   concern: CandidateConcern,
   source: string,
   sourceNodeId: string,
@@ -667,6 +787,7 @@ function createProbe(
     confidence: concern.confidence,
     hypothesis: `${concern.reason} This remains a candidate concern until the proposed probe is evaluated externally.`,
     id,
+    interpretation: createCandidateRowCountInterpretation(candidateConcernId),
     kind: 'candidate_row_count',
     limitations: ['The product did not run the proposed SELECT statement.', 'Parameter values are referenced by placeholders and are never inlined.'],
     nodeId: sourceNodeId,

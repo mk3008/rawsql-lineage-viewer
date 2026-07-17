@@ -5,8 +5,8 @@ Status: **Normative**
 This document defines the product responsibility boundary for rawsql-lineage.
 It applies across the Core, Viewer, CLI, and MCP surfaces. It does not define a
 versioned artifact schema, safety-label vocabulary, parameter-binding protocol,
-or probe-interpretation policy; those contracts may refine behavior later
-without expanding this boundary implicitly.
+or probe-interpretation policy; separate versioned contracts may refine
+behavior without expanding this boundary implicitly.
 
 The terms **MUST**, **MUST NOT**, **SHOULD**, and **MAY** are normative.
 
@@ -133,6 +133,6 @@ emitted by Core.
 
 ## Change control
 
-Future artifact kinds, safety labels, binding contracts, and interpretation
-rules MAY become separate normative contracts. They MUST remain within this
+Artifact kinds, safety labels, binding contracts, and interpretation rules MAY
+be defined by separate versioned contracts. They MUST remain within this
 boundary unless a deliberate product-boundary change is reviewed and published.

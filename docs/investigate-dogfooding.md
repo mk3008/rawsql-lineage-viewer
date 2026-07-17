@@ -50,6 +50,12 @@ must remain temporary and outside raw evidence. The static planner may emit
 parameter definitions and binding-presence status but must not cause a DB call,
 SQL execution, network request, or AI request.
 
+Each successful probe includes a versioned interpretation contract for an
+external evaluator. Treat its observation rules as conditional guidance, not
+as an observed result or a causal conclusion. Confirm that referenced candidate
+concern IDs exist in the same plan and keep external observations separate from
+the static artifact.
+
 ## Separation of responsibilities
 
 The worker runs the CLI and records raw observations only. The evaluator reviews

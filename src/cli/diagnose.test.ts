@@ -58,7 +58,7 @@ describe('rawsql-lineage diagnose CLI', () => {
         '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath,
       ], { encoding: 'utf8' });
       type SerializedParameter = { name: string; status: string };
-      type SerializedProbe = { artifactKind: string; parameters: SerializedParameter[]; sql: string; staticSafetyEvidence: { assumptions: string[]; basis: string; confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
+      type SerializedProbe = { artifactKind: string; interpretation: { assumptions: string[]; doesNotProve: string[]; expectedColumns: unknown[]; nextEvidence: string[]; observationRules: Array<{ candidateConcernIds: string[]; outcome: string }>; version: number }; parameters: SerializedParameter[]; sql: string; staticSafetyEvidence: { assumptions: string[]; basis: string; confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
       const plan = JSON.parse(stdout) as { deferredProbes: SerializedProbe[]; diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; originalQuery: { artifactKind: string; sql: string }; parameters: SerializedParameter[]; recommendedProbes: SerializedProbe[]; target: { columnName: string; nodeId: string } };
 
       expect(plan.kind).toBe('investigation-plan');
@@ -73,15 +73,26 @@ describe('rawsql-lineage diagnose CLI', () => {
       expect(plan.parameters.every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
       expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
       expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+      const concernIds = new Set((plan as unknown as { candidateConcerns: Array<{ id: string }> }).candidateConcerns.map((concern) => concern.id));
       for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
         expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
         expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
         expect(probe.staticSafetyEvidence.executionCaveats).toContain('This static classification does not authorize execution.');
+        expect(probe.interpretation).toMatchObject({ version: 1 });
+        expect(probe.interpretation.expectedColumns.length).toBeGreaterThan(0);
+        expect(probe.interpretation.assumptions.length).toBeGreaterThan(0);
+        expect(probe.interpretation.doesNotProve.length).toBeGreaterThan(0);
+        expect(probe.interpretation.nextEvidence.length).toBeGreaterThan(0);
+        expect(probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds).every((id) => concernIds.has(id))).toBe(true);
         expect(probe.parameters.every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
       }
       expect(stdout).not.toContain('equivalent_rewrite');
       expect(stdout).not.toContain('corrected_query');
       expect(stdout).not.toContain('readOnly');
+      expect(stdout).not.toContain('rootCause');
+      for (const forbiddenRuntimeField of ['actualRows', 'observedRows', 'bindingValues', 'causalVerdict', 'correctedSql']) {
+        expect(stdout).not.toContain(forbiddenRuntimeField);
+      }
       expect(stdout).not.toContain(opaqueBinding);
       expect(stdout).not.toContain('"value"');
       for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
