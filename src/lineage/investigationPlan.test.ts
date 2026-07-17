@@ -60,7 +60,7 @@ describe('InvestigationPlanV1 contract', () => {
       target: { columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' },
       unresolvedParameters: [{ id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] }],
       version: 1,
-    } satisfies InvestigationPlanV1;
+    } satisfies Omit<InvestigationPlanV1, 'probePrerequisiteFacts'>;
 
     expect(plan.analysisMode).toBe('original');
     expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'select status from orders where status = :status' });

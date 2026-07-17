@@ -334,6 +334,7 @@ describe('create_investigation_plan MCP adapter', () => {
         kind: 'investigation-plan',
         nextEvidenceChecklist: expect.arrayContaining([expect.objectContaining({ kind: 'condition', status: 'to_verify' })]),
         originalQuery: { artifactKind: 'original_query', sql: 'select status from orders where status = :status' },
+        probePrerequisiteFacts: { kind: 'probe-prerequisite-facts', version: 1 },
         target: { columnName: 'status', nodeId: 'main_output' },
       });
       type StructuredProbe = { artifactKind: string; interpretation: { assumptions: string[]; doesNotProve: string[]; expectedColumns: unknown[]; nextEvidence: string[]; observationRules: Array<{ candidateConcernIds: string[]; outcome: string }>; version: number }; staticSafetyEvidence: { assumptions: string[]; executionCaveats: string[]; statementClassification: string } };

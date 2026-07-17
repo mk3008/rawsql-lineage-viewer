@@ -1,0 +1,319 @@
+import {
+  BinarySelectQuery,
+  ColumnReference,
+  FunctionCall,
+  InlineQuery,
+  LiteralValue,
+  SimpleSelectQuery,
+  SqlParser,
+  SubQuerySource,
+} from 'rawsql-ts';
+import type { LineageColumnRef, LineageModel, LineageNodeType } from '../domain/lineage';
+import type { InvestigationPlannerParametersV1, InvestigationTargetV1 } from './investigationPlan';
+import type { SchemaFacts } from './schemaFacts';
+
+export type PrerequisiteFactStatusV1 = 'available' | 'ambiguous' | 'blocked' | 'unsupported';
+export type PrerequisiteIssueCodeV1 =
+  | 'aggregate_input_ambiguous'
+  | 'aggregate_input_multi_relation'
+  | 'aggregate_input_scalar_subquery'
+  | 'aggregate_operation_unsupported'
+  | 'aggregate_window_unsupported'
+  | 'dialect_aggregate_unsupported'
+  | 'group_alias_unresolved'
+  | 'group_ordinal_unresolved'
+  | 'observation_prerequisite_missing'
+  | 'source_provenance_unreconstructable'
+  | 'wildcard_reference_ambiguous';
+
+export interface ProbePrerequisiteIssueV1 {
+  code: PrerequisiteIssueCodeV1;
+  factIds: string[];
+  message: string;
+  status: Exclude<PrerequisiteFactStatusV1, 'available'>;
+}
+
+export interface ProbePrerequisiteReferenceV1 {
+  columnName: string;
+  id: string;
+  nodeId: string;
+  provenanceIds: string[];
+  scopeId?: string;
+  status: 'resolved';
+}
+
+export interface ProbePrerequisiteSourceV1 {
+  id: string;
+  kind: 'cte' | 'derived' | 'physical_table' | 'unknown';
+  nodeId: string;
+  provenanceIds: string[];
+  referenceIds: string[];
+  roles: Array<'aggregate_input' | 'grouping_key' | 'query_source'>;
+  scopeIds: string[];
+  status: 'resolved' | 'ambiguous';
+}
+
+export interface AggregateOperationFactV1 {
+  distinct: 'distinct' | 'not_distinct' | 'unknown';
+  groupingKeyIds: string[];
+  id: string;
+  inputExpressionId?: string;
+  inputKind: 'case_expression' | 'column' | 'composite_expression' | 'scalar_subquery' | 'star' | 'unknown';
+  inputReferenceIds: string[];
+  issueCodes: PrerequisiteIssueCodeV1[];
+  operation: 'avg' | 'count' | 'max' | 'min' | 'sum' | 'unknown';
+  ownerNodeId: string;
+  ownerScopeId?: string;
+  provenanceIds: string[];
+  sourceIds: string[];
+  status: PrerequisiteFactStatusV1;
+  target: { columnName: string; nodeId: string; outputIndex: number };
+}
+
+export interface GroupingKeyFactV1 {
+  id: string;
+  issueCodes: PrerequisiteIssueCodeV1[];
+  kind: 'alias' | 'column' | 'expression' | 'ordinal';
+  ordinal?: number;
+  ownerNodeId: string;
+  ownerScopeId?: string;
+  provenanceIds: string[];
+  referenceIds: string[];
+  sourceIds: string[];
+  status: PrerequisiteFactStatusV1;
+}
+
+export type ProbeObservationKindV1 =
+  | 'aggregate_input_non_null_count'
+  | 'aggregate_input_value_summary'
+  | 'distinct_group_count'
+  | 'rows_per_group'
+  | 'source_row_count';
+
+export interface ProbeObservationContractV1 {
+  aggregateFactIds: string[];
+  assumptions: string[];
+  blockedReasons: PrerequisiteIssueCodeV1[];
+  concernIds: string[];
+  doesNotProve: string[];
+  expectedColumns: Array<{ name: string; semanticType: 'count' | 'source_defined' | 'summary' }>;
+  groupingKeyIds: string[];
+  id: string;
+  inconclusiveWhen: string[];
+  kind: ProbeObservationKindV1;
+  sourceIds: string[];
+  status: 'available' | 'blocked';
+}
+
+export interface ProbePrerequisiteFactsV1 {
+  aggregates: AggregateOperationFactV1[];
+  groupingKeys: GroupingKeyFactV1[];
+  issues: ProbePrerequisiteIssueV1[];
+  kind: 'probe-prerequisite-facts';
+  observations: ProbeObservationContractV1[];
+  parameterDefinitionIds: string[];
+  provenance: Array<{ id: string; kind: 'lineage_node' | 'lineage_scope' | 'parameter_definition' | 'parser_ast' | 'schema_facts'; sourceId: string }>;
+  references: ProbePrerequisiteReferenceV1[];
+  sources: ProbePrerequisiteSourceV1[];
+  version: 1;
+}
+
+const aggregateNames = new Set(['avg', 'count', 'max', 'min', 'sum']);
+
+export function buildProbePrerequisiteFactsV1(input: {
+  candidateConcernIds?: string[];
+  lineage: LineageModel;
+  parameters: InvestigationPlannerParametersV1;
+  schemaFacts?: SchemaFacts;
+  sql: string;
+  target: InvestigationTargetV1;
+}): ProbePrerequisiteFactsV1 {
+  const statement = SqlParser.parse(input.sql);
+  const query = unwrapSelect(statement);
+  const ownerNode = input.lineage.nodes.find((node) => node.id === input.target.nodeId);
+  const ownerScope = input.lineage.scopes.find((scope) => scope.nodeId === input.target.nodeId && scope.kind !== 'set_operation');
+  const provenance = new Map<string, ProbePrerequisiteFactsV1['provenance'][number]>();
+  addProvenance(provenance, 'parser_ast', 'submitted_statement');
+  if (ownerNode) addProvenance(provenance, 'lineage_node', ownerNode.id);
+  if (ownerScope) addProvenance(provenance, 'lineage_scope', ownerScope.id);
+  if (input.schemaFacts) addProvenance(provenance, 'schema_facts', `schema-facts-v${input.schemaFacts.version}`);
+  const parameterDefinitionIds = [...input.parameters.definitions]
+    .sort((a, b) => a.name.localeCompare(b.name))
+    .map((_definition, index) => {
+      const sourceId = `definition:${String(index + 1).padStart(3, '0')}`;
+      addProvenance(provenance, 'parameter_definition', sourceId);
+      return `parameter-definition:${sourceId}`;
+    });
+
+  const references = collectReferences(input.lineage);
+  for (const reference of references) {
+    addProvenance(provenance, 'lineage_node', reference.nodeId);
+    if (reference.scopeId) addProvenance(provenance, 'lineage_scope', reference.scopeId);
+  }
+  const sources = collectSources(input.lineage, references, provenance);
+  const groupingKeys = query ? collectGroupingKeys(query, input, ownerScope?.id, references, sources) : [];
+  const aggregates = query ? collectAggregates(query, input, ownerScope?.id, references, sources, groupingKeys) : [];
+  const issues = collectIssues(aggregates, groupingKeys, sources);
+  const observations = observationContracts(aggregates, groupingKeys, sources, issues, input.candidateConcernIds ?? []);
+  applySourceRoles(sources, aggregates, groupingKeys);
+  return {
+    aggregates: sortById(aggregates),
+    groupingKeys: sortById(groupingKeys),
+    issues: issues.map((issue) => ({ ...issue, factIds: sortedUnique(issue.factIds) })),
+    kind: 'probe-prerequisite-facts',
+    observations: sortById(observations),
+    parameterDefinitionIds,
+    provenance: [...provenance.values()].sort((a, b) => a.id.localeCompare(b.id)),
+    references,
+    sources: sortById(sources.map((source) => ({ ...source, provenanceIds: sortedUnique(source.provenanceIds), referenceIds: sortedUnique(source.referenceIds), roles: sortedUnique(source.roles), scopeIds: sortedUnique(source.scopeIds) }))),
+    version: 1,
+  };
+}
+
+function unwrapSelect(value: unknown): SimpleSelectQuery | undefined {
+  if (value instanceof SimpleSelectQuery) return value;
+  if (value instanceof BinarySelectQuery) return undefined;
+  const query = (value as { query?: unknown })?.query;
+  return query instanceof SimpleSelectQuery ? query : undefined;
+}
+
+function collectReferences(lineage: LineageModel): ProbePrerequisiteReferenceV1[] {
+  const refs = new Map<string, LineageColumnRef>();
+  const add = (ref: LineageColumnRef) => {
+    const key = `${ref.nodeId}\u0000${ref.scopeId ?? ''}\u0000${ref.columnName}`;
+    if (refs.has(key)) return;
+    refs.set(key, { ...ref });
+  };
+  for (const node of [...lineage.nodes].sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const column of [...node.columns].sort((a, b) => (a.outputIndex ?? 9999) - (b.outputIndex ?? 9999) || a.name.localeCompare(b.name))) {
+      for (const ref of column.upstream ?? []) add(ref);
+    }
+  }
+  for (const scope of [...lineage.scopes].sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const influence of scope.groupBy ?? []) for (const ref of influence.references) add(ref);
+  }
+  return [...refs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, ref], index) => ({
+    columnName: ref.columnName,
+    id: `reference:${String(index + 1).padStart(3, '0')}`,
+    nodeId: ref.nodeId,
+    provenanceIds: sortedUnique([`lineage-node:${ref.nodeId}`, ...(ref.scopeId ? [`lineage-scope:${ref.scopeId}`] : [])]),
+    ...(ref.scopeId ? { scopeId: ref.scopeId } : {}),
+    status: 'resolved',
+  }));
+}
+
+function collectSources(lineage: LineageModel, references: ProbePrerequisiteReferenceV1[], provenance: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>): ProbePrerequisiteSourceV1[] {
+  return [...lineage.nodes]
+    .filter((node) => node.type !== 'output' && node.type !== 'parameter_table' && node.type !== 'scalar_subquery')
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((node, index) => {
+      addProvenance(provenance, 'lineage_node', node.id);
+      for (const scopeId of node.dependencyProfile?.scopeIds ?? []) addProvenance(provenance, 'lineage_scope', scopeId);
+      return {
+        id: `source:${String(index + 1).padStart(3, '0')}`,
+        kind: sourceKind(node.type),
+        nodeId: node.id,
+        provenanceIds: sortedUnique([`lineage-node:${node.id}`, ...(node.dependencyProfile?.scopeIds ?? []).map((id) => `lineage-scope:${id}`)]),
+        referenceIds: references.filter((reference) => reference.nodeId === node.id).map((reference) => reference.id),
+        roles: ['query_source'] as Array<'aggregate_input' | 'grouping_key' | 'query_source'>,
+        scopeIds: [...(node.dependencyProfile?.scopeIds ?? [])],
+        status: node.type === 'table' || node.type === 'cte' || node.type === 'derived' ? 'resolved' as const : 'ambiguous' as const,
+      };
+    });
+}
+
+function collectGroupingKeys(query: SimpleSelectQuery, input: Parameters<typeof buildProbePrerequisiteFactsV1>[0], ownerScopeId: string | undefined, references: ProbePrerequisiteReferenceV1[], sources: ProbePrerequisiteSourceV1[]): GroupingKeyFactV1[] {
+  const lineageGroup = input.lineage.scopes.find((scope) => scope.id === ownerScopeId)?.groupBy ?? [];
+  return (query.groupByClause?.grouping ?? []).map((value, index) => {
+    const id = `grouping-key:${String(index + 1).padStart(3, '0')}`;
+    const influenceRefs = lineageGroup[index]?.references ?? [];
+    const referenceIds = matchReferences(references, influenceRefs);
+    const issueCodes: PrerequisiteIssueCodeV1[] = [];
+    let kind: GroupingKeyFactV1['kind'] = 'expression';
+    let ordinal: number | undefined;
+    let status: PrerequisiteFactStatusV1 = 'available';
+    if (value instanceof LiteralValue && typeof value.value === 'number') {
+      kind = 'ordinal'; ordinal = value.value;
+      if (!Number.isInteger(ordinal) || ordinal < 1 || ordinal > query.selectClause.items.length) { status = 'blocked'; issueCodes.push('group_ordinal_unresolved'); }
+    } else if (value instanceof ColumnReference) {
+      const name = value.column.name;
+      const aliasMatches = query.selectClause.items.filter((item) => item.identifier?.name === name && (!(item.value instanceof ColumnReference) || item.value.column.name !== name));
+      kind = aliasMatches.length ? 'alias' : 'column';
+      if (kind === 'alias' && aliasMatches.length !== 1) { status = 'blocked'; issueCodes.push('group_alias_unresolved'); }
+      else if (referenceIds.length === 0 && kind === 'column') { status = 'ambiguous'; issueCodes.push('wildcard_reference_ambiguous'); }
+    }
+    const sourceIds = sourceIdsForReferences(sources, references, referenceIds);
+    return { id, issueCodes, kind, ...(ordinal !== undefined ? { ordinal } : {}), ownerNodeId: input.target.nodeId, ...(ownerScopeId ? { ownerScopeId } : {}), provenanceIds: sortedUnique(['parser-ast:submitted_statement', `lineage-node:${input.target.nodeId}`, ...(ownerScopeId ? [`lineage-scope:${ownerScopeId}`] : [])]), referenceIds, sourceIds, status };
+  });
+}
+
+function collectAggregates(query: SimpleSelectQuery, input: Parameters<typeof buildProbePrerequisiteFactsV1>[0], ownerScopeId: string | undefined, references: ProbePrerequisiteReferenceV1[], sources: ProbePrerequisiteSourceV1[], groupingKeys: GroupingKeyFactV1[]): AggregateOperationFactV1[] {
+  const ownerNode = input.lineage.nodes.find((node) => node.id === input.target.nodeId);
+  return query.selectClause.items.flatMap((item, outputIndex) => {
+    const calls = findFunctionCalls(item.value).filter((call) => aggregateNames.has(functionName(call)) || looksAggregate(call));
+    return calls.map((call, callIndex) => {
+      const name = functionName(call);
+      const operation = aggregateNames.has(name) ? name as AggregateOperationFactV1['operation'] : 'unknown';
+      const output = ownerNode?.columns.find((column) => column.outputIndex === outputIndex);
+      const inputReferenceIds = matchReferences(references, output?.upstream ?? []);
+      const sourceIds = sourceIdsForReferences(sources, references, inputReferenceIds);
+      const issueCodes: PrerequisiteIssueCodeV1[] = [];
+      if (call.over) issueCodes.push('aggregate_window_unsupported');
+      if (operation === 'unknown') issueCodes.push('dialect_aggregate_unsupported');
+      if (containsInlineQuery(call.argument)) issueCodes.push('aggregate_input_scalar_subquery');
+      if (sourceIds.length > 1) issueCodes.push('aggregate_input_multi_relation');
+      const unresolved = output?.unresolvedUpstream ?? [];
+      if (unresolved.length) issueCodes.push(unresolved.some((ref) => ref.columnName === '*') ? 'wildcard_reference_ambiguous' : 'aggregate_input_ambiguous');
+      const status: PrerequisiteFactStatusV1 = issueCodes.some((code) => code.includes('unsupported') || code === 'aggregate_input_scalar_subquery') ? 'unsupported' : issueCodes.length ? 'ambiguous' : 'available';
+      const distinct = isDistinctArgument(call.argument) ? 'distinct' : call.argument ? 'not_distinct' : 'unknown';
+      return {
+        distinct, groupingKeyIds: groupingKeys.map((key) => key.id), id: `aggregate:${String(outputIndex + 1).padStart(3, '0')}:${String(callIndex + 1).padStart(2, '0')}`,
+        inputExpressionId: `expression:aggregate:${String(outputIndex + 1).padStart(3, '0')}:${String(callIndex + 1).padStart(2, '0')}`,
+        inputKind: inputKind(call.argument), inputReferenceIds, issueCodes: sortedUnique(issueCodes), operation, ownerNodeId: input.target.nodeId, ...(ownerScopeId ? { ownerScopeId } : {}), provenanceIds: sortedUnique(['parser-ast:submitted_statement', `lineage-node:${input.target.nodeId}`, ...(ownerScopeId ? [`lineage-scope:${ownerScopeId}`] : [])]), sourceIds, status,
+        target: { columnName: item.identifier?.name ?? output?.name ?? `column_${outputIndex + 1}`, nodeId: input.target.nodeId, outputIndex },
+      };
+    });
+  });
+}
+
+function observationContracts(aggregates: AggregateOperationFactV1[], groupingKeys: GroupingKeyFactV1[], sources: ProbePrerequisiteSourceV1[], issues: ProbePrerequisiteIssueV1[], candidateConcernIds: string[]): ProbeObservationContractV1[] {
+  const definitions: Array<{ kind: ProbeObservationKindV1; needsAggregate?: boolean; needsGroup?: boolean; column: string; semanticType: 'count' | 'source_defined' | 'summary' }> = [
+    { kind: 'source_row_count', column: 'source_row_count', semanticType: 'count' },
+    { kind: 'distinct_group_count', needsGroup: true, column: 'distinct_group_count', semanticType: 'count' },
+    { kind: 'rows_per_group', needsGroup: true, column: 'rows_per_group', semanticType: 'count' },
+    { kind: 'aggregate_input_non_null_count', needsAggregate: true, column: 'aggregate_input_non_null_count', semanticType: 'count' },
+    { kind: 'aggregate_input_value_summary', needsAggregate: true, column: 'aggregate_input_value_summary', semanticType: 'summary' },
+  ];
+  return definitions.map((definition, index) => {
+    const factIds = [...aggregates.map((fact) => fact.id), ...groupingKeys.map((fact) => fact.id)];
+    const blockedReasons = sortedUnique(issues.filter((issue) => issue.factIds.some((id) => factIds.includes(id))).map((issue) => issue.code));
+    const available = sources.length > 0 && (!definition.needsAggregate || aggregates.some((fact) => fact.status === 'available')) && (!definition.needsGroup || groupingKeys.length > 0 && groupingKeys.every((fact) => fact.status === 'available'));
+    return {
+      aggregateFactIds: definition.needsAggregate ? aggregates.map((fact) => fact.id) : [], assumptions: ['The external evaluator observes the same query scope and source snapshot described by these static facts.'], blockedReasons: available ? [] : blockedReasons.length ? blockedReasons : ['observation_prerequisite_missing'], concernIds: sortedUnique(candidateConcernIds), doesNotProve: ['A matching observation does not identify a root cause or prove that the original query is incorrect.'], expectedColumns: [{ name: definition.column, semanticType: definition.semanticType }], groupingKeyIds: definition.needsGroup ? groupingKeys.map((fact) => fact.id) : [], id: `observation:${String(index + 1).padStart(3, '0')}`, inconclusiveWhen: ['Required facts are ambiguous or unsupported.', 'The observed shape does not match expected columns.', 'The observation snapshot is not comparable to the original incident.'], kind: definition.kind, sourceIds: sources.map((source) => source.id), status: available ? 'available' : 'blocked',
+    };
+  });
+}
+
+function collectIssues(aggregates: AggregateOperationFactV1[], groupingKeys: GroupingKeyFactV1[], sources: ProbePrerequisiteSourceV1[]): ProbePrerequisiteIssueV1[] {
+  const byCode = new Map<PrerequisiteIssueCodeV1, string[]>();
+  for (const fact of [...aggregates, ...groupingKeys]) for (const code of fact.issueCodes) byCode.set(code, [...(byCode.get(code) ?? []), fact.id]);
+  for (const source of sources.filter((source) => source.status === 'ambiguous')) byCode.set('source_provenance_unreconstructable', [...(byCode.get('source_provenance_unreconstructable') ?? []), source.id]);
+  return [...byCode.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([code, factIds]) => ({ code, factIds, message: issueMessage(code), status: code.includes('unsupported') || code === 'aggregate_input_scalar_subquery' || code.startsWith('group_') ? 'blocked' : 'ambiguous' }));
+}
+
+function findFunctionCalls(value: unknown): FunctionCall[] { const found: FunctionCall[] = []; visit(value, (item) => { if (item instanceof FunctionCall) found.push(item); }); return found; }
+function containsInlineQuery(value: unknown): boolean { let found = false; visit(value, (item) => { if (item instanceof InlineQuery || item instanceof SubQuerySource) found = true; }); return found; }
+function visit(value: unknown, callback: (value: unknown) => void, seen = new Set<object>()): void { if (!value || typeof value !== 'object' || seen.has(value as object)) return; seen.add(value as object); callback(value); for (const nested of Object.values(value as Record<string, unknown>)) { if (nested instanceof Map || nested instanceof Set) continue; if (Array.isArray(nested)) for (const item of nested) visit(item, callback, seen); else visit(nested, callback, seen); } }
+function functionName(call: FunctionCall): string { return String((call.qualifiedName.name as { value?: string; name?: string }).value ?? (call.qualifiedName.name as { name?: string }).name ?? '').toLowerCase(); }
+function looksAggregate(call: FunctionCall): boolean { return Boolean(call.over || call.withinGroup || call.filterCondition); }
+function isDistinctArgument(value: unknown): boolean { return Boolean(value && typeof value === 'object' && 'operator' in value && String(((value as { operator?: { value?: unknown } }).operator?.value ?? '')).toLowerCase() === 'distinct'); }
+function unwrapDistinct(value: unknown): unknown { return isDistinctArgument(value) ? (value as { expression?: unknown }).expression : value; }
+function inputKind(value: unknown): AggregateOperationFactV1['inputKind'] { const unwrapped = unwrapDistinct(value); if (unwrapped instanceof ColumnReference) return unwrapped.column.name === '*' ? 'star' : 'column'; if (containsInlineQuery(unwrapped)) return 'scalar_subquery'; if (unwrapped?.constructor?.name === 'CaseExpression') return 'case_expression'; return unwrapped ? 'composite_expression' : 'unknown'; }
+function matchReferences(all: ProbePrerequisiteReferenceV1[], refs: LineageColumnRef[]): string[] { return sortedUnique(refs.flatMap((ref) => all.filter((item) => item.nodeId === ref.nodeId && item.columnName === ref.columnName && (!ref.scopeId || item.scopeId === ref.scopeId)).map((item) => item.id))); }
+function sourceIdsForReferences(sources: ProbePrerequisiteSourceV1[], references: ProbePrerequisiteReferenceV1[], ids: string[]): string[] { const nodes = new Set(references.filter((ref) => ids.includes(ref.id)).map((ref) => ref.nodeId)); return sources.filter((source) => nodes.has(source.nodeId)).map((source) => source.id); }
+function applySourceRoles(sources: ProbePrerequisiteSourceV1[], aggregates: AggregateOperationFactV1[], groupingKeys: GroupingKeyFactV1[]): void { for (const source of sources) { if (aggregates.some((fact) => fact.sourceIds.includes(source.id))) source.roles.push('aggregate_input'); if (groupingKeys.some((fact) => fact.sourceIds.includes(source.id))) source.roles.push('grouping_key'); } }
+function sourceKind(type: LineageNodeType): ProbePrerequisiteSourceV1['kind'] { return type === 'table' ? 'physical_table' : type === 'cte' ? 'cte' : type === 'derived' ? 'derived' : 'unknown'; }
+function addProvenance(map: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>, kind: ProbePrerequisiteFactsV1['provenance'][number]['kind'], sourceId: string): void { const id = `${kind.replace(/_/g, '-')}:${sourceId}`; map.set(id, { id, kind, sourceId }); }
+function sortedUnique<T extends string>(values: T[]): T[] { return [...new Set(values)].sort((a, b) => a.localeCompare(b)); }
+function sortById<T extends { id: string }>(values: T[], _unused?: unknown): T[] { return [...values].sort((a, b) => a.id.localeCompare(b.id)); }
+function issueMessage(code: PrerequisiteIssueCodeV1): string { return ({ aggregate_input_ambiguous: 'Aggregate input references are ambiguous.', aggregate_input_multi_relation: 'Aggregate input spans multiple relations.', aggregate_input_scalar_subquery: 'Scalar-subquery aggregate input is not reconstructable as one source observation.', aggregate_operation_unsupported: 'Aggregate operation is unsupported.', aggregate_window_unsupported: 'Window aggregate observations are unsupported in version 1.', dialect_aggregate_unsupported: 'Dialect-specific aggregate semantics are unsupported.', group_alias_unresolved: 'GROUP BY alias cannot be resolved uniquely.', group_ordinal_unresolved: 'GROUP BY ordinal does not resolve to one select item.', observation_prerequisite_missing: 'A required static observation prerequisite is missing.', source_provenance_unreconstructable: 'Source provenance cannot be reconstructed.', wildcard_reference_ambiguous: 'Wildcard or unresolved reference is ambiguous.' } satisfies Record<PrerequisiteIssueCodeV1, string>)[code]; }

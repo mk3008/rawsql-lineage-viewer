@@ -3,6 +3,7 @@ import type { LineageModel, LineageNode } from '../domain/lineage';
 import type { ProblemIntent } from './problemIntent';
 import { analyzeSql } from './rawsqlAdapter';
 import { parseSchemaFactsFromDdl, type DdlInput, type SchemaFacts } from './schemaFacts';
+import { buildProbePrerequisiteFactsV1, type ProbePrerequisiteFactsV1 } from './probePrerequisiteFacts';
 import {
   BinarySelectQuery,
   CTECollector,
@@ -220,6 +221,8 @@ export interface InvestigationPlanV1 {
   nextEvidenceChecklist: NextEvidenceChecklistItemV1[];
   /** The submitted statement, preserved and labeled without rewriting or execution. */
   originalQuery: SqlArtifactV1<'original_query'>;
+  /** Parser/lineage-backed prerequisites only; this field never contains probe SQL or observations. */
+  probePrerequisiteFacts: ProbePrerequisiteFactsV1;
   parameters: InvestigationParameterV1[];
   recommendedProbes: ProbeSpecV1[];
   target: InvestigationTargetV1;
@@ -303,6 +306,7 @@ export function createInvestigationPlan(input: InvestigationPlanInputV1): Invest
   return {
     ...createInvestigationPlanFromDiagnosticPacket(packet, parameters, symptom, lineage),
     originalQuery: { artifactKind: 'original_query', sql: input.sql },
+    probePrerequisiteFacts: buildProbePrerequisiteFactsV1({ candidateConcernIds: indexCandidateConcerns(packet.candidateConcerns).map((concern) => concern.id), lineage, parameters, schemaFacts, sql: input.sql, target: { ...input.target, symptom } }),
   };
 }
 
@@ -312,7 +316,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
   parameterInput: InvestigationPlannerParametersV1 = { definitions: [] },
   symptom: string = DEFAULT_INVESTIGATION_SYMPTOM,
   nodeQueryContext?: InvestigationNodeQueryContextV1,
-): Omit<InvestigationPlanV1, 'originalQuery'> {
+): Omit<InvestigationPlanV1, 'originalQuery' | 'probePrerequisiteFacts'> {
   const inputs = normalizePlannerParameters(parameterInput);
   assertParameterInput(inputs);
   const indexedConcerns = indexCandidateConcerns(packet.candidateConcerns);
