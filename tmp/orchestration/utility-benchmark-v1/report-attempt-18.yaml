@@ -1,0 +1,30 @@
+report_version: 1
+task_id: utility-benchmark-v1
+attempt: 18
+worker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2
+parent_thread_id: 019f6ad2-9019-7473-98a1-8b09959d90a6
+status: ready_for_review
+base_state:
+  commit: 43f50bcbda2a19353926b8dd3f5f12d17a9bb5a7
+changed_paths: []
+acceptance:
+  - criterion: private synthetic fixture transport
+    status: done
+    evidence: source/destination counts and aggregate hashes matched; private paths remain ignored
+  - criterion: unchanged focused tests and synthetic runner
+    status: done
+    evidence: Vitest passed; runner exited successfully; evidence-attempt-18.json created
+verification:
+  - command: npx vitest run tests/dogfooding/utility-benchmark-v1
+    result: passed
+  - command: node --import tsx tests/dogfooding/utility-benchmark-v1/run.ts
+    result: passed
+  - command: git diff --check
+    result: passed
+  - command: private fixture source/destination aggregate verification
+    result: matched
+human_or_external_evidence:
+  - item: isolated synthetic PostgreSQL execution
+    status: confirmed
+    reason: runner exited successfully and durable value-free evidence was produced
+recommended_next: parent_review
