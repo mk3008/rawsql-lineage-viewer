@@ -230,9 +230,13 @@ function collectSources(lineage: LineageModel, references: ProbePrerequisiteRefe
       const ownerScopeId = ownerScopes.length === 1 ? ownerScopes[0].id : undefined;
       if (ownerNodeId) addProvenance(provenance, 'lineage_node', ownerNodeId);
       if (ownerScopeId) addProvenance(provenance, 'lineage_scope', ownerScopeId);
-      const directness = reachability.ambiguousNodeIds.has(node.id) || ownerNodeIds.length !== 1
+      const ownershipEdges = ownerNodeId ? lineage.edges.filter((edge) => edge.source === node.id && edge.target === ownerNodeId) : [];
+      const hasPredicateEvidence = ownershipEdges.some((edge) => edge.kind === 'predicate_subquery' || edge.kind === 'correlation');
+      const hasNonPredicateEvidence = ownershipEdges.some((edge) => edge.kind !== 'predicate_subquery' && edge.kind !== 'correlation');
+      const directness = reachability.ambiguousNodeIds.has(node.id) || ownerNodeIds.length !== 1 || hasPredicateEvidence && hasNonPredicateEvidence
         ? 'unknown' as const
-        : ownerNodeId === selectedTargetNodeId ? 'direct' as const : ownerNodeId ? 'internal' as const : 'unknown' as const;
+        : hasPredicateEvidence ? 'internal' as const
+          : ownerNodeId === selectedTargetNodeId ? 'direct' as const : ownerNodeId ? 'internal' as const : 'unknown' as const;
       return {
         directness,
         id: `source:${String(index + 1).padStart(3, '0')}`,

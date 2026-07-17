@@ -61,6 +61,10 @@ The same resolved-and-direct requirement applies to every source linked from a
 grouping or aggregate-input observation. Unknown, ambiguous, cyclic,
 multiple-owner, missing-owner, and internal sources cannot leave a linked
 observation available.
+Predicate-subquery and correlation edges are nested ownership evidence, even
+when they target the outer output node. A source with both direct value-flow and
+predicate evidence is occurrence-ambiguous and fails closed rather than being
+classified from either edge first.
 
 An `available` observation contract means only that its static prerequisites
 are represented. It does not authorize execution, prove a root cause, show

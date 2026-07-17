@@ -20,6 +20,30 @@ describe('Probe Prerequisite Facts V1', () => {
     expect(JSON.stringify(result)).not.toContain(sql);
   });
 
+  it.each([
+    ['correlated EXISTS', 'SELECT SUM(o.amount) AS total FROM orders o WHERE EXISTS (SELECT 1 FROM refunds r WHERE r.order_id = o.id)'],
+    ['uncorrelated NOT EXISTS', 'SELECT SUM(o.amount) AS total FROM orders o WHERE NOT EXISTS (SELECT 1 FROM refunds r WHERE r.active = true)'],
+  ])('keeps predicate sources internal for %s', (_label, sql) => {
+    const result = facts(sql);
+    expect(result.sources).toEqual([
+      expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', roles: expect.arrayContaining(['aggregate_input', 'query_source']) }),
+      expect.objectContaining({ directness: 'internal', nodeId: 'table_refunds', roles: ['internal_source'] }),
+    ]);
+    const rowCounts = result.observations.filter((item) => item.kind === 'source_row_count');
+    expect(rowCounts).toEqual([
+      expect.objectContaining({ sourceIds: ['source:001'], status: 'available' }),
+      expect.objectContaining({ blockedReasons: ['observation_prerequisite_missing'], sourceIds: ['source:002'], status: 'blocked' }),
+    ]);
+    expect(result.observations.filter((item) => item.kind.startsWith('aggregate_input')).every((item) => item.status === 'available')).toBe(true);
+  });
+
+  it('fails closed when one physical source has both direct and predicate evidence', () => {
+    const result = facts('SELECT SUM(o.amount) AS total FROM orders o WHERE EXISTS (SELECT 1 FROM orders i WHERE i.parent_id = o.id)');
+    expect(result.sources).toEqual([expect.objectContaining({ directness: 'unknown', nodeId: 'table_orders', status: 'ambiguous' })]);
+    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.status === 'blocked')).toBe(true);
+    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.blockedReasons.includes('source_provenance_unreconstructable'))).toBe(true);
+  });
+
   it('represents multiple and expression grouping keys with source links', () => {
     const result = facts('SELECT customer_id + 1 AS bucket, region, SUM(amount) AS total FROM orders GROUP BY customer_id + 1, region');
     expect(result.groupingKeys.map((key) => key.kind)).toEqual(['expression', 'column']);

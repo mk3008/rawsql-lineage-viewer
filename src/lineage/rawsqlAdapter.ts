@@ -2979,7 +2979,7 @@ function sanitizeId(value: string): string {
 function dedupeEdges(edges: LineageEdge[]): LineageEdge[] {
   const seen = new Set<string>();
   return edges.filter((edge) => {
-    const key = `${edge.source}|${edge.target}|${edge.type}|${edge.label ?? ''}`;
+    const key = `${edge.source}|${edge.target}|${edge.type}|${edge.kind ?? ''}|${edge.label ?? ''}|${edge.sourceAlias ?? ''}`;
     if (seen.has(key)) {
       return false;
     }
