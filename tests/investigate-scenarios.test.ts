@@ -67,7 +67,11 @@ describe('rawsql-lineage investigate scenario fixtures', () => {
 
     if (scenarioName === 'value-too-low-status-filter') {
       expect(probes).toHaveLength(1);
-      expect(probes[0]).toMatchObject({ id: 'probe:node-query-outer-filter:01', nodeId: 'main_output', readOnly: true });
+      expect(probes[0]).toMatchObject({
+        id: 'probe:node-query-outer-filter:01',
+        nodeId: 'main_output',
+        staticSafetyEvidence: { confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 },
+      });
       expect(probes[0].parameters.map((parameter) => parameter.name)).toEqual(['customer_id']);
     } else {
       expect(probes).toEqual([]);
@@ -93,7 +97,9 @@ function assertStaticInvestigationPlan(plan: InvestigationPlanV1, expected: Scen
   ]));
 
   for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
-    expect(probe.readOnly).toBe(true);
+    expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
+    expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+    expect(probe.staticSafetyEvidence.executionCaveats.length).toBeGreaterThan(0);
     expect(probe.sql).toMatch(/^SELECT\s/i);
     expect(probe.sql).not.toContain(forbiddenParameterValue);
   }

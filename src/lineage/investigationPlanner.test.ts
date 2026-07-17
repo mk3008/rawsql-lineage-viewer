@@ -25,9 +25,16 @@ describe('createInvestigationPlan', () => {
     expect(plan.analysisMode).toBe('original');
     expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: input.sql });
     expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
+    for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+      expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
+      expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+      expect(probe.staticSafetyEvidence.executionCaveats.length).toBeGreaterThan(0);
+    }
     expect(plan.diagnostics[0].code).toBe('original_sql_only');
-    expect(JSON.stringify(plan)).not.toContain('equivalent_rewrite');
-    expect(JSON.stringify(plan)).not.toContain('corrected_query');
+    const serialized = JSON.stringify(plan);
+    expect(serialized).not.toContain('equivalent_rewrite');
+    expect(serialized).not.toContain('corrected_query');
+    expect(serialized).not.toContain('readOnly');
   });
 
   it('preserves the supplied symptom on the investigation target and defaults deterministically', () => {
@@ -281,11 +288,22 @@ describe('createInvestigationPlan', () => {
     expect(JSON.stringify(plan.nextEvidenceChecklist)).not.toContain('status =');
   });
 
-  it('uses submitted SQL and parser-backed fragments for standalone read-only SELECT probes without inlining values', () => {
+  it('uses submitted SQL and parser-backed fragments for syntax-classified SELECT probes without inlining values', () => {
     const plan = createInvestigationPlan({ sql: 'SELECT status FROM orders WHERE status IS NOT NULL', target: { columnName: 'status', nodeId: 'main_output' }, parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }] });
     expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'SELECT status FROM orders WHERE status IS NOT NULL' });
     expect(plan.recommendedProbes).toHaveLength(1);
-    expect(plan.recommendedProbes[0]).toMatchObject({ artifactKind: 'investigation_probe', readOnly: true, sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)' });
+    expect(plan.recommendedProbes[0]).toMatchObject({
+      artifactKind: 'investigation_probe',
+      sql: 'SELECT COUNT(*) AS candidate_rows FROM orders WHERE (status is not null)',
+      staticSafetyEvidence: {
+        assumptions: expect.arrayContaining([expect.any(String)]),
+        basis: 'parser_ast',
+        confidence: 'syntax_only',
+        executionCaveats: expect.arrayContaining(['This static classification does not authorize execution.']),
+        statementClassification: 'select_statement',
+        version: 1,
+      },
+    });
     expect(plan.recommendedProbes[0].sql).not.toContain('paid');
     for (const probe of plan.recommendedProbes) {
       expect(() => analyzeSql(probe.sql, { analysisMode: 'original', optimizeConditions: false })).not.toThrow();
@@ -438,7 +456,12 @@ describe('createInvestigationPlan', () => {
       kind: 'node_query_outer_filter',
       nodeId: 'main_output',
       priority: 1,
-      readOnly: true,
+      staticSafetyEvidence: {
+        basis: 'parser_ast',
+        confidence: 'syntax_only',
+        statementClassification: 'select_statement',
+        version: 1,
+      },
     });
     expect(probe?.sql).toContain(`FROM (\n${nodeQuery}\n) AS investigation_node`);
     expect(probe?.sql).toContain('investigation_node."customer_id" = :customer_id');
@@ -559,7 +582,7 @@ describe('createInvestigationPlan', () => {
 
     expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
     expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
-    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_STATEMENT_CLASS_UNSUPPORTED', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
   });
 
   it('allows nested SELECT-only CTEs before creating an outer-filter probe', () => {
@@ -571,7 +594,7 @@ describe('createInvestigationPlan', () => {
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
 
-    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', staticSafetyEvidence: expect.objectContaining({ statementClassification: 'select_statement' }) }));
   });
 
   it('blocks a data-modifying CTE nested beneath a SELECT CTE', () => {
@@ -585,7 +608,7 @@ describe('createInvestigationPlan', () => {
 
     expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
     expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
-    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_STATEMENT_CLASS_UNSUPPORTED', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
   });
 
   it('blocks a data-modifying CTE nested inside a derived-table source', () => {
@@ -599,7 +622,7 @@ describe('createInvestigationPlan', () => {
 
     expect(plan.recommendedProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
     expect(plan.deferredProbes.some((probe) => probe.kind === 'node_query_outer_filter')).toBe(false);
-    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_NOT_READ_ONLY', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
+    expect(plan.blockedProbes).toContainEqual(expect.objectContaining({ code: 'PROBE_STATEMENT_CLASS_UNSUPPORTED', id: 'probe:node-query-outer-filter:01', status: 'blocked' }));
   });
 
   it('allows a SELECT-only derived-table source', () => {
@@ -611,7 +634,7 @@ describe('createInvestigationPlan', () => {
       contextFor(querySql, [{ name: 'customer_id', outputIndex: 0 }]),
     );
 
-    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', readOnly: true }));
+    expect(plan.recommendedProbes).toContainEqual(expect.objectContaining({ kind: 'node_query_outer_filter', staticSafetyEvidence: expect.objectContaining({ statementClassification: 'select_statement' }) }));
   });
 
   it.each([
@@ -619,7 +642,7 @@ describe('createInvestigationPlan', () => {
     ['duplicate key output', contextFor('SELECT customer_id, customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }, { name: 'customer_id', outputIndex: 1 }]), 'AMBIGUOUS_OUTPUT_COLUMN'],
     ['unresolved wildcard', { ...contextFor('SELECT customer_id FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), analysisWarnings: [{ code: 'wildcard_unresolved_without_schema', message: 'Wildcard expansion is unresolved.' }] }, 'UNRESOLVED_WILDCARD'],
     ['absent node query', contextFor(undefined, [{ name: 'customer_id', outputIndex: 0 }]), 'NODE_QUERY_UNAVAILABLE'],
-    ['non-SELECT node query', contextFor('DELETE FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_NOT_READ_ONLY'],
+    ['non-SELECT node query', contextFor('DELETE FROM payments', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_STATEMENT_CLASS_UNSUPPORTED'],
     ['unparseable node query', contextFor('SELECT FROM', [{ name: 'customer_id', outputIndex: 0 }]), 'PROBE_REPARSE_FAILED'],
     ['source alias only', contextFor('SELECT p.amount FROM payments p', [{ name: 'amount', outputIndex: 0 }]), 'INVESTIGATION_KEY_NOT_EXPOSED'],
   ])('blocks the outer-filter probe for %s', (_label, context, code) => {

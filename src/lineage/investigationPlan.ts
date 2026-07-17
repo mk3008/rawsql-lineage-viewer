@@ -105,6 +105,16 @@ export interface InvestigationLimitationV1 {
   message: string;
 }
 
+/** Deterministic syntax evidence about a proposed probe; it never authorizes execution. */
+export interface ProbeStaticSafetyEvidenceV1 {
+  assumptions: string[];
+  basis: 'parser_ast';
+  confidence: 'syntax_only';
+  executionCaveats: string[];
+  statementClassification: 'select_statement';
+  version: 1;
+}
+
 export interface ProbeSpecV1 extends SqlArtifactV1<'investigation_probe'> {
   /** A deterministic identifier within the plan. */
   id: string;
@@ -117,8 +127,8 @@ export interface ProbeSpecV1 extends SqlArtifactV1<'investigation_probe'> {
   priority: number;
   priorityReasons: string[];
   question: string;
-  readOnly: true;
   reason: string;
+  staticSafetyEvidence: ProbeStaticSafetyEvidenceV1;
 }
 
 export interface BlockedProbeV1 {
@@ -197,7 +207,7 @@ export interface InvestigationPlanInputV1 {
   parameters?: InvestigationPlannerParameterInputV1[];
 }
 
-/** Parser-backed node context used only to construct a read-only outer-filter probe. */
+/** Parser-backed node context used only to construct a syntax-classified outer-filter probe. */
 export interface InvestigationNodeQueryContextV1 {
   analysisWarnings: LineageModel['analysisWarnings'];
   nodes: LineageNode[];
@@ -260,12 +270,12 @@ export function createInvestigationPlanFromDiagnosticPacket(
     const { concern } = indexedConcern;
     const probeId = `probe:${slug(concern.kind)}:${String(indexedConcern.index + 1).padStart(2, '0')}`;
     if (concern.kind !== 'where') {
-      blockedProbes.push(blockedProbe(probeId, 'UNSUPPORTED_CONCERN_KIND', 'Only a single-relation WHERE predicate is supported for a standalone read-only probe.'));
+      blockedProbes.push(blockedProbe(probeId, 'UNSUPPORTED_CONCERN_KIND', 'Only a single-relation WHERE predicate is supported for a standalone SELECT probe.'));
       continue;
     }
     const influence = resolveWhereInfluence(concern, packet);
     if (!influence) {
-      blockedProbes.push(blockedProbe(probeId, 'SAFE_PROBE_FRAGMENT_UNAVAILABLE', 'No parser-backed WHERE predicate is available for a safe read-only probe.'));
+      blockedProbes.push(blockedProbe(probeId, 'SAFE_PROBE_FRAGMENT_UNAVAILABLE', 'No parser-backed WHERE predicate is available for a syntax-classified SELECT probe.'));
       continue;
     }
     if (new Set(influence.references.map((reference) => reference.nodeId)).size !== 1) {
@@ -278,7 +288,7 @@ export function createInvestigationPlanFromDiagnosticPacket(
     }
     const source = resolveProbeSource(concern, packet, sourceByNodeId);
     if (!source) {
-      blockedProbes.push(blockedProbe(probeId, 'UNSUITABLE_PROBE_SOURCE', 'No supported physical source relation is available for a standalone read-only probe.'));
+      blockedProbes.push(blockedProbe(probeId, 'UNSUITABLE_PROBE_SOURCE', 'No supported physical source relation is available for a standalone SELECT probe.'));
       continue;
     }
     const probe = createProbe(probeId, concern, source.relation, source.nodeId, influence.expressionSql, indexedConcern.index + 1, parameterEntries);
@@ -471,19 +481,19 @@ function createNodeQueryOuterFilterProbe(
     }
     outputKeys.push(quoteIdentifier(matchingColumns[0].name));
   }
-  const nodeQueryReadOnly = inspectReadOnlyProbeSql(node.querySql);
-  if (nodeQueryReadOnly.ok === false) {
-    return { blocked: blockedProbe('probe:node-query-outer-filter:01', nodeQueryReadOnly.code, nodeQueryReadOnly.reason) };
+  const nodeQueryInspection = inspectStaticProbeStatement(node.querySql);
+  if (nodeQueryInspection.ok === false) {
+    return { blocked: blockedProbe('probe:node-query-outer-filter:01', nodeQueryInspection.code, nodeQueryInspection.reason) };
   }
 
   const id = 'probe:node-query-outer-filter:01';
   const conditions = investigationKeys.map((key, index) => `investigation_node.${outputKeys[index]} = :${key.name}`);
   const sql = `SELECT * FROM (\n${node.querySql}\n) AS investigation_node WHERE ${conditions.join(' AND ')}`;
-  const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
-  if (generatedProbeReadOnly.ok === false) {
-    return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
+  const generatedProbeInspection = inspectStaticProbeStatement(sql);
+  if (generatedProbeInspection.ok === false) {
+    return { blocked: blockedProbe(id, generatedProbeInspection.code, generatedProbeInspection.reason) };
   }
-  const parameterNames = collectParameterNames(generatedProbeReadOnly.statement);
+  const parameterNames = collectParameterNames(generatedProbeInspection.statement);
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return {
     probe: {
@@ -492,15 +502,15 @@ function createNodeQueryOuterFilterProbe(
       hypothesis: 'Filtering the selected node query by the explicitly supplied investigation key can isolate the relevant output rows without changing its internal SQL.',
       id,
       kind: 'node_query_outer_filter',
-      limitations: ['The original node query is preserved inside a derived-table wrapper.', 'The query is a proposed read-only SELECT and has not been executed.', 'Parameter values are referenced by placeholders and are never inlined.'],
+      limitations: ['The original node query is preserved inside a derived-table wrapper.', 'The product did not run the proposed SELECT statement.', 'Parameter values are referenced by placeholders and are never inlined.'],
       nodeId: node.id,
       parameters,
       priority: 1,
       priorityReasons: ['The selected node query exposes the explicitly supplied investigation key exactly once.'],
       question: `Which selected-node rows match the supplied ${investigationKeys.map((key) => key.name).join(', ')} key values?`,
-      readOnly: true,
       reason: 'Wrap the proven standalone node query and apply the investigation key only in the outer filter.',
       sql,
+      staticSafetyEvidence: createProbeStaticSafetyEvidence(),
     },
   };
 }
@@ -514,66 +524,83 @@ function hasWhereConcernForTargetNode(packet: ColumnDiagnosticPacket, context: I
   }));
 }
 
-type ReadOnlyProbeInspection =
+type StaticProbeStatementInspection =
   | { ok: true; statement: unknown }
-  | { code: 'PROBE_NOT_READ_ONLY' | 'PROBE_REPARSE_FAILED'; ok: false; reason: string };
+  | { code: 'PROBE_REPARSE_FAILED' | 'PROBE_STATEMENT_CLASS_UNSUPPORTED'; ok: false; reason: string };
 
 /**
- * `readOnly: true` means one parseable SELECT statement whose complete CTE tree
- * contains only SELECT queries. It does not establish the absence of database-
- * specific function, lock, extension, or user-defined-function side effects.
+ * Classifies one parseable SELECT statement whose complete CTE tree contains
+ * only SELECT queries. This syntax check is not execution authorization.
  */
-function inspectReadOnlyProbeSql(sql: string): ReadOnlyProbeInspection {
+function inspectStaticProbeStatement(sql: string): StaticProbeStatementInspection {
   try {
     const statement = SqlParser.parse(sql);
-    return isReadOnlySelectTree(statement)
+    return isSupportedSelectTree(statement)
       ? { ok: true, statement }
       : {
-        code: 'PROBE_NOT_READ_ONLY',
+        code: 'PROBE_STATEMENT_CLASS_UNSUPPORTED',
         ok: false,
-        reason: 'The parsed probe contains a query tree that is not provably read-only.',
+        reason: 'The parsed probe is not within the supported static SELECT statement class.',
       };
   } catch {
     return {
       code: 'PROBE_REPARSE_FAILED',
       ok: false,
-      reason: 'The probe SQL did not parse as one read-only SELECT statement.',
+      reason: 'The probe SQL did not parse as one supported SELECT statement.',
     };
   }
 }
 
 /** Permits only public SELECT AST classes and recursively verifies every CTE body. */
-function isReadOnlySelectTree(query: unknown): boolean {
+function isSupportedSelectTree(query: unknown): boolean {
   if (query instanceof SimpleSelectQuery) {
-    return (query.withClause?.tables ?? []).every((table) => isReadOnlyCteQuery(table.query))
-      && isReadOnlyFromClause(query)
-      && new CTECollector().collect(query).every((table) => isReadOnlyCteQuery(table.query));
+    return (query.withClause?.tables ?? []).every((table) => isSupportedCteQuery(table.query))
+      && isSupportedFromClause(query)
+      && new CTECollector().collect(query).every((table) => isSupportedCteQuery(table.query));
   }
   if (query instanceof BinarySelectQuery) {
-    return isReadOnlySelectTree(query.left) && isReadOnlySelectTree(query.right);
+    return isSupportedSelectTree(query.left) && isSupportedSelectTree(query.right);
   }
   return false;
 }
 
 /** Verifies parser-backed derived-table query sources instead of treating them as opaque tables. */
-function isReadOnlyFromClause(query: SimpleSelectQuery): boolean {
+function isSupportedFromClause(query: SimpleSelectQuery): boolean {
   const sources = query.fromClause?.getSources() ?? [];
-  return sources.every((source) => isReadOnlySource(source.datasource));
+  return sources.every((source) => isSupportedSelectSource(source.datasource));
 }
 
-function isReadOnlySource(source: unknown): boolean {
+function isSupportedSelectSource(source: unknown): boolean {
   if (source instanceof TableSource) return true;
-  if (source instanceof SubQuerySource) return isReadOnlySelectTree(source.query);
-  if (source instanceof ParenSource) return isReadOnlySource(source.source);
+  if (source instanceof SubQuerySource) return isSupportedSelectTree(source.query);
+  if (source instanceof ParenSource) return isSupportedSelectSource(source.source);
   if (source instanceof FunctionSource) return true;
   return false;
 }
 
-function isReadOnlyCteQuery(query: unknown): boolean {
+function isSupportedCteQuery(query: unknown): boolean {
   if (query instanceof InsertQuery || query instanceof UpdateQuery || query instanceof DeleteQuery || query instanceof MergeQuery) {
     return false;
   }
-  return isReadOnlySelectTree(query);
+  return isSupportedSelectTree(query);
+}
+
+function createProbeStaticSafetyEvidence(): ProbeStaticSafetyEvidenceV1 {
+  return {
+    assumptions: [
+      'The SQL is interpreted by the parser version bundled with this product.',
+      'The statement uses syntax supported by that parser.',
+    ],
+    basis: 'parser_ast',
+    confidence: 'syntax_only',
+    executionCaveats: [
+      'This static classification does not authorize execution.',
+      'No database, permissions, data, runtime bindings, or execution environment was inspected.',
+      'SELECT syntax does not establish the absence of database-specific functions, locks, extensions, or user-defined effects.',
+    ],
+    statementClassification: 'select_statement',
+    version: 1,
+  };
 }
 
 function quoteIdentifier(value: string): string {
@@ -614,27 +641,27 @@ function createProbe(
   parameterEntries: Map<string, InvestigationParameterV1>,
 ): { blocked: BlockedProbeV1; probe?: never } | { blocked?: never; probe: ProbeSpecV1 } {
   const sql = `SELECT COUNT(*) AS candidate_rows FROM ${source} WHERE (${evidence})`;
-  const generatedProbeReadOnly = inspectReadOnlyProbeSql(sql);
-  if (generatedProbeReadOnly.ok === false) {
-    return { blocked: blockedProbe(id, generatedProbeReadOnly.code, generatedProbeReadOnly.reason) };
+  const generatedProbeInspection = inspectStaticProbeStatement(sql);
+  if (generatedProbeInspection.ok === false) {
+    return { blocked: blockedProbe(id, generatedProbeInspection.code, generatedProbeInspection.reason) };
   }
-  const parameterNames = collectParameterNames(generatedProbeReadOnly.statement);
+  const parameterNames = collectParameterNames(generatedProbeInspection.statement);
   const parameters = parameterNames.map((name) => ensureProbeParameter(name, id, parameterEntries));
   return { probe: {
     artifactKind: 'investigation_probe',
     confidence: concern.confidence,
-    hypothesis: `${concern.reason} This remains a candidate concern until the read-only probe is evaluated.`,
+    hypothesis: `${concern.reason} This remains a candidate concern until the proposed probe is evaluated externally.`,
     id,
     kind: 'candidate_row_count',
-    limitations: ['The query is a proposed read-only SELECT and has not been executed.', 'Parameter values are referenced by placeholders and are never inlined.'],
+    limitations: ['The product did not run the proposed SELECT statement.', 'Parameter values are referenced by placeholders and are never inlined.'],
     nodeId: sourceNodeId,
     parameters,
     priority,
     priorityReasons: ['Directly tests static SQL evidence for a candidate concern.'],
     question: `How many rows in ${source} satisfy the candidate condition?`,
-    readOnly: true,
     reason: concern.reason,
     sql,
+    staticSafetyEvidence: createProbeStaticSafetyEvidence(),
   } };
 }
 

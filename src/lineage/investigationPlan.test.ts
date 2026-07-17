@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { sqlArtifactKinds, type InvestigationParameterV1, type InvestigationPlanV1 } from './investigationPlan';
+import { sqlArtifactKinds, type InvestigationParameterV1, type InvestigationPlanV1, type ProbeStaticSafetyEvidenceV1 } from './investigationPlan';
+
+const staticSafetyEvidence = {
+  assumptions: ['The SQL is interpreted by the parser version bundled with this product.'],
+  basis: 'parser_ast',
+  confidence: 'syntax_only',
+  executionCaveats: ['This static classification does not authorize execution.'],
+  statementClassification: 'select_statement',
+  version: 1,
+} satisfies ProbeStaticSafetyEvidenceV1;
 
 describe('InvestigationPlanV1 contract', () => {
   it('exports only the accepted SQL artifact taxonomy', () => {
@@ -31,7 +40,7 @@ describe('InvestigationPlanV1 contract', () => {
         { id: 'parameter:environment', name: 'database_timezone', origin: 'environment_parameter', required: false, status: 'required', typeHint: 'iana-timezone', usedBy: [] },
         { id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] },
       ],
-      recommendedProbes: [{ artifactKind: 'investigation_probe', confidence: 'possible', hypothesis: 'The status predicate may exclude rows.', id: 'probe:status-count', kind: 'row_count_comparison', limitations: ['Results require a read-only execution environment.'], nodeId: 'table_orders', parameters: [originalStatus], priority: 1, priorityReasons: ['Directly tests the candidate predicate.'], question: 'How many rows match the supplied status?', readOnly: true, reason: 'Compare the predicate-constrained row count.', sql: 'select count(*) from orders where status = :status' }],
+      recommendedProbes: [{ artifactKind: 'investigation_probe', confidence: 'possible', hypothesis: 'The status predicate may exclude rows.', id: 'probe:status-count', kind: 'row_count_comparison', limitations: ['The product did not run the proposed statement.'], nodeId: 'table_orders', parameters: [originalStatus], priority: 1, priorityReasons: ['Directly tests the candidate predicate.'], question: 'How many rows match the supplied status?', reason: 'Compare the predicate-constrained row count.', sql: 'select count(*) from orders where status = :status', staticSafetyEvidence }],
       target: { columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' },
       unresolvedParameters: [{ id: 'parameter:missing', name: 'tenant_id', origin: 'unresolved_parameter', required: true, status: 'unresolved', usedBy: [{ kind: 'probe', probeId: 'probe:status-count' }] }],
       version: 1,
@@ -42,10 +51,17 @@ describe('InvestigationPlanV1 contract', () => {
     expect(plan.recommendedProbes[0].artifactKind).toBe('investigation_probe');
     expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'missing_rows' });
     expect(plan.parameters.map((parameter) => parameter.origin)).toEqual(['original_query_parameter', 'investigation_key', 'derived_parameter', 'environment_parameter', 'unresolved_parameter']);
-    expect(plan.recommendedProbes[0].readOnly).toBe(true);
+    expect(plan.recommendedProbes[0].staticSafetyEvidence).toEqual(staticSafetyEvidence);
+    expect(plan.recommendedProbes[0].staticSafetyEvidence.assumptions).not.toHaveLength(0);
+    expect(plan.recommendedProbes[0].staticSafetyEvidence.executionCaveats).not.toHaveLength(0);
     expect(plan.deferredProbes).toEqual([]);
     expect(plan.blockedProbes[0]).toMatchObject({ code: 'JOIN_KEY_UNAVAILABLE', reason: expect.any(String) });
     expect(plan.unresolvedParameters[0].status).toBe('unresolved');
-    expect(JSON.stringify(plan)).not.toContain('corrected_query');
+    const serialized = JSON.stringify(plan);
+    expect(serialized).not.toContain('corrected_query');
+    expect(serialized).not.toContain('readOnly');
+    for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
+      expect(serialized).not.toContain(unsafeAssuranceTerm);
+    }
   });
 });

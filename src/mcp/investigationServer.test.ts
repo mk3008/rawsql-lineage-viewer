@@ -74,8 +74,18 @@ describe('create_investigation_plan MCP adapter', () => {
     expect(JSON.stringify(mcpPlan)).toBe(JSON.stringify(cliPlan));
     expect(mcpPlan.originalQuery).toEqual({ artifactKind: 'original_query', sql: fromFiles.sql });
     expect([...mcpPlan.recommendedProbes, ...mcpPlan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
-    expect(JSON.stringify(mcpPlan)).not.toContain('equivalent_rewrite');
-    expect(JSON.stringify(mcpPlan)).not.toContain('corrected_query');
+    for (const probe of [...mcpPlan.recommendedProbes, ...mcpPlan.deferredProbes]) {
+      expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
+      expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+      expect(probe.staticSafetyEvidence.executionCaveats).toContain('This static classification does not authorize execution.');
+    }
+    const serializedPlan = JSON.stringify(mcpPlan);
+    expect(serializedPlan).not.toContain('equivalent_rewrite');
+    expect(serializedPlan).not.toContain('corrected_query');
+    expect(serializedPlan).not.toContain('readOnly');
+    for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
+      expect(serializedPlan).not.toContain(unsafeAssuranceTerm);
+    }
     expect(mcpPlan.nextEvidenceChecklist).toEqual(cliPlan.nextEvidenceChecklist);
     expect(createInvestigationPlan(fromFiles)).toEqual(mcpPlan);
     expect(() => normalizeCreateInvestigationPlanInput(workspace, {
@@ -172,10 +182,18 @@ describe('create_investigation_plan MCP adapter', () => {
         originalQuery: { artifactKind: 'original_query', sql: 'select status from orders where status = :status' },
         target: { columnName: 'status', nodeId: 'main_output' },
       });
-      const firstPlan = first.structuredContent as { deferredProbes: Array<{ artifactKind: string }>; recommendedProbes: Array<{ artifactKind: string }> };
+      type StructuredProbe = { artifactKind: string; staticSafetyEvidence: { assumptions: string[]; executionCaveats: string[]; statementClassification: string } };
+      const firstPlan = first.structuredContent as { deferredProbes: StructuredProbe[]; recommendedProbes: StructuredProbe[] };
       expect([...firstPlan.recommendedProbes, ...firstPlan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
-      expect(JSON.stringify(first.structuredContent)).not.toContain('equivalent_rewrite');
-      expect(JSON.stringify(first.structuredContent)).not.toContain('corrected_query');
+      for (const probe of [...firstPlan.recommendedProbes, ...firstPlan.deferredProbes]) {
+        expect(probe.staticSafetyEvidence.statementClassification).toBe('select_statement');
+        expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+        expect(probe.staticSafetyEvidence.executionCaveats.length).toBeGreaterThan(0);
+      }
+      const serializedStructuredContent = JSON.stringify(first.structuredContent);
+      expect(serializedStructuredContent).not.toContain('equivalent_rewrite');
+      expect(serializedStructuredContent).not.toContain('corrected_query');
+      expect(serializedStructuredContent).not.toContain('readOnly');
 
       const invalid = await client.callTool({ name: 'create_investigation_plan', arguments: { sql: 'select 1', sqlPath: 'query.sql', targetColumn: 'x', targetNode: 'main_output' } });
       expect(invalid.isError).toBe(true);

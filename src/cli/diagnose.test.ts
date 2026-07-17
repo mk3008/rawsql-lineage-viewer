@@ -49,7 +49,8 @@ describe('rawsql-lineage diagnose CLI', () => {
       const stdout = execFileSync(process.execPath, [
         '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath,
       ], { encoding: 'utf8' });
-      const plan = JSON.parse(stdout) as { deferredProbes: Array<{ artifactKind: string; sql: string }>; diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; originalQuery: { artifactKind: string; sql: string }; recommendedProbes: Array<{ artifactKind: string; sql: string }>; target: { columnName: string; nodeId: string } };
+      type SerializedProbe = { artifactKind: string; sql: string; staticSafetyEvidence: { assumptions: string[]; basis: string; confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
+      const plan = JSON.parse(stdout) as { deferredProbes: SerializedProbe[]; diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; originalQuery: { artifactKind: string; sql: string }; recommendedProbes: SerializedProbe[]; target: { columnName: string; nodeId: string } };
 
       expect(plan.kind).toBe('investigation-plan');
       expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'select status from orders where status = :status' });
@@ -61,8 +62,17 @@ describe('rawsql-lineage diagnose CLI', () => {
       ]));
       expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
       expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+      for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+        expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
+        expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+        expect(probe.staticSafetyEvidence.executionCaveats).toContain('This static classification does not authorize execution.');
+      }
       expect(stdout).not.toContain('equivalent_rewrite');
       expect(stdout).not.toContain('corrected_query');
+      expect(stdout).not.toContain('readOnly');
+      for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
+        expect(stdout).not.toContain(unsafeAssuranceTerm);
+      }
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

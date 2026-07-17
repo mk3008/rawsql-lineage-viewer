@@ -56,14 +56,20 @@ JSON independently; the evaluator, not the worker, classifies the result as
 `meets`, `partially meets`, or `does not meet`. The evaluator should state
 blockers, non-blockers, evidence gaps, wording overreach, and missing user value.
 
-## Read-only probe boundary
+## Static probe classification
 
-`readOnly: true` means the probe is one parseable SQL statement with a top-level
-SELECT or binary SELECT and no data-modifying CTE at any nesting level. It is
-not executed or verified against a live database. This boundary does not prove
-the absence of DB-specific or user-defined function side effects, `SELECT FOR
-UPDATE` locking behavior, extension-specific syntax, or effects in SQL dialects
-outside the parser's supported surface.
+Each emitted probe includes `staticSafetyEvidence`, a versioned syntax-derived
+classification. A `select_statement` classification with `syntax_only`
+confidence means that the bundled parser recognized one SELECT or binary SELECT
+statement and found only SELECT queries throughout its parsed CTE tree.
+
+This classification is static evidence, not execution authorization. Its
+assumptions and execution caveats remain part of the artifact. In particular,
+the classification does not prove the absence of database-specific or
+user-defined function effects, `SELECT FOR UPDATE` locking behavior,
+extension-specific syntax, or effects in SQL dialects outside the parser's
+supported surface. The product does not inspect a live database, permissions,
+data, runtime bindings, or an execution environment.
 
 ## Required uncertainty fields
 

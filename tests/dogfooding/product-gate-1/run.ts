@@ -13,7 +13,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 type Scalar = boolean | number | string | null;
 type Request = { targetColumn: string; symptom: string; knownParameters?: Record<string, Scalar>; investigationKeys?: Record<string, Scalar> };
 type Parameter = { name: string; status: string; value?: Scalar };
-type Probe = { id: string; readOnly: true; sql: string; parameters: Parameter[] };
+type Probe = { id: string; sql: string; parameters: Parameter[]; staticSafetyEvidence: { confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
 type Plan = { blockedProbes: Array<{ id: string; status: string }>; deferredProbes: Probe[]; recommendedProbes: Probe[]; unresolvedParameters: Parameter[] };
 
 const harnessRoot = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -98,7 +98,13 @@ function executeListedProbes(plan: Plan, scenario: string): unknown {
   const results: unknown[] = [];
   for (const probe of plan.recommendedProbes) {
     if (!allowed.has(probe.id) || blocked.has(probe.id)) throw new Error(`${scenario}: rejected unknown or blocked probe ${probe.id}`);
-    if (probe.readOnly !== true || !/^\s*(?:with\b[\s\S]+?\bselect\b|select\b)/i.test(probe.sql)) throw new Error(`${scenario}: rejected non-read-only probe ${probe.id}`);
+    if (probe.staticSafetyEvidence.version !== 1 || probe.staticSafetyEvidence.statementClassification !== 'select_statement' || probe.staticSafetyEvidence.confidence !== 'syntax_only') {
+      throw new Error(`${scenario}: rejected probe with unexpected static classification ${probe.id}`);
+    }
+    if (!probe.staticSafetyEvidence.executionCaveats.includes('This static classification does not authorize execution.')) {
+      throw new Error(`${scenario}: rejected probe without the required execution caveat ${probe.id}`);
+    }
+    if (!/^\s*(?:with\b[\s\S]+?\bselect\b|select\b)/i.test(probe.sql)) throw new Error(`${scenario}: rejected probe outside the external gate SQL policy ${probe.id}`);
     const unresolved = probe.parameters.filter((parameter) => parameter.status === 'unresolved' || !Object.prototype.hasOwnProperty.call(parameter, 'value'));
     if (unresolved.length > 0 || plan.unresolvedParameters.length > 0) throw new Error(`${scenario}: rejected unresolved parameter(s) for ${probe.id}`);
     const positional = toPositionalParameters(probe.sql, probe.parameters);
