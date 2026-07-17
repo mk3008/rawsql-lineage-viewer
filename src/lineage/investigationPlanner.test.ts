@@ -502,6 +502,9 @@ describe('createInvestigationPlan', () => {
       ], ['customer_id', 'status']),
     });
     const probe = plan.recommendedProbes.find((item) => item.kind === 'node_query_outer_filter');
+    const targetWhereConcerns = plan.candidateConcerns.filter((concern) => concern.id.startsWith('concern:where:'));
+    expect(targetWhereConcerns).toHaveLength(1);
+    const [targetWhereConcern] = targetWhereConcerns;
 
     expect(probe).toMatchObject({
       artifactKind: 'investigation_probe',
@@ -517,9 +520,9 @@ describe('createInvestigationPlan', () => {
           expect.objectContaining({ condition: 'matching_rows_present', outcome: 'weakens' }),
           expect.objectContaining({ condition: 'required_parameter_unavailable_or_output_shape_invalid', outcome: 'inconclusive' }),
         ]),
-        supportsCandidateConcernIds: ['concern:where:01'],
+        supportsCandidateConcernIds: [targetWhereConcern.id],
         version: 1,
-        weakensCandidateConcernIds: ['concern:where:01'],
+        weakensCandidateConcernIds: [targetWhereConcern.id],
       },
       kind: 'node_query_outer_filter',
       nodeId: 'main_output',
