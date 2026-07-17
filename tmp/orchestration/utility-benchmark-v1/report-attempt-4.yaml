@@ -1,0 +1,11 @@
+report_version: 1
+task_id: utility-benchmark-v1
+attempt: 4
+worker_thread_id: 019f6f5c-c1ca-7112-baab-25d74b962286
+status: ready_for_review
+base_state:
+  commit: 9e9eff6693ebb78b05b71a4ad7f8accd179d434a
+verification:
+  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts
+    result: ready_for_review
+recommended_next: parent_review

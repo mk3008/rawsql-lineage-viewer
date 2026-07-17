@@ -1,0 +1,18 @@
+{
+  "image": "postgres:16-alpine",
+  "evidence": {
+    "baseline": {
+      "commit": "167a515811d82d1c4f73a663fb1cafbca904afe3",
+      "planHash": "ad37dcfc52a5fe0e934af8d20f4868c9ba6106527e3d805d93863f955ad400e4"
+    },
+    "execution_blocked": "psql extended bind transport and scenario fixtures require operator verification",
+    "teardown": {
+      "containerStopped": true,
+      "tempRemoved": true,
+      "envFileRemoved": true,
+      "externalPort": false,
+      "productionEndpoint": false,
+      "coreCliMcpDbConfigAdded": false
+    }
+  }
+}
