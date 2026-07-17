@@ -288,6 +288,44 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(ambiguousTarget.isError).toBe(true);
       expect(JSON.parse((ambiguousTarget.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'TARGET_AMBIGUOUS', kind: 'invalid_input' });
 
+      const unresolvedSql = 'SELECT value FROM table_a JOIN table_b ON a.table_a_id = b.table_a_id';
+      const unresolvedDiscovery = await client.callTool({ name: 'discover_investigation_targets', arguments: { sql: unresolvedSql } });
+      const unresolvedTarget = (unresolvedDiscovery.structuredContent as { targets: Array<{ id: string; selection: { status: string; unsupportedCode?: string } }> }).targets[0];
+      expect(unresolvedTarget).toMatchObject({
+        selection: { status: 'unsupported', unsupportedCode: 'unresolved_output_reference' },
+      });
+      expect(unresolvedDiscovery.structuredContent).toMatchObject({
+        unsupported: [expect.objectContaining({ code: 'unresolved_output_reference', targetIds: [unresolvedTarget.id] })],
+      });
+      const unresolvedByTargetId = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { sql: unresolvedSql, targetId: unresolvedTarget.id },
+      });
+      expect(unresolvedByTargetId.isError).toBe(true);
+      expect(JSON.parse((unresolvedByTargetId.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'TARGET_UNSUPPORTED', kind: 'invalid_input' });
+      const unresolvedPreparation = await client.callTool({ name: 'prepare_sql_investigation', arguments: { sql: unresolvedSql } });
+      expect(unresolvedPreparation.structuredContent).toMatchObject({
+        selection: { reason: 'no_selectable_targets', selectableTargetIds: [], unsupportedIssueCount: 1 },
+        status: 'selection_required',
+      });
+      expect(unresolvedPreparation.structuredContent).not.toHaveProperty('plan');
+      for (const explicitTarget of [{ targetId: unresolvedTarget.id }, { targetColumn: 'value' }]) {
+        const explicitPreparation = await client.callTool({
+          name: 'prepare_sql_investigation',
+          arguments: { sql: unresolvedSql, ...explicitTarget },
+        });
+        expect(explicitPreparation.isError).toBe(true);
+        expect(JSON.parse((explicitPreparation.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'TARGET_UNSUPPORTED', kind: 'invalid_input' });
+      }
+      const compatibleExplicitColumn = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { sql: unresolvedSql, targetColumn: 'value' },
+      });
+      expect(compatibleExplicitColumn.structuredContent).toMatchObject({
+        kind: 'investigation-plan',
+        target: { columnName: 'value', nodeId: 'main_output' },
+      });
+
       const request = { sqlPath: 'query.sql', targetColumn: 'status', targetNode: 'main_output' };
       const first = await client.callTool({ name: 'create_investigation_plan', arguments: request });
       const second = await client.callTool({ name: 'create_investigation_plan', arguments: request });

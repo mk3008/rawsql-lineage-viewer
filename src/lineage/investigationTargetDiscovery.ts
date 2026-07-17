@@ -57,7 +57,7 @@ export interface InvestigationDiscoveredTargetV1 {
   selection:
     | { planTarget: { columnName: string; nodeId: string }; status: 'selectable' }
     | { ambiguityCode: 'duplicate_output_name'; status: 'ambiguous' }
-    | { unsupportedCode: 'output_identity_unavailable'; status: 'unsupported' };
+    | { unsupportedCode: 'output_identity_unavailable' | 'unresolved_output_reference'; status: 'unsupported' };
 }
 
 export interface InvestigationTargetAmbiguityV1 {
@@ -91,7 +91,7 @@ export class InvestigationTargetSelectionError extends Error {
     super(code === 'TARGET_AMBIGUOUS'
       ? 'The discovered target is ambiguous and cannot be used to create a plan.'
       : code === 'TARGET_UNSUPPORTED'
-        ? 'The discovered target lacks the syntax-derived identity required to create a plan.'
+        ? 'The discovered target is not eligible for planning because static discovery reports unsupported lineage.'
         : 'The target id does not identify a target in this discovery result.');
     this.name = 'InvestigationTargetSelectionError';
     this.code = code;
@@ -112,6 +112,7 @@ export function discoverInvestigationTargets(input: InvestigationTargetDiscovery
   const targets = candidates.map(({ column, node }, index): InvestigationDiscoveredTargetV1 => {
     const id = `target:${String(index + 1).padStart(3, '0')}`;
     const hasIdentity = column.outputIndex !== undefined && column.selectItemId !== undefined;
+    const hasUnresolvedUpstream = (column.unresolvedUpstream?.length ?? 0) > 0;
     const duplicate = duplicateKeys.has(outputKey(node.id, column.name));
     return {
       id,
@@ -129,11 +130,13 @@ export function discoverInvestigationTargets(input: InvestigationTargetDiscovery
         node.id === 'main_output' ? 'final_output_column' : 'named_query_output_column',
         ...(hasIdentity ? ['syntax_derived_output_identity' as const] : []),
       ],
-      selection: !hasIdentity
-        ? { status: 'unsupported', unsupportedCode: 'output_identity_unavailable' }
-        : duplicate
-          ? { status: 'ambiguous', ambiguityCode: 'duplicate_output_name' }
-          : { status: 'selectable', planTarget: { columnName: column.name, nodeId: node.id } },
+      selection: hasUnresolvedUpstream
+        ? { status: 'unsupported', unsupportedCode: 'unresolved_output_reference' }
+        : !hasIdentity
+          ? { status: 'unsupported', unsupportedCode: 'output_identity_unavailable' }
+          : duplicate
+            ? { status: 'ambiguous', ambiguityCode: 'duplicate_output_name' }
+            : { status: 'selectable', planTarget: { columnName: column.name, nodeId: node.id } },
     };
   });
   const targetByIdentity = new Map(candidates.map(({ column, node }, index) => [columnIdentityKey(node, column), targets[index]]));
@@ -148,7 +151,9 @@ export function discoverInvestigationTargets(input: InvestigationTargetDiscovery
     };
   });
   const unsupported: InvestigationTargetUnsupportedV1[] = [];
-  const missingIdentityIds = targets.filter((target) => target.selection.status === 'unsupported').map((target) => target.id);
+  const missingIdentityIds = targets
+    .filter((target) => target.identity.column.outputIndex === undefined || target.identity.column.selectItemId === undefined)
+    .map((target) => target.id);
   if (missingIdentityIds.length > 0) {
     unsupported.push({
       code: 'output_identity_unavailable',

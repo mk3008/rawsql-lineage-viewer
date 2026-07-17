@@ -33,8 +33,12 @@ same supplied static inputs. Unknown, ambiguous, and identity-deficient targets
 fail explicitly. In particular, duplicate output names are not guessed because
 the version 1 investigation-plan target cannot distinguish them by ordinal.
 
-Unresolved upstream references and schema-free wildcards remain explicit in
-`unsupported`; their presence is not converted into runtime knowledge.
+Targets with unresolved upstream references have selection status `unsupported`
+and are not eligible for target-ID resolution or high-level plan preparation.
+The matching `unresolved_output_reference` entry lists the same target IDs.
+Schema-free wildcards also remain explicit in `unsupported`; neither limitation
+is converted into runtime knowledge. The compatible explicit `targetColumn`
+plan input remains caller-directed and does not assert that lineage resolved.
 
 ## MCP workflows
 

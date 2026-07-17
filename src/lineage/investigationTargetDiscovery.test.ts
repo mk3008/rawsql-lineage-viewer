@@ -73,4 +73,27 @@ describe('InvestigationTargetDiscoveryV1', () => {
       expect(serialized).not.toContain(forbidden);
     }
   });
+
+  it('keeps unresolved-upstream outputs non-selectable and aligned with unsupported evidence', () => {
+    const input = {
+      sql: `
+        SELECT value
+        FROM table_a
+        JOIN table_b ON a.table_a_id = b.table_a_id
+      `,
+    };
+    const discovery = discoverInvestigationTargets(input);
+    const target = discovery.targets.find((candidate) => candidate.identity.node.id === 'main_output' && candidate.identity.column.name === 'value');
+
+    expect(target).toMatchObject({
+      id: 'target:001',
+      selection: { status: 'unsupported', unsupportedCode: 'unresolved_output_reference' },
+    });
+    expect(discovery.unsupported).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'unresolved_output_reference', targetIds: [target!.id] }),
+    ]));
+    expect(discovery.analysis).toMatchObject({ selectableTargetCount: 0, unsupportedTargetCount: 1 });
+    expect(() => resolveInvestigationTarget(discovery, target!.id)).toThrow(expect.objectContaining({ code: 'TARGET_UNSUPPORTED' }));
+    expect(() => createInvestigationPlanForTarget(input, target!.id)).toThrow(expect.objectContaining({ code: 'TARGET_UNSUPPORTED' }));
+  });
 });

@@ -165,7 +165,14 @@ export function prepareSqlInvestigation(
   const discovery = discoverInvestigationTargets(staticInput);
   const hasExplicitTarget = input.targetId !== undefined || input.targetColumn !== undefined || input.targetNode !== undefined;
   if (hasExplicitTarget) {
-    const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspace, value));
+    const planInput = normalizeCreateInvestigationPlanInput(workspace, value);
+    if (input.targetId === undefined) {
+      const matches = discovery.targets.filter((target) => target.identity.node.id === planInput.target.nodeId && target.identity.column.name === planInput.target.columnName);
+      if (matches.length === 0) throw new InvestigationTargetSelectionError('TARGET_NOT_FOUND');
+      if (matches.length > 1) throw new InvestigationTargetSelectionError('TARGET_AMBIGUOUS');
+      resolveInvestigationTarget(discovery, matches[0].id);
+    }
+    const plan = createInvestigationPlan(planInput);
     return {
       discovery,
       kind: 'sql-investigation-preparation',
