@@ -21,7 +21,8 @@ async function main(): Promise<void> {
   const password = randomBytes(24).toString('base64url');
   const envFile = resolve(temp, 'postgres.env');
   writeFileSync(envFile, `POSTGRES_PASSWORD=${password}\nPOSTGRES_DB=benchmark\n`);
-  let client: Client | undefined;
+let client: Client | undefined;
+let scenarioSubphase = 'not_started';
   const evidence: Record<string, unknown> = { image: 'postgres:16-alpine', scenarios: {} };
   let phase = 'init';
   let finalizationPhase = 'not_started';
@@ -44,7 +45,7 @@ async function main(): Promise<void> {
     const version = (await client.query('select version()')).rows[0]?.version as string;
     evidence.serverVersion = version?.split(' on ')[0] ?? 'redacted';
     for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id) }; }
-  } catch { failureCode = `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase }; }
+  } catch { failureCode = phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase, scenarioSubphase }; }
   finally {
     finalizationPhase = 'client_close'; try { await client?.end(); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CLIENT_CLOSE' : failureCode; }
     finalizationPhase = 'mount_inspect'; let mounts: unknown[] = []; try { mounts = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', container], { encoding: 'utf8' })); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_MOUNT_INSPECT' : failureCode; }
@@ -61,8 +62,8 @@ async function main(): Promise<void> {
     try { privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
     evidence.parameterLeakageCount = countScalarLeakage(evidence, privateBindings);
     evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
-    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-14.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
-    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-14.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 14\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 3d31563f7a5e7c698fda9192492297162518d9f6\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-15.json'), JSON.stringify(evidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
+    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-15.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 15\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 9302f8119b6c00a25dc1c63dcb13202f5d22a1aa\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/run.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
   }
 }
 
@@ -76,13 +77,17 @@ async function runScenario(client: Client, temp: string, id: string): Promise<un
   const parameterFile = resolve(temp, `${id}-parameters.json`);
   writeFileSync(parameterFile, JSON.stringify({ bindings, definitions: json(resolve(pub, 'parameter-definitions.json')) }));
   const c = json<{ targetColumn: string; symptom: string }>(resolve(pub, 'case.json'));
+  scenarioSubphase = 'plan_generation';
   const plan = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'query.sql', '--ddl-dir', '.', '--parameters', parameterFile, '--target-node', 'main_output', '--target-column', c.targetColumn, '--symptom', c.symptom], { cwd: pub, encoding: 'utf8' })) as Plan;
   const started = Date.now();
   const execute = async () => Object.fromEntries(await Promise.all(plan.recommendedProbes.map(async probe => { validateProbe(plan, probe, bindings); const startedProbe = Date.now(); const result = await executeProbe(client, probe, bindings); return [probe.id, { raw: result, elapsedMs: Date.now() - startedProbe, plannedArtifactHash: hash(probe.sql), safetyAccepted: true }] as const; })));
+  scenarioSubphase = 'faulty_execution';
   const faulty = await execute();
+  scenarioSubphase = 'reset';
   await client.query('DROP SCHEMA public CASCADE; CREATE SCHEMA public');
   await client.query(readFileSync(resolve(pub, 'schema.sql'), 'utf8'));
   await client.query(readFileSync(resolve(priv, 'seed-control.sql'), 'utf8'));
+  scenarioSubphase = 'control_execution';
   const control = await execute();
   const oracle = json<{ mechanism: string; faulty: Record<string, unknown>; control: Record<string, unknown> }>(resolve(priv, 'oracle.json'));
   const ids = plan.recommendedProbes.map(p => p.id);
@@ -90,6 +95,7 @@ async function runScenario(client: Client, temp: string, id: string): Promise<un
   const outcomes = ids.map(id => ({ probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classifications.find(x => x.probeId === id)!.classification, weakensCandidateConcernIds: plan.recommendedProbes.find(p => p.id === id)?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash: hashSourceAtExecutorEntry(plan.recommendedProbes.find(p => p.id === id)?.sql ?? ''), artifactMember: true }));
   const ranked = rankedMechanisms(plan);
   const leakageCount = countScalarLeakage({ observations: classifications, evaluator: { rankedMechanisms: ranked } }, bindings);
+  scenarioSubphase = 'evaluation';
   const metrics = evaluateAll(outcomes, oracle, ranked, { leakageCount, candidateIds: (plan.candidateConcerns ?? []).map(c => c.id), validationAttempts: ids.map(id => ({ probeId: id, accepted: true, artifactSourceHash: faulty[id].sourceHash })) });
   return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }

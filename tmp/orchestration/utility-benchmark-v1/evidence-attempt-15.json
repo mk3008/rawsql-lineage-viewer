@@ -1,0 +1,35 @@
+{
+  "image": "postgres:16-alpine",
+  "scenarios": {},
+  "error": {
+    "code": "RUN_CONTAINER_START",
+    "phase": "container_start",
+    "scenarioSubphase": "not_started"
+  },
+  "boundary": {
+    "changedPathCategoryCounts": {
+      "benchmark": 18,
+      "core": 0,
+      "cli": 0,
+      "mcp": 0
+    },
+    "changedPathHash": "bb1d3a307a298d9e9474fc4de2a148bf6cda0710771666005e1dd27bdb980da4",
+    "noCoreCliMcpDbConfig": true
+  },
+  "teardown": {
+    "containerAbsent": false,
+    "mountCount": 0,
+    "volumeAbsent": true,
+    "dynamicLoopbackPortClosed": false,
+    "tempCredentialRemoved": true,
+    "tempDirectoryRemoved": true,
+    "host": "127.0.0.1",
+    "loopbackOnly": true
+  },
+  "parameterLeakageCount": 0,
+  "finalization": {
+    "phase": "container_verify",
+    "code": "RUN_CONTAINER_START",
+    "containerAbsent": false
+  }
+}
