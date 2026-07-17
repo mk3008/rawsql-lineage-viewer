@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
+import { redactObservation } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -12,5 +13,11 @@ describe('benchmark probe safety', () => {
     const plan = { recommendedProbes: [{ ...base, id: 'p', sql: 'SELECT COUNT(*) FROM t WHERE status = :status', parameters: [{ name: 'status', status: 'resolved' }] }], unresolvedParameters: [] };
     expect(() => validateProbe(plan, plan.recommendedProbes[0], {})).toThrow('BINDING_MISMATCH');
     expect(() => validateProbe(plan, plan.recommendedProbes[0], { status: 'ok' })).not.toThrow();
+  });
+  it('redacts sentinel scalar values from durable observations', () => {
+    const durable = JSON.stringify(redactObservation({ rows: [{ status: 'SENTINEL_PRIVATE', count: 7 }] }));
+    expect(durable).not.toContain('SENTINEL_PRIVATE');
+    expect(durable).not.toContain('7');
+    expect(durable).toContain('rowCount');
   });
 });
