@@ -337,14 +337,15 @@ function observationContracts(aggregates: AggregateOperationFactV1[], groupingKe
     const available = source.status === 'resolved' && source.directness === 'direct';
     contracts.push({ ...shared, aggregateFactIds: [], blockedReasons: available ? [] : [source.status === 'resolved' ? 'observation_prerequisite_missing' : 'source_provenance_unreconstructable'], expectedColumns: [{ name: 'source_row_count', semanticType: 'count' }], groupingKeyIds: [], id: `observation:source-row-count:${source.id}`, kind: 'source_row_count', sourceIds: [source.id], status: available ? 'available' : 'blocked' });
   }
-  const groupAvailable = groupingKeys.length > 0 && groupingKeys.every((fact) => fact.status === 'available' && fact.referenceIds.length > 0 && fact.sourceIds.length > 0);
-  const groupReasons = observationBlockedReasons(groupingKeys.map((fact) => fact.id), issues);
+  const groupSourceIds = sortedUnique(groupingKeys.flatMap((fact) => fact.sourceIds));
+  const groupAvailable = groupingKeys.length > 0 && groupingKeys.every((fact) => fact.status === 'available' && fact.referenceIds.length > 0 && fact.sourceIds.length > 0) && linkedSourcesAvailable(groupSourceIds, sources);
+  const groupReasons = sortedUnique([...observationBlockedReasons(groupingKeys.map((fact) => fact.id), issues), ...linkedSourceBlockedReasons(groupSourceIds, sources)]);
   for (const [kind, column] of [['distinct_group_count', 'distinct_group_count'], ['rows_per_group', 'rows_per_group']] as const) {
-    contracts.push({ ...shared, aggregateFactIds: [], blockedReasons: groupAvailable ? [] : groupReasons, expectedColumns: [{ name: column, semanticType: 'count' }], groupingKeyIds: groupingKeys.map((fact) => fact.id), id: `observation:${kind}`, kind, sourceIds: sortedUnique(groupingKeys.flatMap((fact) => fact.sourceIds)), status: groupAvailable ? 'available' : 'blocked' });
+    contracts.push({ ...shared, aggregateFactIds: [], blockedReasons: groupAvailable ? [] : groupReasons, expectedColumns: [{ name: column, semanticType: 'count' }], groupingKeyIds: groupingKeys.map((fact) => fact.id), id: `observation:${kind}`, kind, sourceIds: groupSourceIds, status: groupAvailable ? 'available' : 'blocked' });
   }
   for (const aggregate of aggregates) {
-    const inputAvailable = aggregate.status === 'available' && aggregate.inputKind !== 'star' && aggregate.inputKind !== 'unknown' && aggregate.inputReferenceIds.length > 0 && aggregate.sourceIds.length === 1;
-    const reasons = observationBlockedReasons([aggregate.id], issues);
+    const inputAvailable = aggregate.status === 'available' && aggregate.inputKind !== 'star' && aggregate.inputKind !== 'unknown' && aggregate.inputReferenceIds.length > 0 && aggregate.sourceIds.length === 1 && linkedSourcesAvailable(aggregate.sourceIds, sources);
+    const reasons = sortedUnique([...observationBlockedReasons([aggregate.id], issues), ...linkedSourceBlockedReasons(aggregate.sourceIds, sources)]);
     for (const [kind, column, semanticType] of [['aggregate_input_non_null_count', 'aggregate_input_non_null_count', 'count'], ['aggregate_input_value_summary', 'aggregate_input_value_summary', 'summary']] as const) {
       contracts.push({ ...shared, aggregateFactIds: [aggregate.id], blockedReasons: inputAvailable ? [] : reasons, expectedColumns: [{ name: column, semanticType }], groupingKeyIds: [], id: `observation:${kind}:${aggregate.id}`, kind, sourceIds: aggregate.sourceIds, status: inputAvailable ? 'available' : 'blocked' });
     }
@@ -355,6 +356,17 @@ function observationContracts(aggregates: AggregateOperationFactV1[], groupingKe
 function observationBlockedReasons(factIds: string[], issues: ProbePrerequisiteIssueV1[]): PrerequisiteIssueCodeV1[] {
   const reasons = sortedUnique(issues.filter((issue) => issue.factIds.some((id) => factIds.includes(id))).map((issue) => issue.code));
   return reasons.length ? reasons : ['observation_prerequisite_missing'];
+}
+
+function linkedSourcesAvailable(sourceIds: string[], sources: ProbePrerequisiteSourceV1[]): boolean {
+  return sourceIds.length > 0 && sourceIds.every((sourceId) => sources.some((source) => source.id === sourceId && source.status === 'resolved' && source.directness === 'direct'));
+}
+
+function linkedSourceBlockedReasons(sourceIds: string[], sources: ProbePrerequisiteSourceV1[]): PrerequisiteIssueCodeV1[] {
+  const linked = sourceIds.map((sourceId) => sources.find((source) => source.id === sourceId));
+  if (linked.some((source) => !source || source.status !== 'resolved' || source.directness === 'unknown')) return ['source_provenance_unreconstructable'];
+  if (linked.some((source) => source?.directness !== 'direct')) return ['observation_prerequisite_missing'];
+  return [];
 }
 
 function collectIssues(aggregates: AggregateOperationFactV1[], groupingKeys: GroupingKeyFactV1[], sources: ProbePrerequisiteSourceV1[]): ProbePrerequisiteIssueV1[] {

@@ -129,6 +129,18 @@ describe('Probe Prerequisite Facts V1', () => {
     expect(result.observations.filter((item) => item.kind === 'source_row_count')).toHaveLength(1);
   });
 
+  it.each([
+    ['cycle', (lineage: ReturnType<typeof analyzeSql>['lineage']) => ({ ...lineage, edges: [...lineage.edges, { id: 'synthetic-cycle', source: 'table_orders', target: 'table_orders', type: 'unknown' as const }] })],
+    ['multiple owner', (lineage: ReturnType<typeof analyzeSql>['lineage']) => ({ ...lineage, edges: [...lineage.edges, { id: 'synthetic-second-owner', source: 'table_orders', target: 'other_owner', type: 'unknown' as const }] })],
+  ])('blocks every linked observation for %s ownership', (_label, mutate) => {
+    const sql = 'SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id';
+    const lineage = mutate(analyzeSql(sql, { analysisMode: 'original', optimizeConditions: false }).lineage);
+    const result = buildProbePrerequisiteFactsV1({ lineage, parameters: { definitions: [] }, sql, target: { columnName: 'total', nodeId: 'main_output', symptom: 'logic_review' } });
+    expect(result.sources).toEqual([expect.objectContaining({ directness: 'unknown', status: 'ambiguous' })]);
+    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.status === 'blocked')).toBe(true);
+    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.blockedReasons.includes('source_provenance_unreconstructable'))).toBe(true);
+  });
+
   it('distinguishes direct and nested scalar sources and blocks nested row counts', () => {
     const result = facts('SELECT SUM((SELECT MAX(r.rate) FROM rates r)) AS total FROM orders o');
     expect(result.sources).toEqual([

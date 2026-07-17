@@ -57,6 +57,10 @@ represented as one contract per exact aggregate fact and are blocked for
 Source-row-count availability additionally requires a source proven direct to
 the selected target. Internal CTE, derived, or scalar-subquery sources remain
 blocked for that target.
+The same resolved-and-direct requirement applies to every source linked from a
+grouping or aggregate-input observation. Unknown, ambiguous, cyclic,
+multiple-owner, missing-owner, and internal sources cannot leave a linked
+observation available.
 
 An `available` observation contract means only that its static prerequisites
 are represented. It does not authorize execution, prove a root cause, show
