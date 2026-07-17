@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
-import { evaluate, redactObservation } from './evaluator';
+import { evaluateAll, redactObservation } from './evaluator';
 import { validateProbe, type Plan, type Probe, type Scalar } from './safety';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
@@ -53,8 +53,8 @@ async function main(): Promise<void> {
     const privateValues = scenarios.flatMap(id => Object.values(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))).filter(value => typeof value === 'string' && value.length >= 4).map(String));
     evidence.parameterLeakageCount = privateValues.filter(value => new RegExp(`(?<![A-Za-z0-9_])${value.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}(?![A-Za-z0-9_])`).test(serialized)).length;
     evidence.teardown = { containerAbsent: stopped && inspectFails, volumeAbsent: true, dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), productionEndpoint: false, coreCliMcpDbConfigAdded: false };
-    writeFileSync(resolve(out, 'evidence-attempt-7.json'), JSON.stringify(evidence, null, 2));
-    writeFileSync(resolve(out, 'report-attempt-7.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 7\nworker_thread_id: 019f6f73-c41e-7030-8b5f-4cb22429325b\nstatus: ${evidence.error ? 'not_done' : 'ready_for_review'}\nbase_state:\n  commit: 231119a7b478bff68258c2fb0bbd35ff4c1cc563\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${evidence.error ? 'failed' : 'passed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`);
+    writeFileSync(resolve(out, 'evidence-attempt-8.json'), JSON.stringify(evidence, null, 2));
+    writeFileSync(resolve(out, 'report-attempt-8.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 8\nworker_thread_id: 019f6f73-c41e-7030-8b5f-4cb22429325b\nstatus: ${evidence.error ? 'not_done' : 'ready_for_review'}\nbase_state:\n  commit: 62afa2fedd055662097fdae5316a4ed5108d0a49\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${evidence.error ? 'failed' : 'passed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`);
   }
 }
 
@@ -79,10 +79,10 @@ async function runScenario(client: Client, temp: string, id: string): Promise<un
   const oracle = json<{ mechanism: string; faulty: Record<string, unknown>; control: Record<string, unknown> }>(resolve(priv, 'oracle.json'));
   const ids = plan.recommendedProbes.map(p => p.id);
   const classifications = ids.map(id => ({ probeId: id, faulty: redactObservation(faulty[id].raw), control: redactObservation(control[id].raw), discriminates: JSON.stringify(faulty[id].raw) !== JSON.stringify(control[id].raw), elapsedMs: faulty[id].elapsedMs }));
-  const first = ids[0];
-  const metrics = evaluate({ rows: first ? faulty[first].raw.rows : [] }, { rows: first ? control[first].raw.rows : [] }, oracle, plan.candidateConcerns?.map((x: { id: string }) => x.id) ?? []);
-  const semanticEditFree = ids.every(id => plan.recommendedProbes.some(p => p.id === id && hash(p.sql) === hash(p.sql)));
-  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: { ...metrics, actionableCoverage: ids.length ? classifications.filter(x => x.discriminates).length / ids.length : 0, executionSuccess: ids.length ? classifications.length / ids.length : 0, semanticEditFree, timeToFirstUsefulEvidenceMs: classifications.find(x => x.discriminates)?.elapsedMs ?? Date.now() - started, probesToIsolate: classifications.findIndex(x => x.discriminates) + 1 || ids.length, informationGainPerProbe: ids.length ? Number(metrics.informationGain) / ids.length : 0, manualSqlAvoided: ids.length ? 1 : 0, unsafeProbeCount: plan.recommendedProbes.filter(p => p.staticSafetyEvidence.statementClassification !== 'select_statement').length, parameterLeakageCount: 0 }, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
+  const outcomes = ids.map(id => ({ probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs }));
+  const rankedMechanisms = (plan.candidateConcerns ?? []).map((x: { id: string }) => x.id);
+  const metrics = evaluateAll(outcomes, oracle, rankedMechanisms);
+  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }
 function hash(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
 function portClosed(port: number): Promise<boolean> { return new Promise(resolve => { const socket = new Socket(); socket.setTimeout(250); socket.once('connect', () => { socket.destroy(); resolve(false); }); socket.once('error', () => resolve(true)); socket.once('timeout', () => { socket.destroy(); resolve(true); }); socket.connect(port, '127.0.0.1'); }); }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { redactObservation } from './evaluator';
+import { evaluateAll, redactObservation } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -19,5 +19,9 @@ describe('benchmark probe safety', () => {
     expect(durable).not.toContain('SENTINEL_PRIVATE');
     expect(durable).not.toContain('7');
     expect(durable).toContain('rowCount');
+  });
+  it('derives actionable coverage and mechanism hits from every outcome', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12 }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
+    expect(result).toMatchObject({ top1MechanismHit: 1, top3MechanismHit: 1, actionableCoverage: 1, timeToFirstUsefulEvidenceMs: 12, overclaimCount: 0 });
   });
 });
