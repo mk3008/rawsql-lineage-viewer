@@ -1,14 +1,10 @@
 #!/usr/bin/env node
-import { spawnSync } from 'node:child_process';
-import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { runCli } from '../dist/package/cli.js';
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const cliPath = resolve(root, 'src/cli/diagnose.ts');
-const result = spawnSync(process.execPath, ['--import', 'tsx', cliPath, ...process.argv.slice(2)], {
-  cwd: process.cwd(),
-  stdio: 'inherit',
+await runCli().catch((error) => {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = message.startsWith('Unsupported contract version:') ? 'CONTRACT_VERSION_UNSUPPORTED'
+    : /ENOENT|does not exist/i.test(message) ? 'PATH_NOT_FOUND' : 'INVALID_INPUT';
+  process.stderr.write(`${JSON.stringify({ code, kind: 'invalid_input', message, version: 1 })}\n`);
+  process.exitCode = 1;
 });
-
-process.exit(result.status ?? 1);
-

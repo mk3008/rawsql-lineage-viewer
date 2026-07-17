@@ -26,6 +26,14 @@ describe('create_investigation_plan MCP adapter', () => {
       .toThrow(expect.objectContaining({ code: 'SYMPTOM_INVALID' }));
   });
 
+  it('rejects unsupported public contract versions with a stable code', () => {
+    expect(() => normalizeCreateInvestigationPlanInput(temporaryWorkspace(), {
+      contractVersion: 2,
+      sql: 'select status from orders',
+      targetColumn: 'status',
+    })).toThrow(expect.objectContaining({ code: 'CONTRACT_VERSION_UNSUPPORTED' }));
+  });
+
   it('leaves the Core symptom default available when MCP symptom is omitted', () => {
     const input = normalizeCreateInvestigationPlanInput(temporaryWorkspace(), { sql: 'select status from orders', targetColumn: 'status' });
     expect(input.symptom).toBeUndefined();
@@ -408,6 +416,18 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(duplicateParameter.isError).toBe(true);
       expect(JSON.parse((duplicateParameter.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'PARAMETER_NAME_COLLISION', kind: 'invalid_input' });
       expect(JSON.stringify(duplicateParameter)).not.toContain(opaqueBinding);
+
+      const unsupportedVersion = await client.callTool({
+        name: 'create_investigation_plan',
+        arguments: { contractVersion: 2, sql: 'select status from orders', targetColumn: 'status' },
+      });
+      expect(unsupportedVersion.isError).toBe(true);
+      expect(JSON.parse((unsupportedVersion.content as Array<{ text: string }>)[0].text)).toEqual({
+        code: 'CONTRACT_VERSION_UNSUPPORTED',
+        kind: 'invalid_input',
+        message: 'Unsupported contract version. Expected 1.',
+        version: 1,
+      });
     } finally {
       await client.close();
     }

@@ -11,6 +11,7 @@ import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 import { parseSchemaFactsFromDdl } from '../lineage/schemaFacts';
 
 interface DiagnoseArgs {
+  contractVersion?: number;
   ddl: string[];
   ddlDir: string[];
   out?: string;
@@ -66,7 +67,7 @@ const validInvestigationSymptoms = new Set<ProblemIntent>(problemIntentOptions);
 
 const excludedDirectories = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 
-async function main(): Promise<void> {
+export async function runCli(): Promise<void> {
   const [command, ...argv] = process.argv.slice(2);
   if (command === 'investigate') {
     process.stdout.write(`${JSON.stringify(createInvestigationPlanForCli(argv), null, 2)}\n`);
@@ -132,6 +133,9 @@ function parseArgs(argv: string[]): DiagnoseArgs {
     }
     if (option === '--ddl') {
       args.ddl.push(requireValue(option, value));
+      index += 1;
+    } else if (option === '--contract-version') {
+      args.contractVersion = parseContractVersion(requireValue(option, value));
       index += 1;
     } else if (option === '--ddl-dir') {
       args.ddlDir.push(requireValue(option, value));
@@ -206,6 +210,9 @@ function parseInvestigateArgs(argv: string[]): InvestigateArgs {
     }
     if (option === '--ddl') {
       args.ddl.push(requireValue(option, value));
+      index += 1;
+    } else if (option === '--contract-version') {
+      args.contractVersion = parseContractVersion(requireValue(option, value));
       index += 1;
     } else if (option === '--ddl-dir') {
       args.ddlDir.push(requireValue(option, value));
@@ -312,6 +319,19 @@ function requireValue(option: string, value: string | undefined): string {
   return value;
 }
 
+function parseContractVersion(value: string): 1 {
+  if (value !== '1') throw new Error(`Unsupported contract version: ${value}. Expected 1.`);
+  return 1;
+}
+
+function cliFailure(error: unknown): { code: string; kind: 'invalid_input'; message: string; version: 1 } {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = message.startsWith('Unsupported contract version:') ? 'CONTRACT_VERSION_UNSUPPORTED'
+    : /ENOENT|does not exist/i.test(message) ? 'PATH_NOT_FOUND'
+      : 'INVALID_INPUT';
+  return { code, kind: 'invalid_input', message, version: 1 };
+}
+
 function parseProblemIntent(value: string): DiagnosticProblemIntent {
   if (validProblemIntents.has(value as DiagnosticProblemIntent)) {
     return value as DiagnosticProblemIntent;
@@ -389,16 +409,16 @@ function parseParameterFile(filePath: string): InvestigationPlannerParametersV1 
 }
 
 function printHelp(): void {
-  process.stdout.write(`rawsql-lineage diagnose --sql <file> [--target-column <name>] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--out <file>]\n`);
+  process.stdout.write(`rawsql-lineage diagnose --sql <file> [--contract-version 1] [--target-column <name>] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--out <file>]\n`);
 }
 
 function printInvestigateHelp(): void {
-  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <definitions-and-bindings-file>]\n');
+  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--contract-version 1] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <definitions-and-bindings-file>]\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  runCli().catch((error: unknown) => {
+    process.stderr.write(`${JSON.stringify(cliFailure(error))}\n`);
     process.exit(1);
   });
 }

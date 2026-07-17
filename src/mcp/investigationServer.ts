@@ -27,6 +27,7 @@ const parameterDefinitionFields = {
 const parameterDefinitionsInputSchema = z.array(z.object(parameterDefinitionFields).strict());
 const parameterBindingsInputSchema = z.record(z.string(), parameterValueSchema);
 const staticAnalysisInputSchema = {
+  contractVersion: z.number().int().optional().describe('Optional public contract version; version 1 is the only supported value.'),
   ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
   ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
   ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
@@ -36,6 +37,7 @@ const staticAnalysisInputSchema = {
 };
 
 export interface CreateInvestigationPlanMcpInput {
+  contractVersion?: unknown;
   sql?: unknown;
   sqlPath?: unknown;
   ddl?: unknown;
@@ -99,6 +101,7 @@ export function normalizeCreateInvestigationPlanInput(
   value: CreateInvestigationPlanMcpInput,
 ): InvestigationPlanInputV1 {
   const input = value as Record<string, unknown>;
+  validateContractVersion(input.contractVersion);
   const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
   const hasTargetId = input.targetId !== undefined;
   const hasExplicitTarget = input.targetColumn !== undefined || input.targetNode !== undefined;
@@ -128,6 +131,7 @@ export function normalizeInvestigationStaticAnalysisInput(
 ): InvestigationTargetDiscoveryInputV1 {
   const workspaceRoot = workspaceRealpath(workspace);
   const input = value as Record<string, unknown>;
+  validateContractVersion(input.contractVersion);
   const hasSql = input.sql !== undefined;
   const hasSqlPath = input.sqlPath !== undefined;
   if (hasSql === hasSqlPath) {
@@ -309,9 +313,15 @@ function mcpSuccess(value: object): { content: Array<{ text: string; type: 'text
 function mcpFailure(error: unknown): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
   if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError)) return undefined;
   return {
-    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }],
+    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message, version: 1 }) }],
     isError: true,
   };
+}
+
+function validateContractVersion(value: unknown): void {
+  if (value !== undefined && value !== 1) {
+    throw new McpInputError('CONTRACT_VERSION_UNSUPPORTED', 'Unsupported contract version. Expected 1.');
+  }
 }
 
 function workspaceRealpath(workspace: string): string {
@@ -546,14 +556,17 @@ function parseWorkspaceArgument(argv: string[]): string {
   return argv[1];
 }
 
-async function main(): Promise<void> {
+export async function runInvestigationMcpServer(): Promise<void> {
   const server = createInvestigationMcpServer(parseWorkspaceArgument(process.argv.slice(2)));
   await server.connect(new StdioServerTransport());
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  runInvestigationMcpServer().catch((error: unknown) => {
+    const failure = error instanceof McpInputError
+      ? { code: error.code, kind: 'invalid_input', message: error.message, version: 1 }
+      : { code: 'INVALID_INPUT', kind: 'invalid_input', message: error instanceof Error ? error.message : String(error), version: 1 };
+    process.stderr.write(`${JSON.stringify(failure)}\n`);
     process.exitCode = 1;
   });
 }

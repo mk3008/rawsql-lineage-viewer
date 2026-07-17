@@ -3,13 +3,32 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "files": [
+    "bin",
+    "dist/package",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/package/types/public.d.ts",
+      "import": "./dist/package/public.js"
+    },
+    "./mcp": {
+      "types": "./dist/package/types/mcp/investigationServer.d.ts",
+      "import": "./dist/package/mcp.js"
+    }
+  },
   "bin": {
-    "rawsql-lineage": "./bin/rawsql-lineage.mjs"
+    "rawsql-lineage": "./bin/rawsql-lineage.mjs",
+    "rawsql-lineage-mcp": "./bin/rawsql-lineage-mcp.mjs"
   },
   "scripts": {
     "dev": "vite",
     "diagnose": "tsx src/cli/diagnose.ts diagnose",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run build:package",
+    "build:package": "vite build --config vite.package.config.ts && tsc --project tsconfig.package.json",
+    "smoke:package": "node scripts/package-smoke.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test"
