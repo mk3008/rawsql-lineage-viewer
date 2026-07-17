@@ -24,4 +24,12 @@ describe('benchmark probe safety', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12 }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
     expect(result).toMatchObject({ top1MechanismHit: 1, top3MechanismHit: 1, actionableCoverage: 1, timeToFirstUsefulEvidenceMs: 12, overclaimCount: 0 });
   });
+  it('classifies a miss as inconclusive and reports failed safety/hash evidence', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [{ x: 1 }] }, control: { rows: [] }, elapsedMs: 3, safetyAccepted: false, executedArtifactHash: 'a', plannedArtifactHash: 'b' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m2'], { leakageCount: 2 });
+    expect(result).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0, actionableCoverage: 0, executionSuccess: 0, inconclusive: true, semanticEditFree: false, unsafeProbeCount: 1, parameterLeakageCount: 2, overclaimCount: 0 });
+  });
+  it('rejects unsupported emitted classifications as overclaims', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, safetyAccepted: true, executedArtifactHash: 'a', plannedArtifactHash: 'a', classification: 'prove' as never }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
+    expect(result).toMatchObject({ overclaimCount: 1, semanticEditFree: true });
+  });
 });
