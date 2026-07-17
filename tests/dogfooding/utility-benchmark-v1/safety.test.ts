@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, rankedMechanisms, redactDurableEvidence, redactObservation } from './evaluator';
+import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, namespacePublicMetrics, rankedMechanisms, redactObservation } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -28,8 +28,10 @@ describe('benchmark probe safety', () => {
     expect(durable).not.toContain('42');
   });
   it('does not strictly collide after durable scalar namespacing', () => {
-    const durable = redactDurableEvidence({ string: 'secret', number: 1, boolean: true, null: null });
+    const durable = namespacePublicMetrics({ publicString: 'status-ok', number: 1, boolean: true, null: null });
     expect(countScalarLeakage(durable, { s: 'secret', n: 1, b: true, z: null })).toBe(0);
+    expect(countScalarLeakage(namespacePublicMetrics({ number: 7 }), { n: 7 })).toBe(0);
+    expect(countScalarLeakage({ number: 7 }, { n: 7 })).toBe(1);
   });
   it('derives actionable coverage and mechanism hits from every outcome', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });

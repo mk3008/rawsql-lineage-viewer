@@ -49,11 +49,11 @@ export function countScalarLeakage(durable: unknown, privateBindings: Record<str
   visit(durable);
   return Object.values(privateBindings).filter(binding => leaves.some(leaf => typeof leaf === typeof binding && leaf === binding)).length;
 }
-export function redactDurableEvidence(value: unknown): unknown {
-  if (value === null) return 'scalar-null-sha256:' + hash('null');
-  if (typeof value === 'string') return 'scalar-string-sha256:' + hash(value);
-  if (typeof value === 'number' || typeof value === 'boolean') return `scalar-${typeof value}-sha256:` + hash(String(value));
-  if (Array.isArray(value)) return value.map(redactDurableEvidence);
-  if (typeof value === 'object' && value) return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, redactDurableEvidence(child)]));
+export function namespacePublicMetrics(value: unknown): unknown {
+  if (value === null) return 'metric-null';
+  if (typeof value === 'number') return `metric-number:${value}`;
+  if (typeof value === 'boolean') return `metric-boolean:${value}`;
+  if (Array.isArray(value)) return value.map(namespacePublicMetrics);
+  if (typeof value === 'object' && value) return Object.fromEntries(Object.entries(value).map(([key, child]) => [key, namespacePublicMetrics(child)]));
   return value;
 }
