@@ -285,6 +285,236 @@ textarea {
   border-top: 1px solid #e8edf5;
 }
 
+.investigation-audit {
+  height: 100%;
+  overflow: auto;
+  padding: 18px;
+  color: #172033;
+  background: #f7f8fb;
+}
+
+.investigation-audit-header,
+.investigation-audit-result-heading,
+.investigation-audit-status,
+.investigation-audit-inline-warning,
+.investigation-audit-blockers h3 {
+  display: flex;
+  align-items: center;
+}
+
+.investigation-audit-header {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.investigation-audit-header h2 {
+  margin: 2px 0 0;
+  font-size: 18px;
+}
+
+.investigation-audit-eyebrow {
+  color: #5d6678;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+
+.investigation-audit-status {
+  flex: 0 0 auto;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid #9aa3b5;
+  border-radius: 999px;
+  color: #3e485b;
+  background: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.investigation-audit-provenance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin: 0 0 16px;
+  overflow: hidden;
+  border: 1px solid #d7dbe4;
+  border-radius: 8px;
+  background: #d7dbe4;
+}
+
+.investigation-audit-provenance div {
+  min-width: 0;
+  padding: 9px 10px;
+  background: #fff;
+}
+
+.investigation-audit-provenance dt {
+  color: #687186;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.investigation-audit-provenance dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+}
+
+.investigation-audit-task {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 10px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid #d7dbe4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.investigation-audit-task label {
+  grid-column: 1 / -1;
+  color: #4c566b;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.investigation-audit-task select {
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid #aeb5c3;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.investigation-audit-primary {
+  min-width: 112px;
+  white-space: nowrap;
+}
+
+.investigation-audit-inline-warning {
+  gap: 7px;
+  margin: 10px 0 0;
+  color: #7a4b09;
+  font-size: 12px;
+}
+
+.investigation-audit-result {
+  margin-top: 16px;
+}
+
+.investigation-audit-result-heading {
+  gap: 9px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #d7dbe4;
+  color: #17623b;
+}
+
+.investigation-audit-result-heading div {
+  display: flex;
+  flex-direction: column;
+}
+
+.investigation-audit-result-heading span {
+  color: #5d6678;
+  font-size: 11px;
+}
+
+.investigation-audit-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.investigation-audit-section,
+.investigation-audit-blockers {
+  padding: 12px;
+  border: 1px solid #d7dbe4;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.investigation-audit-section h3,
+.investigation-audit-blockers h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.investigation-audit-section ul,
+.investigation-audit-section ol,
+.investigation-audit-blockers ul {
+  margin: 0;
+  padding-left: 18px;
+  color: #4c566b;
+  font-size: 12px;
+}
+
+.investigation-audit-section li + li,
+.investigation-audit-blockers li + li {
+  margin-top: 5px;
+}
+
+.investigation-audit-blockers {
+  margin-top: 10px;
+  border-color: #e6bd75;
+  background: #fffaf0;
+}
+
+.investigation-audit-blockers h3 {
+  gap: 6px;
+  color: #7a4b09;
+}
+
+.investigation-audit-result > .investigation-audit-section {
+  margin-top: 10px;
+}
+
+.investigation-audit-boundary,
+.investigation-audit-empty {
+  margin: 8px 0 0;
+  color: #687186;
+  font-size: 11px;
+}
+
+.investigation-audit-empty-state {
+  display: flex;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #e6bd75;
+  border-radius: 8px;
+  color: #694207;
+  background: #fffaf0;
+}
+
+.investigation-audit-empty-state p {
+  margin: 4px 0;
+  font-size: 12px;
+}
+
+.investigation-audit-empty-state span {
+  color: #6f624d;
+  font-size: 11px;
+}
+
+@media (max-width: 520px) {
+  .investigation-audit-provenance,
+  .investigation-audit-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .investigation-audit-task {
+    grid-template-columns: 1fr;
+  }
+
+  .investigation-audit-task label {
+    grid-column: auto;
+  }
+}
+
 .sql-review-panel {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
