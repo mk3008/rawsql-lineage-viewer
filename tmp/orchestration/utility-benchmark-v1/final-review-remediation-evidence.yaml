@@ -1,0 +1,52 @@
+evidence_version: 1
+scope: pr-19-final-review-remediation
+benchmark:
+  attempt: 23
+  execution_count: 2
+  normalization:
+    format: parsed-json
+    excluded_keys:
+      - elapsedMs
+    serialization: JSON.stringify
+    hash: sha256
+  run_1_raw_sha256: 179504f7cc58d3bf2ea04d982ce822cd2a5b774a3aa616c138022c2dc613bc2e
+  run_2_raw_sha256: 525f8c1714ac2561cec69225cbfdf1f9ecbde17ad86addf6386e5cb97fc4e766
+  run_1_normalized_sha256: b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270
+  run_2_normalized_sha256: b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270
+  normalized_equal: true
+e2e:
+  integration_base:
+    commit: 33305a3dfc74a084a91a2f91a31c89d9eb21a6e3
+    command: npx playwright test tests/e2e/lineage.spec.ts
+    passed: 28
+    failed: 38
+    duration: 10.3m
+  remediated_lineage_suite:
+    base_commit: 1ab7c40fb9692f4442760a6def238e19de6dfebc
+    command: npx playwright test tests/e2e/lineage.spec.ts
+    passed: 66
+    failed: 0
+    skipped: 0
+    duration: 1.1m
+  remediated_full_suite:
+    command: npx playwright test
+    passed: 69
+    failed: 0
+    skipped: 0
+    duration: 1.1m
+distribution:
+  command: npm run smoke:package
+  status: passed
+  packed_files: 25
+  generated_chunks:
+    investigationPlan: 0
+    investigationTargetDiscovery: 1
+repository_verification:
+  vitest:
+    command: npm test -- --run
+    test_files_passed: 26
+    tests_passed: 317
+    tests_skipped: 4
+  typecheck:
+    command: npx tsc --noEmit
+    status: passed

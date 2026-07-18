@@ -6,17 +6,18 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
-import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, mapSequentially, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { executeReadOnlyStatement } from './executor';
+import { buildSubmittedProbeStatement, compareCodeUnits } from './parameterRewrite';
 import { validateProbe, type Plan, type Probe, type Scalar } from './safety';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
-const scenarios = ['sql-defect', 'data-anomaly'];
-const attempt = 22;
-const defaultBaseSha = '0e7d759e5116d452be1458fd3762ba5739e13e63';
+const scenarios = ['sql-defect', 'data-anomaly'].sort(compareCodeUnits);
+const attempt = 23;
+const defaultBaseSha = '1ab7c40fb9692f4442760a6def238e19de6dfebc';
 const out = resolve(process.cwd(), 'tmp/orchestration/utility-benchmark-v1');
 const container = `utility-benchmark-v1-${Date.now()}`;
 const json = <T>(p: string): T => JSON.parse(readFileSync(p, 'utf8')) as T;
-const redactError = (e: unknown) => ({ code: e instanceof Error ? e.name : 'EXECUTION_ERROR' });
 
 async function main(): Promise<void> {
   const baseSha = resolveBenchmarkBaseSha();
@@ -57,12 +58,20 @@ let scenarioSubphase = 'not_started';
     finalizationPhase = 'output_prepare'; try { mkdirSync(out, { recursive: true }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_OUTPUT_PREPARE' : failureCode; }
     finalizationPhase = 'container_verify'; let inspectFails = false; try { execFileSync('docker', ['inspect', container], { stdio: 'ignore' }); } catch { inspectFails = true; }
     const host = process.env.BENCHMARK_DB_HOST ?? '127.0.0.1';
-    let changed: string[] = []; try { changed = execFileSync('git', ['diff', '--name-only', baseSha], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
+    let changed: string[] = [];
+    let untracked = '';
+    try {
+      const trackedDiff = execFileSync('git', ['diff', '--name-only', baseSha], { encoding: 'utf8' });
+      untracked = execFileSync('git', ['ls-files', '--others', '--exclude-standard'], { encoding: 'utf8' });
+      changed = mergeChangedPaths(trackedDiff, untracked);
+    } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
     const categories = { benchmark: changed.filter(p => p.startsWith('tests/dogfooding/utility-benchmark-v1/')).length, core: changed.filter(p => p.startsWith('src/')).length, cli: changed.filter(p => p.includes('/cli/')).length, mcp: changed.filter(p => p.includes('/mcp/')).length };
     let runtimeBoundaryDiff = ''; try { runtimeBoundaryDiff = execFileSync('git', ['diff', '--unified=0', baseSha, '--', 'src', 'bin'], { encoding: 'utf8' }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
-    const runtimeDbConfigAdded = runtimeBoundaryDiff.split(/\r?\n/)
-      .filter(line => line.startsWith('+') && !line.startsWith('+++'))
-      .some(line => /(?:from\s+['"]pg['"]|require\(['"]pg['"]\)|new\s+Client\s*\(|DATABASE_URL|BENCHMARK_DB_|postgres(?:ql)?:\/\/)/i.test(line));
+    const untrackedRuntimeBoundary = untracked.split(/\r?\n/)
+      .filter(path => path.startsWith('src/') || path.startsWith('bin/'))
+      .map(path => { try { return readFileSync(resolve(process.cwd(), path), 'utf8'); } catch { return ''; } })
+      .join('\n');
+    const runtimeDbConfigAdded = hasRuntimeDbConfigAddition(runtimeBoundaryDiff, untrackedRuntimeBoundary);
     evidence.boundary = { changedPathCategoryCounts: categories, changedPathHash: hash(changed.join('\n')), noCoreCliMcpDbConfig: !runtimeDbConfigAdded };
     evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.every(m => !m || typeof m !== 'object' || !['volume', 'bind'].includes(String((m as { Type?: unknown }).Type))), dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
     let privateBindings = { global: {} as Record<string, Scalar>, scenarios: {} as Record<string, Record<string, Scalar>> };
@@ -78,7 +87,7 @@ let scenarioSubphase = 'not_started';
     durableEvidence.parameterLeakageCount = globalLeakageCount;
     finalizationPhase = 'evidence_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `evidence-attempt-${attempt}.json`), JSON.stringify(durableEvidence, null, 2), failureCode, 'FINALIZE_EVIDENCE_WRITE');
     if (failureCode === 'FINALIZE_EVIDENCE_WRITE') process.exitCode = 1;
-    finalizationPhase = 'report_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `report-attempt-${attempt}.yaml`), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: ${attempt}\nworker_thread_id: remediation-control-task\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: ${baseSha}\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/README.md\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`, failureCode, 'FINALIZE_REPORT_WRITE');
+    finalizationPhase = 'report_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `report-attempt-${attempt}.yaml`), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: ${attempt}\nworker_thread_id: remediation-control-task\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: ${baseSha}\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/README.md\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/executor.ts\n  - tests/dogfooding/utility-benchmark-v1/parameterRewrite.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`, failureCode, 'FINALIZE_REPORT_WRITE');
     if (failureCode === 'FINALIZE_REPORT_WRITE') process.exitCode = 1;
     if (failureCode !== 'OK') process.exitCode = 1;
   }
@@ -121,17 +130,25 @@ async function runScenario(client: Client, temp: string, id: string, setSubphase
   const control = await execute();
   const oracle = json<{ mechanism: string; faulty: Record<string, unknown>; control: Record<string, unknown> }>(resolve(priv, 'oracle.json'));
   const ids = plan.recommendedProbes.map(p => p.id);
-  const classifications = ids.map(id => { const probe = plan.recommendedProbes.find(p => p.id === id)!; const same = JSON.stringify(faulty[id].raw) === JSON.stringify(oracle.faulty) && JSON.stringify(control[id].raw) === JSON.stringify(oracle.control); const classification = same ? 'supports' : (probe.interpretation?.weakensCandidateConcernIds?.length ? 'weakens' : 'inconclusive'); return { probeId: id, faulty: redactObservation(faulty[id].raw), control: redactObservation(control[id].raw), classification, discriminates: JSON.stringify(faulty[id].raw) !== JSON.stringify(control[id].raw), elapsedMs: faulty[id].elapsedMs }; });
+  const classifications = ids.map(id => {
+    const probe = plan.recommendedProbes.find(p => p.id === id)!;
+    const observationContractMatches = JSON.stringify(faulty[id].raw) === JSON.stringify(oracle.faulty) && JSON.stringify(control[id].raw) === JSON.stringify(oracle.control);
+    const classification = observationContractMatches ? 'supports' : (probe.interpretation?.weakensCandidateConcernIds?.length ? 'weakens' : 'inconclusive');
+    const faultyControlDiscriminates = JSON.stringify(faulty[id].raw) !== JSON.stringify(control[id].raw);
+    return { probeId: id, faulty: redactObservation(faulty[id].raw), control: redactObservation(control[id].raw), classification, observationContractMatches, faultyControlDiscriminates, elapsedMs: faulty[id].elapsedMs };
+  });
   const outcomes = ids.map(id => {
     const plannedProbe = plan.recommendedProbes.find(probe => probe.id === id);
     const plannedSourceHash = hashSourceAtExecutorEntry(plannedProbe?.sql ?? '');
-    return { probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classifications.find(x => x.probeId === id)!.classification, weakensCandidateConcernIds: plannedProbe?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash, artifactMember: Boolean(plannedProbe && faulty[id].sourceHash === plannedSourceHash) };
+    const classification = classifications.find(x => x.probeId === id)!;
+    return { probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classification.classification, observationContractMatches: classification.observationContractMatches, faultyControlDiscriminates: classification.faultyControlDiscriminates, weakensCandidateConcernIds: plannedProbe?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash, artifactMember: Boolean(plannedProbe && faulty[id].sourceHash === plannedSourceHash) };
   });
   const ranked = rankedMechanisms(plan);
   const leakageCount = countScalarLeakage({ observations: classifications, evaluator: { rankedMechanisms: ranked } }, bindings);
   setSubphase('evaluation');
   const metrics = evaluateAll(outcomes, oracle, ranked, { leakageCount, candidateIds: (plan.candidateConcerns ?? []).map(c => c.id), validationAttempts: ids.map(id => ({ probeId: id, accepted: true, artifactSourceHash: faulty[id].sourceHash })) });
-  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), executionArtifactHashes: Object.fromEntries(ids.map(id => [id, { plannedArtifactHash: faulty[id].plannedArtifactHash, executorEntrySourceHash: faulty[id].sourceHash, submittedStatementHash: faulty[id].artifactHash, controlSubmittedStatementHash: control[id].artifactHash }])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
+  const bindingNames = Object.keys(bindings).sort(compareCodeUnits);
+  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), executionArtifactHashes: Object.fromEntries(ids.map(id => [id, { plannedArtifactHash: faulty[id].plannedArtifactHash, executorEntrySourceHash: faulty[id].sourceHash, submittedStatementHash: faulty[id].artifactHash, controlSubmittedStatementHash: control[id].artifactHash }])), safetyDecision: 'accepted_recommended_investigation_probe_only', safetyAcceptedByProbe: Object.fromEntries(ids.map(id => [id, faulty[id].safetyAccepted && control[id].safetyAccepted])), observations: classifications, evaluator: metrics, parameterNames: bindingNames, parameterTypes: Object.fromEntries(bindingNames.map(name => [name, typeof bindings[name]])), transactionMode: 'read_only', statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }
 function hash(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
 function resolveBenchmarkBaseSha(): string {
@@ -142,9 +159,9 @@ function portClosed(port: number): Promise<boolean> { return new Promise(resolve
 async function executeProbe(client: Client, probe: Probe, bindings: Record<string, Scalar>): Promise<{ rows: Array<Record<string, unknown>>; artifactHash: string; sourceHash: string }> {
   const sourceHash = hashSourceAtExecutorEntry(probe.sql);
   const names = probe.parameters.map(p => p.name);
-  const submittedSql = buildSubmittedProbeSql(probe.sql, names);
-  const values = names.map(name => bindings[name]);
-  await client.query('BEGIN READ ONLY');
-  try { const result = await client.query({ text: submittedSql, values }); await client.query('COMMIT'); return { rows: result.rows, artifactHash: hash(submittedSql), sourceHash }; } catch (e) { await client.query('ROLLBACK'); throw e; }
+  const submitted = buildSubmittedProbeStatement(probe.sql, names);
+  const values = submitted.parameterNames.map(name => bindings[name]);
+  const rows = await executeReadOnlyStatement(client, submitted.text, values);
+  return { rows, artifactHash: hash(submitted.text), sourceHash };
 }
 main().catch(() => { process.exitCode = 1; });

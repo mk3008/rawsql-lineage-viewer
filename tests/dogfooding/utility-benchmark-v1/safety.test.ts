@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, mapSequentially, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { executeReadOnlyStatement } from './executor';
+import { buildSubmittedProbeStatement, compareCodeUnits, encodeBindingKey } from './parameterRewrite';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -25,7 +27,27 @@ describe('benchmark probe safety', () => {
   it('partitions scenario bindings and qualifies the global scan keys', () => {
     const partitioned = partitionScenarioBindings({ alpha: { status: 'a' }, beta: { status: 'b' } });
     expect(partitioned.scenarios).toEqual({ alpha: { status: 'a' }, beta: { status: 'b' } });
-    expect(partitioned.global).toEqual({ 'alpha:status': 'a', 'beta:status': 'b' });
+    expect(partitioned.global).toEqual({ '["alpha","status"]': 'a', '["beta","status"]': 'b' });
+  });
+  it('uses locale-independent ordering and collision-free tuple binding keys', () => {
+    const partitioned = partitionScenarioBindings({ 'a:b': { c: 1 }, a: { 'b:c': 2 }, Z: { z: 3 } });
+    expect(Object.keys(partitioned.scenarios)).toEqual(['Z', 'a', 'a:b']);
+    expect(encodeBindingKey('a', 'b:c')).not.toBe(encodeBindingKey('a:b', 'c'));
+    expect(Object.keys(partitioned.global)).toContain('["a","b:c"]');
+    expect(Object.keys(partitioned.global)).toContain('["a:b","c"]');
+    expect(['a', 'Z', 'a:b'].sort(compareCodeUnits)).toEqual(['Z', 'a', 'a:b']);
+  });
+  it('includes untracked files in deterministic changed-path evidence', () => {
+    expect(mergeChangedPaths('src/z.ts\r\ntests/a.ts\r\n', 'src/new.ts\ntests/a.ts\n')).toEqual([
+      'src/new.ts',
+      'src/z.ts',
+      'tests/a.ts',
+    ]);
+  });
+  it('scans both tracked additions and raw untracked runtime sources for DB configuration', () => {
+    expect(hasRuntimeDbConfigAddition("+import { Client } from 'pg';", '')).toBe(true);
+    expect(hasRuntimeDbConfigAddition('', "import { Client } from 'pg';")).toBe(true);
+    expect(hasRuntimeDbConfigAddition('', 'export const staticPlanner = true;')).toBe(false);
   });
   it('executes probes sequentially in deterministic order', async () => {
     const events: string[] = [];
@@ -63,17 +85,21 @@ describe('benchmark probe safety', () => {
     const durable = namespacePublicMetrics({ finalization: { code: 'OK', containerAbsent: true } }) as { finalization: { code: string; containerAbsent: string } };
     expect(durable.finalization).toEqual({ code: 'OK', containerAbsent: 'metric-boolean:true' });
   });
-  it('derives actionable coverage and mechanism hits from every outcome', () => {
-    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });
-    expect(result).toMatchObject({ top1MechanismHit: 1, top3MechanismHit: 1, actionableCoverage: 1, timeToFirstUsefulEvidenceMs: 12, overclaimCount: 0 });
+  it('separates executable contract evidence from faulty/control discrimination', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 12, classification: 'supports', observationContractMatches: true, faultyControlDiscriminates: false, artifactMember: true, artifactSourceHash: 's', plannedSourceHash: 's' }], { mechanism: 'expected', faulty: { rows: [] }, control: { rows: [] } }, ['other'], { validationAttempts: [{ probeId: 'p1', accepted: true, artifactSourceHash: 's' }], candidateIds: ['c1'] });
+    expect(result).toMatchObject({ executionSuccessRate: 1, observationContractMatchRate: 1, actionableEvidenceRate: 1, faultyControlDiscriminationRate: 0, candidateReductionRate: 0, top1MechanismHitRate: 0, top3MechanismHitRate: 0, rootMechanismInconclusive: true, semanticEditFreeRate: 1, manualSqlAvoidedCount: 1, timeToFirstUsefulEvidenceMs: null, overclaimCount: 0 });
+  });
+  it('does not count weakens evidence as an observation-contract match', () => {
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, classification: 'weakens', observationContractMatches: false, weakensCandidateConcernIds: ['c1'] }], { mechanism: 'm1', faulty: {}, control: {} }, ['m1'], { candidateIds: ['c1'], validationAttempts: [{ probeId: 'p1', accepted: true }] });
+    expect(result).toMatchObject({ observationContractMatchRate: 0, actionableEvidenceRate: 1, candidateReductionRate: 1 });
   });
   it('classifies a miss as inconclusive and reports failed safety/hash evidence', () => {
-    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [{ x: 1 }] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive', artifactSourceHash: 'a', plannedSourceHash: 'b' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m2'], { leakageCount: 2, validationAttempts: [{ probeId: 'p1', accepted: false }], candidateIds: ['c1'] });
-    expect(result).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0, actionableCoverage: 0, executionSuccess: 0, inconclusive: true, semanticEditFree: false, unsafeProbeCount: 1, parameterLeakageCount: 2, overclaimCount: 0 });
+    const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [{ x: 1 }] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive', faultyControlDiscriminates: true, artifactSourceHash: 'a', plannedSourceHash: 'b' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m2'], { leakageCount: 2, validationAttempts: [{ probeId: 'p1', accepted: false }], candidateIds: ['c1'] });
+    expect(result).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 0, actionableEvidenceRate: 0, executionSuccessRate: 0, observationContractMatchRate: 0, faultyControlDiscriminationRate: 1, rootMechanismInconclusive: false, semanticEditFreeRate: 0, unsafeProbeCount: 1, parameterLeakageCount: 2, overclaimCount: 0 });
   });
   it('rejects unsupported emitted classifications as overclaims', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, artifactSourceHash: 'a', plannedSourceHash: 'a', classification: 'prove' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1']);
-    expect(result).toMatchObject({ overclaimCount: 1, semanticEditFree: true });
+    expect(result).toMatchObject({ overclaimCount: 1, semanticEditFreeRate: 1 });
   });
   it('derives ranked mechanisms from checklist conditions, not concern ids', () => {
     expect(rankedMechanisms({ recommendedProbes: [], unresolvedParameters: [], candidateConcerns: [{ id: 'c1' }, { id: 'c2' }], nextEvidenceChecklist: [{ kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c1'] }, { kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c2'] }, { kind: 'condition', mechanism: 'm2', candidateConcernIds: ['c2'] }] })).toEqual(['m1', 'm2']);
@@ -81,12 +107,13 @@ describe('benchmark probe safety', () => {
   it('weakens only linked candidates and leaves inconclusive unchanged', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, classification: 'supports', supportsCandidateConcernIds: ['c1'] }, { probeId: 'p2', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 2, classification: 'weakens', weakensCandidateConcernIds: ['c2'] }, { probeId: 'p3', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { candidateIds: ['c1', 'c2', 'c3'] });
     expect(result.remainingCandidates).toEqual(['c1', 'c3']);
-    expect(result.candidateReduction).toBeCloseTo(1 / 3);
+    expect(result.candidateReductionRate).toBeCloseTo(1 / 3);
+    expect(result.timeToFirstUsefulEvidenceMs).toBe(2);
   });
   it('distinguishes Top3-only and mechanism misses, and hashes source with SHA-256', () => {
     const oracle = { mechanism: 'm3', faulty: {}, control: {} };
-    expect(evaluateAll([], oracle, ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 1 });
-    expect(evaluateAll([], oracle, ['m1', 'm2', 'm4'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0 });
+    expect(evaluateAll([], oracle, ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 1 });
+    expect(evaluateAll([], oracle, ['m1', 'm2', 'm4'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 0 });
     expect(hashSourceAtExecutorEntry('SELECT 1')).toMatch(/^[0-9a-f]{64}$/);
   });
   it('separates planned/executor-entry identity from the actual submitted statement', () => {
@@ -94,5 +121,29 @@ describe('benchmark probe safety', () => {
     const submitted = buildSubmittedProbeSql(planned, ['status']);
     expect(submitted).toBe('SELECT * FROM (SELECT id FROM orders WHERE status = $1) AS benchmark_probe LIMIT 100');
     expect(hashSourceAtExecutorEntry(submitted)).not.toBe(hashSourceAtExecutorEntry(planned));
+  });
+  it('rewrites declared parameters by SQL tokens and preserves non-parameter regions', () => {
+    const source = `SELECT :customer_id, :status, :status, value::text, ':status', E'prefix\\:status', "column:status"\n-- :status\n/* :status */\n, $$:status$$, $tag$:status$tag$;`;
+    expect(buildSubmittedProbeSql(source, ['customer_id', 'status'])).toBe(`SELECT * FROM (SELECT $1, $2, $2, value::text, ':status', E'prefix\\:status', "column:status"\n-- :status\n/* :status */\n, $$:status$$, $tag$:status$tag$) AS benchmark_probe LIMIT 100`);
+  });
+  it('allows unused definitions, compacts used bindings, and rejects undeclared placeholders', () => {
+    expect(buildSubmittedProbeStatement('SELECT :status', ['unused', 'status'])).toEqual({ parameterNames: ['status'], text: 'SELECT * FROM (SELECT $1) AS benchmark_probe LIMIT 100' });
+    expect(() => buildSubmittedProbeStatement('SELECT :missing', ['status'])).toThrow('BENCHMARK_PARAMETER_UNDECLARED');
+    expect(() => validateProbe({ recommendedProbes: [{ ...base, id: 'p', sql: 'SELECT :missing', parameters: [{ name: 'status', status: 'resolved' }] }], unresolvedParameters: [] }, { ...base, id: 'p', sql: 'SELECT :missing', parameters: [{ name: 'status', status: 'resolved' }] }, { status: 'ok' })).toThrow('BENCHMARK_PARAMETER_UNDECLARED');
+  });
+  it('preserves the original query error when rollback also fails', async () => {
+    const original = new Error('query failed');
+    const calls: string[] = [];
+    const client = {
+      query: async (query: string | { text: string; values: unknown[] }) => {
+        const operation = typeof query === 'string' ? query : query.text;
+        calls.push(operation);
+        if (typeof query !== 'string') throw original;
+        if (query === 'ROLLBACK') throw new Error('rollback failed');
+        return { rows: [] };
+      },
+    };
+    await expect(executeReadOnlyStatement(client, 'SELECT 1', [])).rejects.toBe(original);
+    expect(calls).toEqual(['BEGIN READ ONLY', 'SELECT 1', 'ROLLBACK']);
   });
 });

@@ -1,4 +1,5 @@
 import { BinarySelectQuery, DeleteQuery, FunctionSource, InsertQuery, MergeQuery, ParenSource, SimpleSelectQuery, SqlParser, SubQuerySource, TableSource, UpdateQuery } from 'rawsql-ts';
+import { collectProbeParameterNames } from './parameterRewrite';
 
 export type CandidateConcern = { id: string; mechanism?: string };
 export type EvidenceChecklistItem = { kind: string; mechanism?: string; candidateConcernIds?: string[]; condition?: string };
@@ -28,6 +29,9 @@ export function validateProbe(plan: Plan, probe: Probe, bindings: Record<string,
   let ast; try { ast = SqlParser.parse(probe.sql); } catch { throw new Error('PROBE_PARSE_FAILED'); }
   if (!supported(ast) || (probe.sql.match(/;/g) ?? []).length > 1) throw new Error('PROBE_AST_UNSUPPORTED');
   if (/\b(for\s+(update|share)|pg_sleep|dblink|lo_export|copy|nextval|set_config)\b/i.test(probe.sql)) throw new Error('PROBE_EFFECT_UNSAFE');
-  const names = [...probe.sql.matchAll(/:([A-Za-z_][A-Za-z0-9_]*)\b/g)].map(m => m[1]);
-  for (const name of names) if (!probe.parameters.some(p => p.name === name) || !Object.hasOwn(bindings, name)) throw new Error('BINDING_MISMATCH');
+  const names = collectProbeParameterNames(probe.sql);
+  for (const name of names) {
+    if (!probe.parameters.some(p => p.name === name)) throw Object.assign(new Error(`BENCHMARK_PARAMETER_UNDECLARED: ${name}`), { code: 'BENCHMARK_PARAMETER_UNDECLARED' });
+    if (!Object.hasOwn(bindings, name)) throw new Error('BINDING_MISMATCH');
+  }
 }
