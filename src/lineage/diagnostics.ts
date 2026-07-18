@@ -49,6 +49,7 @@ export interface DiagnosticSourceReference {
   id?: string;
   nodeId: string;
   nodeLabel: string;
+  provenance?: 'anchor' | 'related';
   roles: Array<DiagnosticSourceUsage['role']>;
   scopeId: string;
   usages: DiagnosticSourceUsage[];
@@ -879,7 +880,7 @@ function mergeColumnRefs(left: LineageColumnRef[], right: LineageColumnRef[]): L
 
 function conditionToInfluence(model: LineageModel, condition: LineageCondition): PopulationInfluence {
   const effects = effectsFromImpacts(condition.impact);
-  const mechanism = mechanismFromKind(condition.kind, condition.expressionSql);
+  const mechanism = mechanismFromKind(condition.kind, condition.expressionSql, condition.existencePolarity);
   return {
     effects,
     expressionSql: condition.expressionSql,
@@ -1106,9 +1107,9 @@ function impactsFromEffects(effects: PopulationEffect[]): LineageImpact[] {
   });
 }
 
-function mechanismFromKind(kind: string, expressionSql?: string): PopulationMechanism {
-  if (kind === 'where' && /^\s*(not\s+)?exists\b/i.test(expressionSql ?? '')) {
-    return 'exists';
+function mechanismFromKind(kind: string, _expressionSql?: string, existencePolarity?: 'exists' | 'not_exists'): PopulationMechanism {
+  if (kind === 'where' && existencePolarity) {
+    return existencePolarity;
   }
   switch (kind) {
     case 'aggregate_filter':
@@ -1201,7 +1202,7 @@ function createDiagnosticReference(
   const node = model.nodes.find((item) => item.id === reference.nodeId);
   const column = node?.columns.find((item) => item.name === reference.columnName);
   const definedInScopeId = column?.scopeId ?? model.scopes.find((scope) => scope.nodeId === reference.nodeId)?.id;
-  return {
+  const result: DiagnosticSourceReference = {
     columnName: reference.columnName,
     definedInScopeId,
     id: referenceIdValue(reference.nodeId, reference.columnName),
@@ -1216,6 +1217,10 @@ function createDiagnosticReference(
     }],
     usedInScopeIds: [reference.scopeId],
   };
+  if (reference.provenance) {
+    result.provenance = reference.provenance;
+  }
+  return result;
 }
 
 function columnRefToSourceReference(reference: LineageColumnRef, usageScopeId: string): LineageSourceReference {
@@ -1241,19 +1246,27 @@ function classifyBothReferences(references: DiagnosticSourceReference[]): Diagno
     existing.usedInScopeIds = dedupeStrings([...(existing.usedInScopeIds ?? []), ...(reference.usedInScopeIds ?? [reference.scopeId])]);
   }
   return [...merged.values()].map((reference) => {
-    return {
+    const result: DiagnosticSourceReference = {
       ...reference,
       roles: rolesFromUsages(reference.usages),
       usedInScopeIds: dedupeStrings(reference.usages.map((usage) => usage.scopeId)),
     };
+    if (reference.provenance) {
+      result.provenance = reference.provenance;
+    }
+    return result;
   });
 }
 
 function cloneDiagnosticReference(reference: DiagnosticSourceReference): DiagnosticSourceReference {
-  return {
+  const clone: DiagnosticSourceReference = {
     ...reference,
     usages: reference.usages.map((usage) => ({ ...usage })),
   };
+  if (reference.provenance) {
+    clone.provenance = reference.provenance;
+  }
+  return clone;
 }
 
 function dedupeDiagnosticReferences(references: DiagnosticSourceReference[]): DiagnosticSourceReference[] {

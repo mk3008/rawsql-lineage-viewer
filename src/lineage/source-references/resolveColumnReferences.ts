@@ -4,11 +4,13 @@ import type { SourceReferenceTarget } from './sourceReferences.types';
 
 export interface ResolveColumnReferencesOptions {
   formatExpressionSql?: (value: unknown) => string | undefined;
+  getInlineQueryShadowedAliases?: (inlineQuery: InlineQuery) => ReadonlySet<string>;
+  skipUnqualifiedInInlineQueries?: boolean;
   skipInlineQueries?: boolean;
 }
 
-export function resolveColumnReferences(value: unknown, sources: SourceReferenceTarget[]): LineageColumnRef[] {
-  return resolveColumnReferencesWithIssues(value, sources).resolved;
+export function resolveColumnReferences(value: unknown, sources: SourceReferenceTarget[], options: ResolveColumnReferencesOptions = {}): LineageColumnRef[] {
+  return resolveColumnReferencesWithIssues(value, sources, options).resolved;
 }
 
 export function resolveColumnReferencesWithIssues(
@@ -62,11 +64,14 @@ export function resolveColumnReferencesWithIssues(
   return { resolved, unresolved };
 }
 
-export function collectColumnReferences(value: unknown, options: { skipInlineQueries?: boolean } = {}): ColumnReference[] {
+export function collectColumnReferences(
+  value: unknown,
+  options: Pick<ResolveColumnReferencesOptions, 'getInlineQueryShadowedAliases' | 'skipInlineQueries' | 'skipUnqualifiedInInlineQueries'> = {},
+): ColumnReference[] {
   const references: ColumnReference[] = [];
   const visited = new Set<unknown>();
 
-  const visit = (current: unknown): void => {
+  const visit = (current: unknown, insideInlineQuery = false, shadowedAliases: ReadonlySet<string> = new Set()): void => {
     if (!current || typeof current !== 'object' || visited.has(current)) {
       return;
     }
@@ -77,15 +82,26 @@ export function collectColumnReferences(value: unknown, options: { skipInlineQue
     }
 
     if (current instanceof ColumnReference) {
+      const namespace = current.getNamespace();
+      if (
+        options.skipUnqualifiedInInlineQueries && insideInlineQuery && !namespace
+        || namespace && shadowedAliases.has(namespace)
+      ) {
+        return;
+      }
       references.push(current);
       return;
     }
 
+    const nestedInsideInlineQuery = insideInlineQuery || current instanceof InlineQuery;
+    const nestedShadowedAliases = current instanceof InlineQuery
+      ? new Set([...shadowedAliases, ...(options.getInlineQueryShadowedAliases?.(current) ?? [])])
+      : shadowedAliases;
     for (const nested of Object.values(current)) {
       if (Array.isArray(nested)) {
-        nested.forEach(visit);
+        nested.forEach((item) => visit(item, nestedInsideInlineQuery, nestedShadowedAliases));
       } else {
-        visit(nested);
+        visit(nested, nestedInsideInlineQuery, nestedShadowedAliases);
       }
     }
   };

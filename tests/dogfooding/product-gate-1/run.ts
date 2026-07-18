@@ -4,17 +4,19 @@
  * product boundaries a user/host would use.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 type Scalar = boolean | number | string | null;
-type Request = { targetColumn: string; symptom: string; knownParameters?: Record<string, Scalar>; investigationKeys?: Record<string, Scalar> };
-type Parameter = { name: string; status: string; value?: Scalar };
-type Probe = { id: string; readOnly: true; sql: string; parameters: Parameter[] };
-type Plan = { blockedProbes: Array<{ id: string; status: string }>; deferredProbes: Probe[]; recommendedProbes: Probe[]; unresolvedParameters: Parameter[] };
+type ParameterDefinition = { name: string; origin: string; required?: boolean; typeHint?: string };
+type Request = { targetColumn: string; symptom: string; parameterDefinitions?: ParameterDefinition[] };
+type Parameter = { name: string; status: string };
+type Probe = { id: string; interpretation: { assumptions: string[]; doesNotProve: string[]; expectedCardinality: string; expectedColumns: unknown[]; inconclusiveHandling: { conditions: string[]; nextEvidence: string[] }; nextEvidence: string[]; observationRules: Array<{ candidateConcernIds: string[]; condition: string; outcome: string }>; supportsCandidateConcernIds: string[]; version: number; weakensCandidateConcernIds: string[] }; sql: string; parameters: Parameter[]; staticSafetyEvidence: { confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
+type Plan = { blockedProbes: Array<{ id: string; status: string }>; candidateConcerns: Array<{ id: string }>; deferredProbes: Probe[]; recommendedProbes: Probe[]; unresolvedParameters: Parameter[] };
 
 const harnessRoot = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const rawRoot = resolve(process.cwd(), 'tmp/dogfooding/product-gate-1/raw');
@@ -42,35 +44,38 @@ async function runCase(id: string): Promise<void> {
   const output = resolve(rawRoot, id);
   mkdirSync(output, { recursive: true });
   const request = readJson<Request>(resolve(publicDir, 'request.json'));
-  const parameters = [
-    ...Object.entries(request.investigationKeys ?? {}).map(([name, value]) => ({ name, origin: 'investigation_key', value })),
-    ...Object.entries(request.knownParameters ?? {}).map(([name, value]) => ({ name, origin: 'original_query_parameter', value })),
-  ];
-  const parametersPath = resolve(output, 'parameters.json');
-  writeJson(parametersPath, parameters);
+  const bindingsPath = resolve(privateDir, 'bindings.json');
+  const bindings = existsSync(bindingsPath) ? readJson<Record<string, Scalar>>(bindingsPath) : {};
+  const parameterInputRoot = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-gate-1-bindings-'));
+  const parametersPath = resolve(parameterInputRoot, 'parameters.json');
+  writeJson(parametersPath, { bindings, definitions: request.parameterDefinitions ?? [] });
 
-  resetDatabase();
-  runPostgres(readFileSync(resolve(publicDir, 'ddl/schema.sql'), 'utf8'));
-  runPostgres(readFileSync(resolve(privateDir, 'seed.sql'), 'utf8'));
+  try {
+    resetDatabase();
+    runPostgres(readFileSync(resolve(publicDir, 'ddl/schema.sql'), 'utf8'));
+    runPostgres(readFileSync(resolve(privateDir, 'seed.sql'), 'utf8'));
 
-  const cliPlan = JSON.parse(execFileSync(process.execPath, [
-    '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate',
-    '--sql', 'query.sql', '--ddl-dir', 'ddl', '--parameters', parametersPath,
-    '--target-node', 'main_output', '--target-column', request.targetColumn, '--symptom', request.symptom,
-  ], { cwd: publicDir, encoding: 'utf8' })) as Plan;
-  writeJson(resolve(output, 'cli-plan.json'), cliPlan);
+    const cliPlan = JSON.parse(execFileSync(process.execPath, [
+      '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate',
+      '--sql', 'query.sql', '--ddl-dir', 'ddl', '--parameters', parametersPath,
+      '--target-node', 'main_output', '--target-column', request.targetColumn, '--symptom', request.symptom,
+    ], { cwd: publicDir, encoding: 'utf8' })) as Plan;
+    writeJson(resolve(output, 'cli-plan.json'), cliPlan);
 
-  const mcp = await captureMcp(publicDir, request);
-  writeJson(resolve(output, 'mcp-transcript.json'), mcp);
-  const mcpPlan = mcp.response.structuredContent as Plan;
-  if (JSON.stringify(cliPlan) !== JSON.stringify(mcpPlan)) {
-    throw new Error(`${id}: CLI and MCP plans differ; see ${resolve(output, 'cli-plan.json')} and mcp-transcript.json`);
+    const mcp = await captureMcp(publicDir, request, bindings);
+    writeJson(resolve(output, 'mcp-transcript.json'), mcp);
+    const mcpPlan = mcp.response.structuredContent as Plan;
+    if (JSON.stringify(cliPlan) !== JSON.stringify(mcpPlan)) {
+      throw new Error(`${id}: CLI and MCP plans differ; see ${resolve(output, 'cli-plan.json')} and mcp-transcript.json`);
+    }
+    writeJson(resolve(output, 'plan-comparison.json'), { exactJsonEqual: true, compared: ['cli-plan.json', 'mcp-transcript.json#response.structuredContent'] });
+    writeJson(resolve(output, 'probe-execution.json'), executeListedProbes(cliPlan, id, bindings));
+  } finally {
+    rmSync(parameterInputRoot, { force: true, recursive: true });
   }
-  writeJson(resolve(output, 'plan-comparison.json'), { exactJsonEqual: true, compared: ['cli-plan.json', 'mcp-transcript.json#response.structuredContent'] });
-  writeJson(resolve(output, 'probe-execution.json'), executeListedProbes(cliPlan, id));
 }
 
-async function captureMcp(workspace: string, request: Request): Promise<{ listTools: unknown; request: unknown; response: { content: unknown; isError?: boolean; structuredContent: unknown } }> {
+async function captureMcp(workspace: string, request: Request, bindings: Record<string, Scalar>): Promise<{ listTools: unknown; request: unknown; response: { content: unknown; isError?: boolean; structuredContent: unknown } }> {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: ['--import', 'tsx', resolve(process.cwd(), 'src/mcp/investigationServer.ts'), '--workspace', workspace],
@@ -82,49 +87,50 @@ async function captureMcp(workspace: string, request: Request): Promise<{ listTo
     const listed = await client.listTools();
     const toolRequest = {
       name: 'create_investigation_plan',
-      arguments: { sqlPath: 'query.sql', ddlDirectories: ['ddl'], targetNode: 'main_output', ...request },
+      arguments: { sqlPath: 'query.sql', ddlDirectories: ['ddl'], targetNode: 'main_output', ...request, parameterBindings: bindings },
     };
     const response = await client.callTool(toolRequest);
     if (response.isError || !response.structuredContent) throw new Error(`MCP returned an error: ${JSON.stringify(response.content)}`);
-    return { listTools: listed, request: toolRequest, response: { content: response.content, isError: response.isError, structuredContent: response.structuredContent } };
+    return {
+      listTools: listed,
+      request: toBindingSafeRequest(toolRequest, Object.keys(bindings)),
+      response: { content: response.content, isError: response.isError, structuredContent: response.structuredContent },
+    };
   } finally {
     await client.close();
   }
 }
 
-function executeListedProbes(plan: Plan, scenario: string): unknown {
+function executeListedProbes(plan: Plan, scenario: string, bindings: Record<string, Scalar>): unknown {
   const allowed = new Map(plan.recommendedProbes.map((probe) => [probe.id, probe]));
   const blocked = new Set(plan.blockedProbes.map((probe) => probe.id));
+  assertStaticInterpretationContracts(plan, scenario);
   const results: unknown[] = [];
   for (const probe of plan.recommendedProbes) {
     if (!allowed.has(probe.id) || blocked.has(probe.id)) throw new Error(`${scenario}: rejected unknown or blocked probe ${probe.id}`);
-    if (probe.readOnly !== true || !/^\s*(?:with\b[\s\S]+?\bselect\b|select\b)/i.test(probe.sql)) throw new Error(`${scenario}: rejected non-read-only probe ${probe.id}`);
-    const unresolved = probe.parameters.filter((parameter) => parameter.status === 'unresolved' || !Object.prototype.hasOwnProperty.call(parameter, 'value'));
+    if (probe.staticSafetyEvidence.version !== 1 || probe.staticSafetyEvidence.statementClassification !== 'select_statement' || probe.staticSafetyEvidence.confidence !== 'syntax_only') {
+      throw new Error(`${scenario}: rejected probe with unexpected static classification ${probe.id}`);
+    }
+    if (!probe.staticSafetyEvidence.executionCaveats.includes('This static classification does not authorize execution.')) {
+      throw new Error(`${scenario}: rejected probe without the required execution caveat ${probe.id}`);
+    }
+    if (!/^\s*(?:with\b[\s\S]+?\bselect\b|select\b)/i.test(probe.sql)) throw new Error(`${scenario}: rejected probe outside the external gate SQL policy ${probe.id}`);
+    const unresolved = probe.parameters.filter((parameter) => parameter.status === 'unresolved' || !Object.prototype.hasOwnProperty.call(bindings, parameter.name));
     if (unresolved.length > 0 || plan.unresolvedParameters.length > 0) throw new Error(`${scenario}: rejected unresolved parameter(s) for ${probe.id}`);
-    const positional = toPositionalParameters(probe.sql, probe.parameters);
+    const positional = toPositionalParameters(probe.sql, probe.parameters, bindings);
     const preparedSql = `SELECT * FROM (${positional.sql.replace(/;\s*$/, '')}) AS gate_1_probe LIMIT 100`;
     const statementName = `gate_1_probe_${results.length + 1}`;
     const execute = `EXECUTE ${statementName}(${positional.values.map(invocationLiteral).join(', ')})`;
     // Values occur only in EXECUTE arguments.  The prepared SQL has placeholders.
     const stdout = runPostgres(`BEGIN READ ONLY; SET LOCAL statement_timeout = '5000ms'; PREPARE ${statementName} AS ${preparedSql}; ${execute}; DEALLOCATE ${statementName}; COMMIT;`);
     if (Buffer.byteLength(stdout) > 1024 * 1024) throw new Error(`${scenario}: output cap exceeded for ${probe.id}`);
-    results.push({
-      probeId: probe.id,
-      generatedSql: probe.sql,
-      preparedStatement: `PREPARE ${statementName} AS ${preparedSql}`,
-      executeWrapper: execute,
-      positionalMapping: positional.mapping,
-      fixtureSafeValues: positional.values,
-      mechanicalTransformationOnly: true,
-      parameterValueInline: 0,
-      rowOutput: stdout.trim(),
-    });
+    results.push(toBindingSafeProbeEvidence(probe.id, probe.sql, `PREPARE ${statementName} AS ${preparedSql}`, positional.mapping));
   }
   return { allowedProbeIds: [...allowed.keys()], blockedProbeIds: [...blocked], deferredProbeIds: plan.deferredProbes.map((probe) => probe.id), results };
 }
 
-function toPositionalParameters(sql: string, parameters: Parameter[]): { sql: string; mapping: Array<{ name: string; position: number }>; values: Scalar[] } {
-  const values = new Map(parameters.map((parameter) => [parameter.name, parameter.value]));
+function toPositionalParameters(sql: string, parameters: Parameter[], bindings: Record<string, Scalar>): { sql: string; mapping: Array<{ name: string; position: number }>; values: Scalar[] } {
+  const values = new Map(parameters.filter((parameter) => Object.prototype.hasOwnProperty.call(bindings, parameter.name)).map((parameter) => [parameter.name, bindings[parameter.name]]));
   const positions = new Map<string, number>();
   const positionalSql = sql.replace(/:([A-Za-z_][A-Za-z0-9_]*)\b/g, (_all, name: string) => {
     if (!values.has(name)) throw new Error(`unresolved SQL placeholder :${name}`);
@@ -161,4 +167,55 @@ function runPostgres(sql: string): string {
 function readJson<T>(file: string): T { return JSON.parse(readFileSync(file, 'utf8')) as T; }
 function writeJson(file: string, value: unknown): void { writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); }
 
-main().catch((error: unknown) => { process.stderr.write(`${error instanceof Error ? error.stack ?? error.message : String(error)}\n`); process.exitCode = 1; });
+export function toBindingSafeRequest(
+  request: { arguments: Record<string, unknown>; name: string },
+  providedBindingNames: string[],
+): unknown {
+  const safeArguments = { ...request.arguments };
+  delete safeArguments.parameterBindings;
+  return { arguments: { ...safeArguments, providedBindingNames: [...providedBindingNames].sort() }, name: request.name };
+}
+
+export function assertStaticInterpretationContracts(plan: Plan, scenario: string): void {
+  const concernIds = new Set(plan.candidateConcerns.map((concern) => concern.id));
+  for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+    const referencedIds = [
+      ...probe.interpretation.supportsCandidateConcernIds,
+      ...probe.interpretation.weakensCandidateConcernIds,
+      ...probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds),
+    ];
+    const outcomes = new Set(probe.interpretation.observationRules.map((rule) => rule.outcome));
+    if (probe.interpretation.version !== 1
+      || !['exactly_one_row', 'zero_or_more_rows'].includes(probe.interpretation.expectedCardinality)
+      || probe.interpretation.expectedColumns.length === 0
+      || probe.interpretation.assumptions.length === 0
+      || probe.interpretation.doesNotProve.length === 0
+      || probe.interpretation.nextEvidence.length === 0
+      || probe.interpretation.supportsCandidateConcernIds.length === 0
+      || probe.interpretation.weakensCandidateConcernIds.length === 0
+      || probe.interpretation.inconclusiveHandling.conditions.length === 0
+      || probe.interpretation.inconclusiveHandling.nextEvidence.length === 0
+      || !['supports', 'weakens', 'inconclusive'].every((outcome) => outcomes.has(outcome))
+      || probe.interpretation.observationRules.some((rule) => rule.condition.length === 0 || rule.candidateConcernIds.length === 0)
+      || probe.interpretation.observationRules.filter((rule) => rule.outcome === 'inconclusive').some((rule) => !probe.interpretation.inconclusiveHandling.conditions.includes(rule.condition))
+      || referencedIds.some((id) => !concernIds.has(id))) {
+      throw new Error(`${scenario}: rejected incomplete static interpretation contract for ${probe.id}`);
+    }
+  }
+  if (plan.blockedProbes.some((probe) => Object.prototype.hasOwnProperty.call(probe, 'interpretation'))) {
+    throw new Error(`${scenario}: rejected fabricated interpretation metadata on a blocked probe`);
+  }
+}
+
+export function toBindingSafeProbeEvidence(
+  probeId: string,
+  generatedSql: string,
+  preparedStatement: string,
+  positionalMapping: Array<{ name: string; position: number }>,
+): unknown {
+  return { generatedSql, mechanicalTransformationOnly: true, parameterValueInline: 0, positionalMapping, preparedStatement, probeId, resultPersisted: false };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch(() => { process.stderr.write('Product gate failed without emitting binding or execution details.\n'); process.exitCode = 1; });
+}

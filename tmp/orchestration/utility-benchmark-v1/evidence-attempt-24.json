@@ -1,0 +1,230 @@
+{
+  "baseRevision": "9572dee9505281a83ac202d8b0d64ab4a36b9ecc",
+  "image": "postgres:16-alpine",
+  "scenarios": {
+    "data-anomaly": {
+      "schemaHash": "deb60d8984888ea9a000cc4fbcfe631eede7b90de4b127d760fe681fe1bb628f",
+      "planHash": "14d3be14f58acf7a9b1995279f5c3be9b877123222e7d8ecac960c9b569cf653",
+      "recommendedProbeIds": [
+        "probe:node-query-outer-filter:01"
+      ],
+      "probeHashes": {
+        "probe:node-query-outer-filter:01": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b"
+      },
+      "executionArtifactHashes": {
+        "probe:node-query-outer-filter:01": {
+          "plannedArtifactHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "executorEntrySourceHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "submittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022",
+          "controlSubmittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022"
+        }
+      },
+      "safetyDecision": "accepted_recommended_investigation_probe_only",
+      "safetyAcceptedByProbe": {
+        "probe:node-query-outer-filter:01": "metric-boolean:true"
+      },
+      "observations": [
+        {
+          "probeId": "probe:node-query-outer-filter:01",
+          "faulty": {
+            "rowShape": "single_row",
+            "columns": [
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+            }
+          },
+          "control": {
+            "rowShape": "single_row",
+            "columns": [
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+            }
+          },
+          "classification": "supports",
+          "observationContractMatches": "metric-boolean:true",
+          "faultyControlDiscriminates": "metric-boolean:false",
+          "elapsedMs": "metric-number:6"
+        }
+      ],
+      "rankedMechanisms": [
+        "group_by",
+        "where"
+      ],
+      "oracleMechanism": "data_anomaly",
+      "evaluator": {
+        "executionSuccessRate": "metric-number:1",
+        "observationContractMatchRate": "metric-number:1",
+        "actionableEvidenceRate": "metric-number:1",
+        "faultyControlDiscriminationRate": "metric-number:0",
+        "candidateReductionRate": "metric-number:0",
+        "top1MechanismHitRate": "metric-number:0",
+        "top3MechanismHitRate": "metric-number:0",
+        "semanticEditFreeRate": "metric-number:1",
+        "manualSqlAvoidedCount": "metric-number:1",
+        "unsafeProbeCount": "metric-number:0",
+        "overclaimCount": "metric-number:0",
+        "parameterLeakageCount": 0,
+        "rootMechanismInconclusive": "metric-boolean:true",
+        "timeToFirstUsefulEvidenceMs": "metric-null",
+        "remainingCandidates": [
+          "concern:aggregate-expression:01",
+          "concern:group-by:02",
+          "concern:source-data-value:03",
+          "concern:where:04"
+        ],
+        "classifications": [
+          {
+            "probeId": "probe:node-query-outer-filter:01",
+            "classification": "supports"
+          }
+        ]
+      },
+      "parameterNames": [
+        "customer_id",
+        "status"
+      ],
+      "parameterTypes": {
+        "customer_id": "number",
+        "status": "string"
+      },
+      "transactionMode": "read_only",
+      "statementTimeoutMs": "metric-number:5000",
+      "lockTimeoutMs": "metric-number:1000",
+      "rowCap": "metric-number:100"
+    },
+    "sql-defect": {
+      "schemaHash": "deb60d8984888ea9a000cc4fbcfe631eede7b90de4b127d760fe681fe1bb628f",
+      "planHash": "14d3be14f58acf7a9b1995279f5c3be9b877123222e7d8ecac960c9b569cf653",
+      "recommendedProbeIds": [
+        "probe:node-query-outer-filter:01"
+      ],
+      "probeHashes": {
+        "probe:node-query-outer-filter:01": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b"
+      },
+      "executionArtifactHashes": {
+        "probe:node-query-outer-filter:01": {
+          "plannedArtifactHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "executorEntrySourceHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "submittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022",
+          "controlSubmittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022"
+        }
+      },
+      "safetyDecision": "accepted_recommended_investigation_probe_only",
+      "safetyAcceptedByProbe": {
+        "probe:node-query-outer-filter:01": "metric-boolean:true"
+      },
+      "observations": [
+        {
+          "probeId": "probe:node-query-outer-filter:01",
+          "faulty": {
+            "rowShape": "single_row",
+            "columns": [
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+            }
+          },
+          "control": {
+            "rowShape": "single_row",
+            "columns": [
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
+            ],
+            "columnTypes": {
+              "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
+              "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
+            }
+          },
+          "classification": "supports",
+          "observationContractMatches": "metric-boolean:true",
+          "faultyControlDiscriminates": "metric-boolean:false",
+          "elapsedMs": "metric-number:3"
+        }
+      ],
+      "rankedMechanisms": [
+        "group_by",
+        "where"
+      ],
+      "oracleMechanism": "sql_defect",
+      "evaluator": {
+        "executionSuccessRate": "metric-number:1",
+        "observationContractMatchRate": "metric-number:1",
+        "actionableEvidenceRate": "metric-number:1",
+        "faultyControlDiscriminationRate": "metric-number:0",
+        "candidateReductionRate": "metric-number:0",
+        "top1MechanismHitRate": "metric-number:0",
+        "top3MechanismHitRate": "metric-number:0",
+        "semanticEditFreeRate": "metric-number:1",
+        "manualSqlAvoidedCount": "metric-number:1",
+        "unsafeProbeCount": "metric-number:0",
+        "overclaimCount": "metric-number:0",
+        "parameterLeakageCount": 0,
+        "rootMechanismInconclusive": "metric-boolean:true",
+        "timeToFirstUsefulEvidenceMs": "metric-null",
+        "remainingCandidates": [
+          "concern:aggregate-expression:01",
+          "concern:group-by:02",
+          "concern:source-data-value:03",
+          "concern:where:04"
+        ],
+        "classifications": [
+          {
+            "probeId": "probe:node-query-outer-filter:01",
+            "classification": "supports"
+          }
+        ]
+      },
+      "parameterNames": [
+        "customer_id",
+        "status"
+      ],
+      "parameterTypes": {
+        "customer_id": "number",
+        "status": "string"
+      },
+      "transactionMode": "read_only",
+      "statementTimeoutMs": "metric-number:5000",
+      "lockTimeoutMs": "metric-number:1000",
+      "rowCap": "metric-number:100"
+    }
+  },
+  "imageId": "sha256:79c06d285ed9186efbbc45c73413b3c3510c3c94ffede2f25d1e523f74d07f28",
+  "serverVersion": "PostgreSQL 16.11",
+  "boundary": {
+    "changedPathCategoryCounts": {
+      "benchmark": "metric-number:4",
+      "core": "metric-number:0",
+      "cli": "metric-number:0",
+      "mcp": "metric-number:0"
+    },
+    "changedPathHash": "de41b018a5eb8bebcc8655bf8b189dc7a9a82aa200dd1217426dfcd9847d9124",
+    "noCoreCliMcpDbConfig": "metric-boolean:true"
+  },
+  "teardown": {
+    "containerAbsent": "metric-boolean:true",
+    "mountCount": "metric-number:0",
+    "volumeAbsent": "metric-boolean:true",
+    "dynamicLoopbackPortClosed": "metric-boolean:true",
+    "tempCredentialRemoved": "metric-boolean:true",
+    "tempDirectoryRemoved": "metric-boolean:true",
+    "host": "127.0.0.1",
+    "loopbackOnly": "metric-boolean:true"
+  },
+  "finalization": {
+    "phase": "container_verify",
+    "code": "OK",
+    "containerAbsent": "metric-boolean:true"
+  },
+  "parameterLeakageCount": 0
+}

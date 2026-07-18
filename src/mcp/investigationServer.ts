@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationPlanInputV1, type InvestigationPlannerParameterInputV1 } from '../lineage/investigationPlan';
+import { createInvestigationPlan, InvestigationPlanInputError, investigationInputParameterOrigins, type InvestigationInputParameterOriginV1, type InvestigationParameterDefinitionInputV1, type InvestigationPlanInputV1, type InvestigationPlannerParametersV1 } from '../lineage/investigationPlan';
+import { discoverInvestigationTargets, InvestigationTargetSelectionError, resolveInvestigationTarget, type InvestigationTargetDiscoveryInputV1 } from '../lineage/investigationTargetDiscovery';
 import { diagnosticProblemIntents, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
 
@@ -17,22 +18,26 @@ const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const DEFAULT_TARGET_NODE = 'main_output';
 const SQL_PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const parameterValueSchema = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const parameterObjectFields = {
+const parameterDefinitionFields = {
   name: z.string().min(1),
+  origin: z.enum(investigationInputParameterOrigins),
   required: z.boolean().optional(),
   typeHint: z.string().optional(),
-  value: parameterValueSchema.optional(),
 };
-const investigationKeyParameterInputSchema = z.union([
-  z.record(z.string(), parameterValueSchema),
-  z.array(z.object({ ...parameterObjectFields, origin: z.literal('investigation_key').optional() })),
-]);
-const knownParameterInputSchema = z.union([
-  z.record(z.string(), parameterValueSchema),
-  z.array(z.object({ ...parameterObjectFields, origin: z.literal('original_query_parameter').optional() })),
-]);
+const parameterDefinitionsInputSchema = z.array(z.object(parameterDefinitionFields).strict());
+const parameterBindingsInputSchema = z.record(z.string(), parameterValueSchema);
+const staticAnalysisInputSchema = {
+  contractVersion: z.number().int().optional().describe('Optional public contract version; version 1 is the only supported value.'),
+  ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
+  ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
+  ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
+  schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
+  sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
+  sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
+};
 
 export interface CreateInvestigationPlanMcpInput {
+  contractVersion?: unknown;
   sql?: unknown;
   sqlPath?: unknown;
   ddl?: unknown;
@@ -42,10 +47,43 @@ export interface CreateInvestigationPlanMcpInput {
   /** Defaults deterministically to main_output when omitted. */
   targetNode?: unknown;
   targetColumn?: unknown;
+  targetId?: unknown;
   symptom?: unknown;
-  investigationKeys?: unknown;
-  knownParameters?: unknown;
+  parameterBindings?: unknown;
+  parameterDefinitions?: unknown;
 }
+
+export type InvestigationStaticAnalysisMcpInput = Omit<CreateInvestigationPlanMcpInput,
+  'parameterBindings' | 'parameterDefinitions' | 'symptom' | 'targetColumn' | 'targetId' | 'targetNode'>;
+
+export type PrepareSqlInvestigationMcpInput = InvestigationStaticAnalysisMcpInput & {
+  symptom?: unknown;
+  targetColumn?: unknown;
+  targetId?: unknown;
+  targetNode?: unknown;
+};
+
+export type PrepareSqlInvestigationResultV1 =
+  | {
+      discovery: ReturnType<typeof discoverInvestigationTargets>;
+      kind: 'sql-investigation-preparation';
+      plan: ReturnType<typeof createInvestigationPlan>;
+      selection: { mode: 'explicit_target' | 'single_selectable_target'; targetId?: string };
+      status: 'plan_created';
+      version: 1;
+    }
+  | {
+      discovery: ReturnType<typeof discoverInvestigationTargets>;
+      kind: 'sql-investigation-preparation';
+      selection: {
+        ambiguityCount: number;
+        reason: 'multiple_selectable_targets' | 'no_selectable_targets';
+        selectableTargetIds: string[];
+        unsupportedIssueCount: number;
+      };
+      status: 'selection_required';
+      version: 1;
+    };
 
 export class McpInputError extends Error {
   readonly code: string;
@@ -62,8 +100,38 @@ export function normalizeCreateInvestigationPlanInput(
   workspace: string,
   value: CreateInvestigationPlanMcpInput,
 ): InvestigationPlanInputV1 {
+  const input = value as Record<string, unknown>;
+  validateContractVersion(input.contractVersion);
+  const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
+  const hasTargetId = input.targetId !== undefined;
+  const hasExplicitTarget = input.targetColumn !== undefined || input.targetNode !== undefined;
+  if (hasTargetId && hasExplicitTarget) {
+    throw new McpInputError('TARGET_INPUT_CONFLICT', 'targetId cannot be combined with targetColumn or targetNode.');
+  }
+  const target = hasTargetId
+    ? resolveInvestigationTarget(discoverInvestigationTargets(staticInput), requiredNonEmptyString(input.targetId, 'targetId'))
+    : {
+        columnName: requiredNonEmptyString(input.targetColumn, 'targetColumn'),
+        nodeId: input.targetNode === undefined ? DEFAULT_TARGET_NODE : requiredNonEmptyString(input.targetNode, 'targetNode'),
+      };
+  const symptom = input.symptom === undefined ? undefined : parseSymptom(input.symptom);
+  const parameters = normalizeParameters(input.parameterDefinitions, input.parameterBindings);
+
+  return {
+    ...staticInput,
+    ...(parameters ? { parameters } : {}),
+    ...(symptom ? { symptom } : {}),
+    target,
+  };
+}
+
+export function normalizeInvestigationStaticAnalysisInput(
+  workspace: string,
+  value: InvestigationStaticAnalysisMcpInput,
+): InvestigationTargetDiscoveryInputV1 {
   const workspaceRoot = workspaceRealpath(workspace);
   const input = value as Record<string, unknown>;
+  validateContractVersion(input.contractVersion);
   const hasSql = input.sql !== undefined;
   const hasSqlPath = input.sqlPath !== undefined;
   if (hasSql === hasSqlPath) {
@@ -72,29 +140,81 @@ export function normalizeCreateInvestigationPlanInput(
   const sql = hasSql
     ? validateInlineSql(requiredNonEmptyString(input.sql, 'sql'), 'sql')
     : readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.sqlPath, 'sqlPath'));
-  const targetNode = input.targetNode === undefined ? DEFAULT_TARGET_NODE : requiredNonEmptyString(input.targetNode, 'targetNode');
-  const targetColumn = requiredNonEmptyString(input.targetColumn, 'targetColumn');
-  const symptom = input.symptom === undefined ? undefined : parseSymptom(input.symptom);
-
   const hasSchemaFacts = input.schemaFactsPath !== undefined;
   const hasDdl = input.ddl !== undefined || input.ddlFiles !== undefined || input.ddlDirectories !== undefined;
   if (hasSchemaFacts && hasDdl) {
     throw new McpInputError('SCHEMA_INPUT_CONFLICT', 'schemaFactsPath cannot be combined with ddl, ddlFiles, or ddlDirectories.');
   }
-
   const ddl = hasDdl ? loadDdlInputs(workspaceRoot, input) : [];
   const schemaFacts = hasSchemaFacts
     ? parseSchemaFacts(readWorkspaceText(workspaceRoot, requiredNonEmptyString(input.schemaFactsPath, 'schemaFactsPath')))
     : undefined;
-  const parameters = normalizeParameters(input.investigationKeys, input.knownParameters);
-
   return {
     ...(ddl.length > 0 ? { ddl } : {}),
-    ...(parameters.length > 0 ? { parameters } : {}),
     ...(schemaFacts ? { schemaFacts } : {}),
     sql,
-    ...(symptom ? { symptom } : {}),
-    target: { columnName: targetColumn, nodeId: targetNode },
+  };
+}
+
+/**
+ * High-level static workflow from an unknown-target starting state. It never
+ * guesses among multiple selectable targets.
+ */
+export function prepareSqlInvestigation(
+  workspace: string,
+  value: PrepareSqlInvestigationMcpInput,
+): PrepareSqlInvestigationResultV1 {
+  const input = value as Record<string, unknown>;
+  const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
+  const discovery = discoverInvestigationTargets(staticInput);
+  const hasExplicitTarget = input.targetId !== undefined || input.targetColumn !== undefined || input.targetNode !== undefined;
+  if (hasExplicitTarget) {
+    const planInput = normalizeCreateInvestigationPlanInput(workspace, value);
+    if (input.targetId === undefined) {
+      const matches = discovery.targets.filter((target) => target.identity.node.id === planInput.target.nodeId && target.identity.column.name === planInput.target.columnName);
+      if (matches.length === 0) throw new InvestigationTargetSelectionError('TARGET_NOT_FOUND');
+      if (matches.length > 1) throw new InvestigationTargetSelectionError('TARGET_AMBIGUOUS');
+      resolveInvestigationTarget(discovery, matches[0].id);
+    }
+    const plan = createInvestigationPlan(planInput);
+    return {
+      discovery,
+      kind: 'sql-investigation-preparation',
+      plan,
+      selection: {
+        mode: 'explicit_target',
+        ...(typeof input.targetId === 'string' ? { targetId: input.targetId } : {}),
+      },
+      status: 'plan_created',
+      version: 1,
+    };
+  }
+  const selectable = discovery.targets.filter((target) => target.selection.status === 'selectable');
+  if (selectable.length !== 1) {
+    return {
+      discovery,
+      kind: 'sql-investigation-preparation',
+      selection: {
+        ambiguityCount: discovery.ambiguities.length,
+        reason: selectable.length === 0 ? 'no_selectable_targets' : 'multiple_selectable_targets',
+        selectableTargetIds: selectable.map((target) => target.id),
+        unsupportedIssueCount: discovery.unsupported.length,
+      },
+      status: 'selection_required',
+      version: 1,
+    };
+  }
+  const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspace, {
+    ...value,
+    targetId: selectable[0].id,
+  }));
+  return {
+    discovery,
+    kind: 'sql-investigation-preparation',
+    plan,
+    selection: { mode: 'single_selectable_target', targetId: selectable[0].id },
+    status: 'plan_created',
+    version: 1,
   };
 }
 
@@ -102,39 +222,106 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
   const workspaceRoot = workspaceRealpath(workspace);
   const server = new McpServer({ name: 'rawsql-lineage-investigation', version: '1.0.0' });
   server.registerTool(
+    'analyze_investigation_sql',
+    {
+      description: 'Summarize deterministic static analysis of supplied SQL/DDL. This tool does not connect to a database, execute SQL, choose a target, or determine a root cause.',
+      inputSchema: staticAnalysisInputSchema,
+    },
+    async (request) => {
+      try {
+        const result = discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)).analysis;
+        return mcpSuccess(result);
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
+    'discover_investigation_targets',
+    {
+      description: 'Discover stable static investigation target identities from supplied SQL/DDL. Ambiguous and unsupported outputs remain explicit and cannot be selected for plan creation.',
+      inputSchema: staticAnalysisInputSchema,
+    },
+    async (request) => {
+      try {
+        return mcpSuccess(discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)));
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
+    'prepare_sql_investigation',
+    {
+      description: 'Prepare a static investigation from supplied SQL/DDL without a pre-known target. The tool creates a plan only when exactly one selectable target exists or a target is explicitly supplied; otherwise it returns discovery with selection_required and never guesses among candidates. It does not connect to a database, execute SQL, inspect results, or determine a root cause.',
+      inputSchema: {
+        ...staticAnalysisInputSchema,
+        symptom: z.enum(diagnosticProblemIntents).optional().describe('Optional normalized symptom used only if a plan can be created.'),
+        targetColumn: z.string().min(1).optional().describe('Optional explicit target column; use instead of targetId.'),
+        targetId: z.string().min(1).optional().describe('Optional explicit target id returned by discovery; use instead of targetColumn and targetNode.'),
+        targetNode: z.string().min(1).optional().describe('Optional explicit target node used with targetColumn; defaults to main_output.'),
+      },
+    },
+    async (request) => {
+      try {
+        return mcpSuccess(prepareSqlInvestigation(workspaceRoot, request));
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
+  server.registerTool(
     'create_investigation_plan',
     {
-      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Record-specific investigation may require explicit investigationKeys name/value pairs (for example, {customer_id: 10}); ask for the key name and value instead of inferring a key from DDL, primary-key status, or columns. targetNode defaults to main_output.',
+      description: 'Create a static SQL/DDL analysis plan only. It never connects to a database or executes SQL, and it does not determine a root cause: candidate concerns are unconfirmed. Recommended probes are investigation-only SELECT statements, not corrected or production SQL; when blocked, the plan reports the block without inventing unproven SQL. DDL must be explicitly supplied inline or from the workspace; the tool never fetches database schema. Use the normalized symptom values value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms. Parameter definitions and caller-owned bindings are separate inputs; bindings are reduced to non-secret presence metadata and are never returned in the plan. Supply either a discovery targetId or targetColumn with optional targetNode; targetNode defaults to main_output.',
       inputSchema: {
-        ddl: z.union([z.string().min(1), z.array(z.string().min(1))]).optional().describe('Optional inline DDL. Supply DDL explicitly when needed; the tool never fetches database schema.'),
-        ddlDirectories: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL directories to read; cannot be combined with schemaFactsPath.'),
-        ddlFiles: z.array(z.string().min(1)).optional().describe('Optional workspace-relative DDL files to read; cannot be combined with schemaFactsPath.'),
-        investigationKeys: investigationKeyParameterInputSchema.optional().describe('Optional explicit record-specific key name/value map, for example {customer_id: 10}. When a record-specific investigation needs a key, ask for its name and value; never infer it from DDL, primary-key status, or columns.'),
-        knownParameters: knownParameterInputSchema.optional().describe('Optional known original-query parameter name/value map.'),
-        schemaFactsPath: z.string().min(1).optional().describe('Optional workspace-relative schema-facts file; cannot be combined with ddl, ddlFiles, or ddlDirectories.'),
-        sql: z.string().min(1).optional().describe('SQL text to analyze. Provide exactly one of sql or sqlPath.'),
-        sqlPath: z.string().min(1).optional().describe('Workspace-relative SQL file to analyze. Provide exactly one of sql or sqlPath.'),
+        ...staticAnalysisInputSchema,
+        parameterBindings: parameterBindingsInputSchema.optional().describe('Optional caller-owned binding map. Values are used only to mark matching definitions as provided and are never returned in the plan.'),
+        parameterDefinitions: parameterDefinitionsInputSchema.optional().describe('Optional emit-safe parameter definitions with name, origin, required, and typeHint metadata only.'),
         symptom: z.enum(diagnosticProblemIntents).optional().describe('Optional normalized symptom. Use value_too_high, value_too_low, value_missing, missing_rows, or duplicate_rows rather than free natural-language symptoms.'),
-        targetColumn: z.string().min(1).describe('Target output column name to investigate.'),
+        targetColumn: z.string().min(1).optional().describe('Target output column name to investigate; use instead of targetId.'),
+        targetId: z.string().min(1).optional().describe('Target id returned by discover_investigation_targets; use instead of targetColumn and targetNode.'),
         targetNode: z.string().min(1).optional().describe('Optional target node id; defaults to main_output.'),
       },
     },
     async (request) => {
       try {
-        const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspaceRoot, request));
-        return { content: [{ type: 'text', text: JSON.stringify(plan) }], structuredContent: plan as unknown as Record<string, unknown> };
+        return mcpSuccess(createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspaceRoot, request)));
       } catch (error) {
-        if (error instanceof McpInputError) {
-          return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
-        }
-        if (error instanceof InvestigationPlanInputError) {
-          return { content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message }) }], isError: true };
-        }
+        const failure = mcpFailure(error);
+        if (failure) return failure;
         throw error;
       }
     },
   );
   return server;
+}
+
+function mcpSuccess(value: object): { content: Array<{ text: string; type: 'text' }>; structuredContent: Record<string, unknown> } {
+  return {
+    content: [{ type: 'text', text: JSON.stringify(value) }],
+    structuredContent: value as unknown as Record<string, unknown>,
+  };
+}
+
+function mcpFailure(error: unknown): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
+  if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError)) return undefined;
+  return {
+    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message, version: 1 }) }],
+    isError: true,
+  };
+}
+
+function validateContractVersion(value: unknown): void {
+  if (value !== undefined && value !== 1) {
+    throw new McpInputError('CONTRACT_VERSION_UNSUPPORTED', 'Unsupported contract version. Expected 1.');
+  }
 }
 
 function workspaceRealpath(workspace: string): string {
@@ -254,54 +441,59 @@ function readBoundedText(filePath: string): string {
   return bytes.toString('utf8');
 }
 
-function normalizeParameters(investigationKeys: unknown, knownParameters: unknown): InvestigationPlannerParameterInputV1[] {
-  const keys = optionalParameters(investigationKeys, 'investigationKeys', 'investigation_key');
-  const known = optionalParameters(knownParameters, 'knownParameters', 'original_query_parameter');
-  const names = new Set<string>();
-  for (const parameter of [...keys, ...known]) {
-    if (names.has(parameter.name)) throw new McpInputError('PARAMETER_NAME_COLLISION', 'Parameter names must not appear in both investigationKeys and knownParameters or more than once.');
-    names.add(parameter.name);
+function normalizeParameters(definitionsValue: unknown, bindingsValue: unknown): InvestigationPlannerParametersV1 | undefined {
+  const definitions = parameterDefinitions(definitionsValue);
+  const bindings = parameterBindings(bindingsValue);
+  if (definitions.length === 0 && bindings.length === 0) return undefined;
+
+  const definitionNames = new Set<string>();
+  for (const definition of definitions) {
+    if (definitionNames.has(definition.name)) throw new McpInputError('PARAMETER_NAME_COLLISION', 'Parameter definition names must be unique.');
+    definitionNames.add(definition.name);
   }
-  return [...keys, ...known];
+  if (bindings.some((name) => !definitionNames.has(name))) {
+    throw new McpInputError('PARAMETER_BINDING_DEFINITION_MISMATCH', 'Every binding must identify exactly one parameter definition.');
+  }
+  return {
+    definitions,
+    ...(bindings.length > 0 ? { bindingPresence: { providedNames: bindings } } : {}),
+  };
 }
 
-function optionalParameters(
-  value: unknown,
-  field: string,
-  mapOrigin: InvestigationInputParameterOriginV1,
-): InvestigationPlannerParameterInputV1[] {
+function parameterDefinitions(value: unknown): InvestigationParameterDefinitionInputV1[] {
   if (value === undefined) return [];
-  if (Array.isArray(value)) return value.map((item, index) => parameterFromObject(item, `${field}[${index}]`, mapOrigin));
-  if (!value || typeof value !== 'object') throw new McpInputError('PARAMETERS_INVALID', `${field} must be a parameter map or array.`);
-  return Object.entries(value as Record<string, unknown>).map(([name, parameterValue]) => {
-    validateParameterName(name, `${field} key`);
-    validateParameterValue(parameterValue, `${field}.${name}`);
-    return { name, origin: mapOrigin, value: parameterValue as boolean | number | string | null };
-  });
-}
-
-function parameterFromObject(item: unknown, field: string, defaultOrigin: InvestigationInputParameterOriginV1): InvestigationPlannerParameterInputV1 {
+  if (!Array.isArray(value)) throw new McpInputError('PARAMETERS_INVALID', 'parameterDefinitions must be an array.');
+  return value.map((item, index) => {
+    const field = `parameterDefinitions[${index}]`;
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw new McpInputError('PARAMETERS_INVALID', `${field} must be an object.`);
     const parameter = item as Record<string, unknown>;
+    if (Object.prototype.hasOwnProperty.call(parameter, 'value')) {
+      throw new McpInputError('PARAMETERS_INVALID', 'Parameter definitions must not contain binding values.');
+    }
     const name = requiredNonEmptyString(parameter.name, `${field}.name`);
     validateParameterName(name, `${field}.name`);
-    const origin = parameter.origin === undefined ? defaultOrigin : parameter.origin;
-    if (!investigationInputParameterOrigins.includes(origin as InvestigationInputParameterOriginV1)) {
+    if (!investigationInputParameterOrigins.includes(parameter.origin as InvestigationInputParameterOriginV1)) {
       throw new McpInputError('PARAMETER_ORIGIN_INVALID', `${field}.origin is invalid.`);
-    }
-    if (origin !== defaultOrigin) {
-      throw new McpInputError('PARAMETER_ORIGIN_MISMATCH', `${field}.origin must be ${defaultOrigin}.`);
     }
     if (parameter.required !== undefined && typeof parameter.required !== 'boolean') throw new McpInputError('PARAMETERS_INVALID', `${field}.required must be boolean.`);
     if (parameter.typeHint !== undefined && typeof parameter.typeHint !== 'string') throw new McpInputError('PARAMETERS_INVALID', `${field}.typeHint must be a string.`);
-    if (Object.prototype.hasOwnProperty.call(parameter, 'value')) validateParameterValue(parameter.value, `${field}.value`);
     return {
       name,
-      origin: defaultOrigin,
+      origin: parameter.origin as InvestigationInputParameterOriginV1,
       ...(parameter.required !== undefined ? { required: parameter.required as boolean } : {}),
       ...(parameter.typeHint !== undefined ? { typeHint: parameter.typeHint as string } : {}),
-      ...(Object.prototype.hasOwnProperty.call(parameter, 'value') ? { value: parameter.value as boolean | number | string | null } : {}),
     };
+  });
+}
+
+function parameterBindings(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new McpInputError('PARAMETERS_INVALID', 'parameterBindings must be an object keyed by parameter name.');
+  return Object.entries(value as Record<string, unknown>).map(([name, binding]) => {
+    validateParameterName(name, 'parameterBindings key');
+    validateParameterValue(binding, 'parameterBindings value');
+    return name;
+  }).sort();
 }
 
 function parseSchemaFacts(text: string): SchemaFacts {
@@ -364,14 +556,17 @@ function parseWorkspaceArgument(argv: string[]): string {
   return argv[1];
 }
 
-async function main(): Promise<void> {
+export async function runInvestigationMcpServer(): Promise<void> {
   const server = createInvestigationMcpServer(parseWorkspaceArgument(process.argv.slice(2)));
   await server.connect(new StdioServerTransport());
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  main().catch((error: unknown) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  runInvestigationMcpServer().catch((error: unknown) => {
+    const failure = error instanceof McpInputError
+      ? { code: error.code, kind: 'invalid_input', message: error.message, version: 1 }
+      : { code: 'INVALID_INPUT', kind: 'invalid_input', message: error instanceof Error ? error.message : String(error), version: 1 };
+    process.stderr.write(`${JSON.stringify(failure)}\n`);
     process.exitCode = 1;
   });
 }

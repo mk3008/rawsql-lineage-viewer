@@ -76,11 +76,13 @@ export interface SourceSpan {
 export interface LineageSourceReference {
   columnName: string;
   nodeId: string;
+  provenance?: 'anchor' | 'related';
   role?: 'row_lineage' | 'unknown' | 'column_lineage';
   scopeId: string;
 }
 
 export interface LineageCondition {
+  existencePolarity?: 'exists' | 'not_exists';
   expressionSql: string;
   id: string;
   impact: LineageImpact[];

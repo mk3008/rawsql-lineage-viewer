@@ -6,6 +6,63 @@ Paste SQL and see the lineage graph in the browser.
 
 This is a static TypeScript web app intended for GitHub Pages. SQL is parsed locally with `rawsql-ts`; no backend, database, or upload step is required for the MVP.
 
+The normative [Product Boundary Contract](docs/product-boundary.md) defines how
+Core, Viewer, CLI, and MCP support static investigation and where responsibility
+passes to an external investigator.
+The additive Core and MCP selection surface is defined in the
+[Target Discovery Contract](docs/target-discovery-contract.md).
+
+## Local package, CLI, and MCP distribution
+
+This repository is private and is not published to npm. A clean checkout can
+still produce and verify the consumer artifact locally:
+
+```sh
+npm ci
+npm run build
+npm run smoke:package
+```
+
+`npm run smoke:package` creates an `npm pack` tarball in a temporary directory,
+installs it offline into an isolated consumer project, invokes the compiled
+entrypoints, and removes the temporary files. It never publishes the package.
+The supported installed entrypoints are:
+
+```sh
+rawsql-lineage discover --sql query.sql --contract-version 1
+rawsql-lineage investigate --sql query.sql --target-id target:001 --contract-version 1
+rawsql-lineage investigate --sql query.sql --target-node main_output --target-column total --contract-version 1
+rawsql-lineage-mcp --workspace /absolute/path/to/workspace
+```
+
+JavaScript and TypeScript consumers can import the versioned static contracts
+and planner from `sql-lineage-viewer`, including
+`discoverInvestigationTargets`, `resolveInvestigationTarget`, and
+`createInvestigationPlanForTarget`. The direct `targetNode` / `targetColumn`
+planner input remains a caller-directed compatibility path; target discovery is
+the supported path when a caller needs Core to determine eligibility. MCP server construction is available
+from `sql-lineage-viewer/mcp`. Consumers do not need repository `src` files,
+`tsx`, parser instances, runtime rows, or parameter binding values. CLI errors
+are JSON objects with `kind`, `code`, `message`, and `version`; MCP tool errors
+use the same `invalid_input` kind and stable codes. Contract version 1 is the
+only accepted version.
+
+The CLI and MCP expose the same composable static flow: analyze the submitted
+artifact, discover selectable target identities, then create a plan with the
+selected `targetId`. MCP also exposes `prepare_sql_investigation` as a
+high-level convenience call. Discovery and planning are deterministic for the
+same SQL, DDL/schema facts, and parameter definitions.
+
+All three surfaces are DB-free: they parse only submitted SQL and explicitly
+supplied DDL/schema facts, do not connect to or query a database, and do not
+execute submitted SQL. They return static investigation artifacts and
+selection/prerequisite limits, not diagnoses, corrected SQL, query results, or
+proof of root cause. The current utility ceiling is deliberate: prerequisite
+facts may state that an observation is supportable or blocked, but the package
+does not generate or run aggregate/grain observation probes. Database
+execution, runtime data retrieval, credential handling, binding-value
+serialization, publishing, and remote MCP hosting are unsupported.
+
 ## MVP Scope
 
 - Load a sample SQL query on first visit.

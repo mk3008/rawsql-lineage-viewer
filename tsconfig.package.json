@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "noEmit": false,
+    "outDir": "dist/package/types",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/public.ts",
+    "src/mcp/investigationServer.ts"
+  ]
+}

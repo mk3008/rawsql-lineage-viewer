@@ -1359,7 +1359,7 @@ function resolveSourceExpression(
   if (datasource instanceof TableSource) {
     const sourceName = datasource.getSourceName();
     const alias = source.aliasExpression ? source.getAliasName() : null;
-    const aliases = alias ? [alias, sourceName] : [sourceName];
+    const aliases = alias ? [alias, sourceName] : getUnaliasedTableSourceAliases(datasource);
     if (cteNames.has(sourceName)) {
       const node = findCteSourceNode(sourceName, nodes);
       const cteId = toCteId(sourceName);
@@ -1518,7 +1518,7 @@ function resolveSinglePhysicalWildcardPassthroughSource(
 
   const alias = source.aliasExpression ? source.getAliasName() : null;
   return {
-    aliases: alias ? [alias, sourceName] : [sourceName],
+    aliases: alias ? [alias, sourceName] : getUnaliasedTableSourceAliases(source.datasource),
     node: createTableNode(sourceName, nodes, schemaFacts),
     sourceAlias: alias ?? undefined,
   };
@@ -1538,7 +1538,33 @@ function createPopulationOriginDeps(options: CollectQueryEdgesOptions): Populati
     collectNestedQueryReferences: (value) => collectNestedQueryReferences(value, options),
     formatExpressionSql,
     formatScopeQuerySql,
+    getInlineQueryShadowedAliases: (inlineQuery) => collectInlineQueryLocalAliases(inlineQuery),
   };
+}
+
+function collectInlineQueryLocalAliases(inlineQuery: InlineQuery): ReadonlySet<string> {
+  const query = inlineQuery.selectQuery;
+  if (!(query instanceof SimpleSelectQuery)) {
+    return new Set();
+  }
+  return new Set(
+    (query.fromClause?.getSources() ?? [])
+      .map((source) => {
+        if (source.aliasExpression) {
+          const alias = source.getAliasName();
+          return alias ? [alias] : [];
+        }
+        return source.datasource instanceof TableSource
+          ? getUnaliasedTableSourceAliases(source.datasource)
+          : [];
+      })
+      .flat()
+      .filter((namespace): namespace is string => Boolean(namespace)),
+  );
+}
+
+function getUnaliasedTableSourceAliases(source: TableSource): string[] {
+  return [...new Set([source.getSourceName(), source.table.name])];
 }
 
 function createOutputColumnDeps(options: CollectQueryEdgesOptions): OutputColumnDeps {
@@ -2956,7 +2982,7 @@ function sanitizeId(value: string): string {
 function dedupeEdges(edges: LineageEdge[]): LineageEdge[] {
   const seen = new Set<string>();
   return edges.filter((edge) => {
-    const key = `${edge.source}|${edge.target}|${edge.type}|${edge.label ?? ''}`;
+    const key = `${edge.source}|${edge.target}|${edge.type}|${edge.kind ?? ''}|${edge.label ?? ''}|${edge.sourceAlias ?? ''}`;
     if (seen.has(key)) {
       return false;
     }

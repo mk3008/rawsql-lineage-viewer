@@ -5,6 +5,8 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { createInvestigationPlanForCli } from './diagnose';
 
+const opaqueBinding = 'opaque-binding-sentinel';
+
 describe('rawsql-lineage diagnose CLI', () => {
   it('delegates investigation planning exactly once with unchanged static inputs', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
@@ -14,7 +16,10 @@ describe('rawsql-lineage diagnose CLI', () => {
       const parametersPath = resolve(root, 'parameters.json');
       writeFileSync(sqlPath, 'select status from orders where status = :status');
       writeFileSync(ddlPath, 'create table orders (status text);');
-      writeFileSync(parametersPath, JSON.stringify([{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]));
+      writeFileSync(parametersPath, JSON.stringify({
+        bindings: { status: opaqueBinding },
+        definitions: [{ name: 'status', origin: 'original_query_parameter' }],
+      }));
       const calls: unknown[] = [];
       const plan = createInvestigationPlanForCli([
         '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--symptom', 'missing_rows', '--parameters', parametersPath, '--ddl', ddlPath,
@@ -28,7 +33,7 @@ describe('rawsql-lineage diagnose CLI', () => {
       expect(plan).toEqual({ kind: 'investigation-plan', version: 1 });
       expect(calls).toEqual([{
         ddl: [{ filePath: ddlPath, sql: 'create table orders (status text);' }],
-        parameters: [{ name: 'status', origin: 'original_query_parameter', value: 'paid' }],
+        parameters: { bindingPresence: { providedNames: ['status'] }, definitions: [{ name: 'status', origin: 'original_query_parameter' }] },
         sql: 'select status from orders where status = :status',
         symptom: 'missing_rows',
         target: { columnName: 'status', nodeId: 'main_output' },
@@ -44,21 +49,56 @@ describe('rawsql-lineage diagnose CLI', () => {
       const sqlPath = resolve(root, 'query.sql');
       const parametersPath = resolve(root, 'parameters.json');
       writeFileSync(sqlPath, 'select status from orders where status = :status');
-      writeFileSync(parametersPath, JSON.stringify([{ name: 'status', origin: 'original_query_parameter', value: 'paid' }]));
+      writeFileSync(parametersPath, JSON.stringify({
+        bindings: { status: opaqueBinding },
+        definitions: [{ name: 'status', origin: 'original_query_parameter' }],
+      }));
 
       const stdout = execFileSync(process.execPath, [
         '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath,
       ], { encoding: 'utf8' });
-      const plan = JSON.parse(stdout) as { diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; recommendedProbes: Array<{ sql: string }>; target: { columnName: string; nodeId: string } };
+      type SerializedParameter = { name: string; status: string };
+      type SerializedProbe = { artifactKind: string; interpretation: { assumptions: string[]; doesNotProve: string[]; expectedColumns: unknown[]; nextEvidence: string[]; observationRules: Array<{ candidateConcernIds: string[]; outcome: string }>; version: number }; parameters: SerializedParameter[]; sql: string; staticSafetyEvidence: { assumptions: string[]; basis: string; confidence: string; executionCaveats: string[]; statementClassification: string; version: number } };
+      const plan = JSON.parse(stdout) as { deferredProbes: SerializedProbe[]; diagnostics: Array<{ code: string }>; kind: string; nextEvidenceChecklist: Array<{ kind: string; status: string }>; originalQuery: { artifactKind: string; sql: string }; parameters: SerializedParameter[]; probePrerequisiteFacts: { kind: string; version: number }; recommendedProbes: SerializedProbe[]; target: { columnName: string; nodeId: string } };
 
       expect(plan.kind).toBe('investigation-plan');
+      expect(plan.originalQuery).toEqual({ artifactKind: 'original_query', sql: 'select status from orders where status = :status' });
       expect(plan.target).toEqual({ columnName: 'status', nodeId: 'main_output', symptom: 'logic_review' });
+      expect(plan.probePrerequisiteFacts).toMatchObject({ kind: 'probe-prerequisite-facts', version: 1 });
       expect(plan.diagnostics).toEqual(expect.arrayContaining([expect.objectContaining({ code: 'original_sql_only' })]));
       expect(plan.nextEvidenceChecklist).toEqual(expect.arrayContaining([
         expect.objectContaining({ kind: 'condition', status: 'to_verify' }),
         expect.objectContaining({ kind: 'relation', status: 'to_verify' }),
       ]));
+      expect(plan.parameters).toContainEqual(expect.objectContaining({ name: 'status', status: 'provided' }));
+      expect(plan.parameters.every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
+      expect([...plan.recommendedProbes, ...plan.deferredProbes].every((probe) => probe.artifactKind === 'investigation_probe')).toBe(true);
       expect(plan.recommendedProbes.every((probe) => probe.sql.startsWith('SELECT '))).toBe(true);
+      const concernIds = new Set((plan as unknown as { candidateConcerns: Array<{ id: string }> }).candidateConcerns.map((concern) => concern.id));
+      for (const probe of [...plan.recommendedProbes, ...plan.deferredProbes]) {
+        expect(probe.staticSafetyEvidence).toMatchObject({ basis: 'parser_ast', confidence: 'syntax_only', statementClassification: 'select_statement', version: 1 });
+        expect(probe.staticSafetyEvidence.assumptions.length).toBeGreaterThan(0);
+        expect(probe.staticSafetyEvidence.executionCaveats).toContain('This static classification does not authorize execution.');
+        expect(probe.interpretation).toMatchObject({ version: 1 });
+        expect(probe.interpretation.expectedColumns.length).toBeGreaterThan(0);
+        expect(probe.interpretation.assumptions.length).toBeGreaterThan(0);
+        expect(probe.interpretation.doesNotProve.length).toBeGreaterThan(0);
+        expect(probe.interpretation.nextEvidence.length).toBeGreaterThan(0);
+        expect(probe.interpretation.observationRules.flatMap((rule) => rule.candidateConcernIds).every((id) => concernIds.has(id))).toBe(true);
+        expect(probe.parameters.every((parameter) => !Object.prototype.hasOwnProperty.call(parameter, 'value'))).toBe(true);
+      }
+      expect(stdout).not.toContain('equivalent_rewrite');
+      expect(stdout).not.toContain('corrected_query');
+      expect(stdout).not.toContain('readOnly');
+      expect(stdout).not.toContain('rootCause');
+      for (const forbiddenRuntimeField of ['actualRows', 'observedRows', 'bindingValues', 'causalVerdict', 'correctedSql']) {
+        expect(stdout).not.toContain(forbiddenRuntimeField);
+      }
+      expect(stdout).not.toContain(opaqueBinding);
+      expect(stdout).not.toContain('"value"');
+      for (const unsafeAssuranceTerm of ['safe_to_execute', 'read_only', 'side_effect_free', 'database_validated', 'executed', 'production_safe']) {
+        expect(stdout).not.toContain(unsafeAssuranceTerm);
+      }
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
@@ -70,10 +110,13 @@ describe('rawsql-lineage diagnose CLI', () => {
       const sqlPath = resolve(root, 'query.sql');
       const parametersPath = resolve(root, 'parameters.json');
       writeFileSync(sqlPath, 'select status from orders');
-      writeFileSync(parametersPath, JSON.stringify([
-        { name: 'status', origin: 'original_query_parameter', value: 'secret-one' },
-        { name: 'status', origin: 'investigation_key', value: 'secret-two' },
-      ]));
+      writeFileSync(parametersPath, JSON.stringify({
+        bindings: { status: opaqueBinding },
+        definitions: [
+          { name: 'status', origin: 'original_query_parameter' },
+          { name: 'status', origin: 'investigation_key' },
+        ],
+      }));
       let thrown: unknown;
       try {
         createInvestigationPlanForCli(['--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath]);
@@ -81,10 +124,43 @@ describe('rawsql-lineage diagnose CLI', () => {
         thrown = error;
       }
       expect(thrown).toMatchObject({ code: 'PARAMETER_NAME_COLLISION' });
-      expect(String((thrown as Error).message)).not.toContain('secret');
+      expect(String((thrown as Error).message)).not.toContain(opaqueBinding);
     } finally {
       rmSync(root, { force: true, recursive: true });
     }
+  });
+
+  it('reports malformed parameter JSON without echoing its contents', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      const parametersPath = resolve(root, 'parameters.json');
+      writeFileSync(sqlPath, 'select status from orders');
+      writeFileSync(parametersPath, `{ "bindings": { "status": "${opaqueBinding}" }`);
+
+      let thrown: unknown;
+      try {
+        createInvestigationPlanForCli(['--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'status', '--parameters', parametersPath]);
+      } catch (error) {
+        thrown = error;
+      }
+      expect(String((thrown as Error).message)).toBe('Parameters file must contain valid JSON.');
+      expect(String((thrown as Error).message)).not.toContain(opaqueBinding);
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('normalizes missing input files to the stable PATH_NOT_FOUND code', () => {
+    let failure = '';
+    try {
+      execFileSync(process.execPath, [
+        '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'missing-query.sql', '--target-node', 'main_output', '--target-column', 'value',
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      failure = String((error as { stderr?: Buffer }).stderr);
+    }
+    expect(JSON.parse(failure)).toMatchObject({ code: 'PATH_NOT_FOUND', kind: 'invalid_input', version: 1 });
   });
 
   it('emits all output column packets with DDL file input', () => {
@@ -220,7 +296,7 @@ describe('rawsql-lineage diagnose CLI', () => {
     }
   });
 
-  it('preserves WHERE candidates unless safe optimization moves a joined-source predicate into JOIN ON', () => {
+  it('diagnoses the submitted SQL without moving WHERE predicates into JOIN ON', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
     try {
       const movedPredicateSqlPath = resolve(root, 'moved-predicate.sql');
@@ -246,21 +322,67 @@ describe('rawsql-lineage diagnose CLI', () => {
         '--symptom',
         'duplicate_rows',
       ], { encoding: 'utf8' })) as {
+        analysisMode: string;
+        sourceArtifact: { artifactKind: string };
         packets: Array<{
           rowLineage: { influences: Array<{ expressionSql?: string; mechanism: string }> };
         }>;
       };
 
-      const movedPredicateMechanisms = diagnose(movedPredicateSqlPath).packets[0].rowLineage.influences;
+      const movedReport = diagnose(movedPredicateSqlPath);
+      expect(movedReport).toMatchObject({ analysisMode: 'original', sourceArtifact: { artifactKind: 'original_query' } });
+      const movedPredicateMechanisms = movedReport.packets[0].rowLineage.influences;
       expect(movedPredicateMechanisms).toEqual(expect.arrayContaining([
-        expect.objectContaining({ mechanism: 'join', expressionSql: expect.stringContaining('ct.is_active = true') }),
+        expect.objectContaining({ mechanism: 'where', expressionSql: 'ct.is_active = true' }),
       ]));
-      expect(movedPredicateMechanisms.map((influence) => influence.mechanism)).not.toContain('where');
+      expect(movedPredicateMechanisms.filter((influence) => influence.expressionSql?.includes('ct.is_active = true'))).toHaveLength(1);
 
       const wherePredicateMechanisms = diagnose(wherePredicateSqlPath).packets[0].rowLineage.influences;
       expect(wherePredicateMechanisms).toEqual(expect.arrayContaining([
         expect.objectContaining({ mechanism: 'where', expressionSql: 'c.is_active = true' }),
       ]));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('discovers selectable targets and round-trips --target-id while preserving the direct compatibility path', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      writeFileSync(sqlPath, 'select customer_id, total from summaries');
+      const invoke = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), ...args], { encoding: 'utf8' });
+      const discovery = JSON.parse(invoke('discover', '--sql', sqlPath)) as { kind: string; targets: Array<{ id: string; identity: { column: { name: string } }; selection: { status: string } }> };
+      const target = discovery.targets.find((item) => item.identity.column.name === 'total' && item.selection.status === 'selectable');
+      expect(discovery.kind).toBe('investigation-target-discovery');
+      expect(target).toBeDefined();
+      expect(JSON.parse(invoke('investigate', '--sql', sqlPath, '--target-id', target!.id)).target).toMatchObject({ columnName: 'total', nodeId: 'main_output' });
+      expect(JSON.parse(invoke('investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'total')).target).toMatchObject({ columnName: 'total', nodeId: 'main_output' });
+
+      let conflict = '';
+      try { invoke('investigate', '--sql', sqlPath, '--target-id', target!.id, '--target-column', 'total'); } catch (error) { conflict = String((error as { stderr?: Buffer }).stderr); }
+      expect(JSON.parse(conflict)).toMatchObject({ code: 'INVALID_INPUT' });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('serializes correlated NOT EXISTS anchor and related provenance into plan evidence', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      writeFileSync(sqlPath, 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = true)');
+      const plan = JSON.parse(execFileSync(process.execPath, [
+        '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'id',
+      ], { encoding: 'utf8' })) as { nextEvidenceChecklist: Array<{ kind: string; property?: { anchorRelationNodeIds: string[]; kind: string; relatedRelationNodeIds: string[] } }> };
+      expect(plan.nextEvidenceChecklist).toContainEqual(expect.objectContaining({
+        kind: 'property',
+        property: expect.objectContaining({
+          anchorRelationNodeIds: ['table_customers'],
+          kind: 'no_matching_related_record',
+          relatedRelationNodeIds: ['table_customer_favorites'],
+        }),
+      }));
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

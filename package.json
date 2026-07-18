@@ -3,19 +3,39 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "files": [
+    "bin",
+    "dist/package",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/package/types/public.d.ts",
+      "import": "./dist/package/public.js"
+    },
+    "./mcp": {
+      "types": "./dist/package/types/mcp/investigationServer.d.ts",
+      "import": "./dist/package/mcp.js"
+    }
+  },
   "bin": {
-    "rawsql-lineage": "./bin/rawsql-lineage.mjs"
+    "rawsql-lineage": "./bin/rawsql-lineage.mjs",
+    "rawsql-lineage-mcp": "./bin/rawsql-lineage-mcp.mjs"
   },
   "scripts": {
     "dev": "vite",
     "diagnose": "tsx src/cli/diagnose.ts diagnose",
-    "build": "tsc && vite build",
+    "build": "tsc && vite build && npm run build:package",
+    "build:package": "vite build --config vite.package.config.ts && tsc --project tsconfig.package.json",
+    "smoke:package": "node scripts/package-smoke.mjs",
     "preview": "vite preview",
     "test": "vitest run",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "^1.60.0",
+    "@types/pg": "^8.15.5",
     "@types/node": "^25.9.3",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
@@ -24,6 +44,7 @@
     "typescript": "~7.0.2",
     "vite": "^8.0.12",
     "vitest": "^4.1.8"
+    ,"pg": "^8.16.3"
   },
   "dependencies": {
     "@codemirror/lang-sql": "^6.10.0",

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from 'react';
 import ReactDiffViewer from 'react-diff-viewer-continued';
-import { AlertTriangle, CheckCircle2, Clock3, Code2, Copy, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ClipboardList, Clock3, Code2, Copy, Eraser, FileText, Info, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen, Pencil, Play, Share2, Trash2, X } from 'lucide-react';
+import { InvestigationAuditViewer } from './components/InvestigationAuditViewer';
 import { LineageGraph, LineageInspector, type CaseRuleSelection, type InspectorCardSelection, type InspectorSelection, type InspectorSelectionChangeReason } from './components/LineageGraph';
 import { SqlCodeMirror } from './components/SqlCodeMirror';
 import { salesSummarySql } from './examples/salesSummarySql';
@@ -20,7 +21,7 @@ const mobileLineageViewportQuery = '(max-width: 860px)';
 const maxSqlHistoryItems = 20;
 const defaultOutputTitle = 'Final Result';
 type SqlHistorySortMode = 'recent' | 'name';
-type PanelTab = 'history' | 'inspector' | 'new' | 'sql';
+type PanelTab = 'audit' | 'history' | 'inspector' | 'new' | 'sql';
 type OptimizationSqlView = 'detail' | 'diff' | 'optimized' | 'original';
 type OptimizationTraceView = 'blocked' | 'moved' | 'probes' | 'skipped_probes';
 type AnalysisModeAvailability = Record<SqlAnalysisMode, boolean>;
@@ -507,6 +508,16 @@ export function App() {
                 Inspector
               </button>
               <button
+                aria-selected={panelTab === 'audit'}
+                className={panelTab === 'audit' ? 'active' : ''}
+                role="tab"
+                type="button"
+                onClick={() => setPanelTab('audit')}
+              >
+                <ClipboardList size={15} />
+                Audit
+              </button>
+              <button
                 aria-selected={panelTab === 'history'}
                 className={panelTab === 'history' ? 'active' : ''}
                 role="tab"
@@ -664,6 +675,8 @@ export function App() {
             ) : (
               <div className="lineage-inspector-empty">Analyze SQL to inspect lineage details.</div>
             )
+          ) : panelTab === 'audit' ? (
+            adapterResult ? <InvestigationAuditViewer sql={lastAnalyzedSql} /> : <div className="lineage-inspector-empty">Analyze SQL to review an investigation plan.</div>
           ) : panelTab === 'history' ? (
             <SqlHistoryPanel
               history={sqlHistory}

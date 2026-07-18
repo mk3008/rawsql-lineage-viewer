@@ -19,11 +19,11 @@ npx tsx src/cli/diagnose.ts investigate \
 ```
 
 Add `--parameters <parameter-input.json>` only when the scenario requires
-explicit investigation keys or known original-query parameter values. The JSON
-file is an array of parameter objects with a fixed origin, for example
-`[{"name":"customer_id","origin":"investigation_key","value":10}]`.
-Do not create placeholder parameters merely to make a dogfooding command look
-complete.
+explicit investigation keys or known original-query parameter bindings. The
+JSON object separates emit-safe `definitions` from a caller-owned `bindings`
+map. Definitions contain only `name`, `origin`, optional `required`, and
+optional `typeHint`; they never contain a `value` field. Do not create
+placeholder parameters merely to make a dogfooding command look complete.
 
 Save the command's JSON only as ephemeral evidence under
 `tmp/orchestration/<task-id>/raw/<scenario>.json`. Do not copy a generated plan
@@ -44,9 +44,17 @@ tracked documentation.
 | `<scenario>` | `<node>.<column>` / `<symptom>` | `<count>` | `<n>` / `<n>` / `<n>` | `<summary>` | `tmp/orchestration/<task-id>/raw/<scenario>.json` |
 
 Record parameter handling separately: whether each parameter is `provided`,
-`required`, or `unresolved`, and whether a supplied marker value was absent from
-all proposed probe SQL. The static planner may emit parameter metadata but must
-not cause a DB call, SQL execution, network request, or AI request.
+`required`, or `unresolved`, and confirm that plans, probes, transcripts, and
+raw evidence contain no binding values or `value` fields. Binding input files
+must remain temporary and outside raw evidence. The static planner may emit
+parameter definitions and binding-presence status but must not cause a DB call,
+SQL execution, network request, or AI request.
+
+Each successful probe includes a versioned interpretation contract for an
+external evaluator. Treat its observation rules as conditional guidance, not
+as an observed result or a causal conclusion. Confirm that referenced candidate
+concern IDs exist in the same plan and keep external observations separate from
+the static artifact.
 
 ## Separation of responsibilities
 
@@ -56,14 +64,20 @@ JSON independently; the evaluator, not the worker, classifies the result as
 `meets`, `partially meets`, or `does not meet`. The evaluator should state
 blockers, non-blockers, evidence gaps, wording overreach, and missing user value.
 
-## Read-only probe boundary
+## Static probe classification
 
-`readOnly: true` means the probe is one parseable SQL statement with a top-level
-SELECT or binary SELECT and no data-modifying CTE at any nesting level. It is
-not executed or verified against a live database. This boundary does not prove
-the absence of DB-specific or user-defined function side effects, `SELECT FOR
-UPDATE` locking behavior, extension-specific syntax, or effects in SQL dialects
-outside the parser's supported surface.
+Each emitted probe includes `staticSafetyEvidence`, a versioned syntax-derived
+classification. A `select_statement` classification with `syntax_only`
+confidence means that the bundled parser recognized one SELECT or binary SELECT
+statement and found only SELECT queries throughout its parsed CTE tree.
+
+This classification is static evidence, not execution authorization. Its
+assumptions and execution caveats remain part of the artifact. In particular,
+the classification does not prove the absence of database-specific or
+user-defined function effects, `SELECT FOR UPDATE` locking behavior,
+extension-specific syntax, or effects in SQL dialects outside the parser's
+supported surface. The product does not inspect a live database, permissions,
+data, runtime bindings, or an execution environment.
 
 ## Required uncertainty fields
 

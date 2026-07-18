@@ -1,4 +1,4 @@
-import { DistinctOn, SimpleSelectQuery } from 'rawsql-ts';
+import { DistinctOn, InlineQuery, ParenExpression, SimpleSelectQuery, UnaryExpression } from 'rawsql-ts';
 import type { JoinClause } from 'rawsql-ts';
 import type {
   LineageColumn,
@@ -23,6 +23,7 @@ export interface PopulationOriginDeps {
   collectNestedQueryReferences: (value: unknown) => LineageColumnRef[];
   formatExpressionSql: (value: unknown) => string | undefined;
   formatScopeQuerySql: (query: SimpleSelectQuery) => string | undefined;
+  getInlineQueryShadowedAliases?: (inlineQuery: InlineQuery) => ReadonlySet<string>;
 }
 
 export interface CollectPopulationScopeInput {
@@ -135,15 +136,18 @@ function collectConditionInfluences(
   const splitStrategy: LineageCondition['splitStrategy'] = conditions.length > 1 ? 'top_level_and' : 'whole_expression';
   return conditions.flatMap((item, index) => {
     const expressionSql = deps.formatExpressionSql(item);
-    const references = toSourceReferences(
-      mergeColumnRefs(resolveColumnReferences(item, toSourceReferenceTargets(sources)), deps.collectNestedQueryReferences(item)),
-      scopeId,
-      'row_lineage',
+    const anchorReferences = toSourceReferences(resolveColumnReferences(item, toSourceReferenceTargets(sources), {
+      getInlineQueryShadowedAliases: deps.getInlineQueryShadowedAliases,
+      skipUnqualifiedInInlineQueries: true,
+    }), scopeId, 'row_lineage', 'anchor');
+    const relatedReferences = toSourceReferences(deps.collectNestedQueryReferences(item), scopeId, 'row_lineage', 'related');
+    const references = [...anchorReferences, ...relatedReferences].filter((reference, index, all) =>
+      all.findIndex((candidate) => candidate.nodeId === reference.nodeId && candidate.columnName === reference.columnName && candidate.provenance === reference.provenance) === index,
     );
     if (!expressionSql && references.length === 0) {
       return [];
     }
-    return [{
+    const result: LineageCondition = {
       expressionSql: expressionSql ?? 'unknown expression',
       id: `${scopeId}_${kind}_${index + 1}`,
       impact,
@@ -151,8 +155,52 @@ function collectConditionInfluences(
       references,
       scopeId,
       splitStrategy,
-    }];
+    };
+    const existencePolarity = classifyExistencePredicate(item);
+    if (existencePolarity) {
+      result.existencePolarity = existencePolarity;
+    }
+    return [result];
   });
+}
+
+function classifyExistencePredicate(value: unknown): LineageCondition['existencePolarity'] {
+  const expression = unwrapParenthesized(value);
+  if (!isUnaryExpressionLike(expression)) {
+    return undefined;
+  }
+  const operator = expression.operator.value.toLowerCase();
+  if (operator === 'exists' && isInlineQueryLike(expression.expression)) {
+    return 'exists';
+  }
+  if (operator === 'not exists' && isInlineQueryLike(expression.expression)) {
+    return 'not_exists';
+  }
+  if (operator === 'not') {
+    const nested = classifyExistencePredicate(expression.expression);
+    return nested === 'exists' ? 'not_exists' : nested === 'not_exists' ? 'exists' : undefined;
+  }
+  return undefined;
+}
+
+function unwrapParenthesized(value: unknown): unknown {
+  let current = value;
+  while (isParenExpressionLike(current)) {
+    current = current.expression;
+  }
+  return current;
+}
+
+function isParenExpressionLike(value: unknown): value is ParenExpression {
+  return value instanceof ParenExpression;
+}
+
+function isUnaryExpressionLike(value: unknown): value is UnaryExpression {
+  return value instanceof UnaryExpression;
+}
+
+function isInlineQueryLike(value: unknown): boolean {
+  return value instanceof InlineQuery;
 }
 
 function collectOrderByInfluences(
@@ -271,13 +319,15 @@ function toSourceReferences(
   refs: LineageColumnRef[],
   scopeId: string,
   role: LineageSourceReference['role'],
+  provenance?: LineageSourceReference['provenance'],
 ): LineageSourceReference[] {
-  return refs.map((ref) => ({
-    columnName: ref.columnName,
-    nodeId: ref.nodeId,
-    role,
-    scopeId,
-  }));
+  return refs.map((ref) => {
+    const result: LineageSourceReference = { columnName: ref.columnName, nodeId: ref.nodeId, role, scopeId };
+    if (provenance) {
+      result.provenance = provenance;
+    }
+    return result;
+  });
 }
 
 function toSourceReferenceTargets(sources: PopulationOriginSource[]): SourceReferenceTarget[] {

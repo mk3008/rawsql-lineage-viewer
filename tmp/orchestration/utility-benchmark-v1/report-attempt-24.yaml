@@ -1,0 +1,22 @@
+report_version: 1
+task_id: utility-benchmark-v1
+attempt: 24
+worker_thread_id: remediation-control-task
+status: ready_for_review
+finalization_phase: report_write
+code: OK
+base_state:
+  commit: 9572dee9505281a83ac202d8b0d64ab4a36b9ecc
+changed_paths:
+  - tests/dogfooding/utility-benchmark-v1/evaluator.ts
+  - tests/dogfooding/utility-benchmark-v1/run.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.test.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.ts
+verification:
+  - command: npx vitest run tests/dogfooding/utility-benchmark-v1
+    result: passed
+  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts
+    result: passed
+  - command: git diff --check
+    result: passed
+recommended_next: parent_review

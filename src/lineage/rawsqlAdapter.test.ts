@@ -1540,13 +1540,54 @@ describe('rawsqlAdapter', () => {
     expect(output?.columns.find((column) => column.name === 'condition 1')).toBeUndefined();
     expect(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0]).toMatchObject({
       expressionSql: expect.stringContaining('not exists'),
+      existencePolarity: 'not_exists',
       references: expect.arrayContaining([
-        expect.objectContaining({ nodeId: 'table_customers', columnName: 'id' }),
-        expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id' }),
+        expect.objectContaining({ nodeId: 'table_customers', columnName: 'id', provenance: 'anchor' }),
+        expect.objectContaining({ nodeId: 'table_orders', columnName: 'customer_id', provenance: 'related' }),
       ]),
     });
+    const serializedCondition = JSON.parse(JSON.stringify(lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0]));
+    expect(serializedCondition).toMatchObject({ existencePolarity: 'not_exists' });
+    expect(serializedCondition.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'table_customers', provenance: 'anchor' }),
+      expect.objectContaining({ nodeId: 'table_orders', provenance: 'related' }),
+    ]));
     expect(customers?.columns.find((column) => column.name === 'id')?.usage).toBeUndefined();
     expect(orders?.columns).toEqual([]);
+  });
+
+  it('keeps derived-table and function-source aliases local when resolving correlated EXISTS references', () => {
+    const derived = analyzeSql(`
+      SELECT c.id FROM customers c
+      WHERE EXISTS (SELECT 1 FROM (SELECT customer_id FROM orders) d WHERE d.customer_id = c.id)
+    `).lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0];
+    expect(derived?.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'table_customers', columnName: 'id', provenance: 'anchor' }),
+      expect.objectContaining({ columnName: 'customer_id', provenance: 'related' }),
+    ]));
+
+    const fn = analyzeSql(`
+      SELECT c.id FROM customers c
+      WHERE EXISTS (SELECT 1 FROM generate_series(1, 3) AS g(value) WHERE g.value = c.id)
+    `).lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0];
+    expect(fn?.references).toEqual(expect.arrayContaining([
+      expect.objectContaining({ nodeId: 'table_customers', columnName: 'id', provenance: 'anchor' }),
+      expect.objectContaining({ columnName: 'value', provenance: 'related' }),
+    ]));
+
+    const shadowedDerived = analyzeSql(`
+      SELECT c.id FROM customers c
+      WHERE EXISTS (SELECT 1 FROM (SELECT customer_id, id FROM orders) c WHERE c.customer_id = c.id)
+    `).lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0];
+    expect(shadowedDerived?.references.length).toBeGreaterThan(0);
+    expect(shadowedDerived?.references.every((reference) => reference.provenance === 'related')).toBe(true);
+
+    const shadowedFunction = analyzeSql(`
+      SELECT g.id FROM customers g
+      WHERE EXISTS (SELECT 1 FROM generate_series(1, 3) AS g(value) WHERE g.value = g.value)
+    `).lineage.scopes.find((scope) => scope.nodeId === 'main_output')?.where?.[0];
+    expect(shadowedFunction?.references.length).toBeGreaterThan(0);
+    expect(shadowedFunction?.references.every((reference) => reference.provenance === 'related')).toBe(true);
   });
 
   it('models nested FROM subqueries with repeated aliases as distinct derived nodes', () => {
