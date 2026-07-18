@@ -12,11 +12,42 @@ try {
   const packOutput = runNpm(['pack', '--json', '--pack-destination', root], { cwd: repository, encoding: 'utf8' });
   const packed = JSON.parse(packOutput)[0];
   const paths = packed.files.map((file) => file.path);
-  for (const required of ['bin/rawsql-lineage.mjs', 'bin/rawsql-lineage-mcp.mjs', 'dist/package/cli.js', 'dist/package/mcp.js', 'dist/package/public.js', 'dist/package/types/public.d.ts']) {
+  const requiredPaths = [
+    'LICENSE',
+    'README.md',
+    'bin/rawsql-lineage.mjs',
+    'bin/rawsql-lineage-mcp.mjs',
+    'dist/package/cli.js',
+    'dist/package/mcp.js',
+    'dist/package/public.js',
+    'dist/package/types/domain/lineage.d.ts',
+    'dist/package/types/lineage/columnDisplay.d.ts',
+    'dist/package/types/lineage/diagnostics.d.ts',
+    'dist/package/types/lineage/investigationPlan.d.ts',
+    'dist/package/types/lineage/investigationTargetDiscovery.d.ts',
+    'dist/package/types/lineage/nodeDependencyProfile.d.ts',
+    'dist/package/types/lineage/population-origin/collectPopulationScope.d.ts',
+    'dist/package/types/lineage/probePrerequisiteFacts.d.ts',
+    'dist/package/types/lineage/problemIntent.d.ts',
+    'dist/package/types/lineage/rawsqlAdapter.d.ts',
+    'dist/package/types/lineage/schemaFacts.d.ts',
+    'dist/package/types/lineage/source-references/mergeColumnRefs.d.ts',
+    'dist/package/types/lineage/source-references/resolveColumnReferences.d.ts',
+    'dist/package/types/lineage/source-references/sourceReferences.types.d.ts',
+    'dist/package/types/mcp/investigationServer.d.ts',
+    'dist/package/types/public.d.ts',
+    'package.json',
+  ];
+  for (const required of requiredPaths) {
     if (!paths.includes(required)) throw new Error(`Packed artifact is missing ${required}`);
   }
-  const leaked = paths.filter((path) => path.startsWith('src/') || path.startsWith('tests/') || path.startsWith('tmp/') || path.includes('fixture') || /(?:^|\/)(?:\.env|bindings\.json)$/.test(path));
-  if (leaked.length) throw new Error(`Packed artifact contains excluded paths: ${leaked.join(', ')}`);
+  const allowedPath = (path) => requiredPaths.includes(path)
+    || /^dist\/package\/investigationPlan-[A-Za-z0-9_-]+\.js$/.test(path);
+  const unexpected = paths.filter((path) => !allowedPath(path));
+  if (unexpected.length) throw new Error(`Packed artifact contains unexpected paths: ${unexpected.join(', ')}`);
+  if (paths.some((path) => path === 'dist/package/favicon.svg' || path === 'dist/package/icons.svg')) {
+    throw new Error('Packed artifact contains Viewer public assets.');
+  }
 
   const installRoot = resolve(root, 'consumer');
   mkdirSync(installRoot);

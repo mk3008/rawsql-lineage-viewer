@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  publicDir: false,
   build: {
-    emptyOutDir: false,
+    emptyOutDir: true,
     lib: {
       entry: {
         cli: 'src/cli/diagnose.ts',
