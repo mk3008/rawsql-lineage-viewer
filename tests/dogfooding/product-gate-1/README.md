@@ -12,6 +12,12 @@ Run from the repository root:
 npx tsx tests/dogfooding/product-gate-1/run.ts
 ```
 
+Before running a parameterized case, the operator must create its local
+`private/<case>/bindings.json` file. Binding files are intentionally ignored by
+Git and must contain only synthetic fixture values. The harness fails closed
+when a required binding is absent; do not commit, attach, or paste binding
+values into review evidence.
+
 The harness starts an ephemeral PostgreSQL 16 container, captures the actual
 CLI and stdio-MCP exchanges, compares their complete plan JSON exactly, and
 executes only `recommendedProbes` listed by that plan.  It rejects blocked,
@@ -23,7 +29,8 @@ captures are deliberately written only to `tmp/dogfooding/product-gate-1/raw/`.
 
 The executor performs deterministic placeholder conversion (`:name` to `$n`)
 and an outer output cap only; it does not rewrite probe meaning.  Definitions
-remain in the public request while fixture-only bindings live under `private/`.
+remain in the public request while fixture-only bindings live in Git-ignored
+files under `private/`.
 The harness passes those bindings only through a temporary CLI input and the
 PostgreSQL `PREPARE`/`EXECUTE` wrapper.  It never writes bindings, invocation
 arguments, or parameter input files to raw evidence.  Generated and prepared
