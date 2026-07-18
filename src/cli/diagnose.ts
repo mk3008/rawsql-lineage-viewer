@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { buildColumnDiagnosticPacket } from '../lineage/diagnostics';
 import type { AnalysisWarning } from '../domain/lineage';
 import { createInvestigationPlan, investigationInputParameterOrigins, type InvestigationParameterDefinitionInputV1, type InvestigationPlanV1, type InvestigationPlannerParametersV1 } from '../lineage/investigationPlan';
+import { discoverInvestigationTargets, resolveInvestigationTarget, type InvestigationTargetDiscoveryV1 } from '../lineage/investigationTargetDiscovery';
 import { diagnosticProblemIntents, problemIntentOptions, symptomEffectMap, type DiagnosticConcernEffect, type DiagnosticProblemIntent, type ProblemIntent } from '../lineage/problemIntent';
 import { analyzeSql } from '../lineage/rawsqlAdapter';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
@@ -25,18 +26,23 @@ interface InvestigateArgs extends Omit<DiagnoseArgs, 'symptom' | 'targetColumn'>
   parameters?: string;
   symptom?: ProblemIntent;
   targetColumn?: string;
+  targetId?: string;
   targetNode?: string;
 }
 
 interface InvestigationCliDependencies {
   createPlan: typeof createInvestigationPlan;
+  discoverTargets: typeof discoverInvestigationTargets;
+  resolveTarget: typeof resolveInvestigationTarget;
 }
 
 interface SqlDiagnosticReport {
+  analysisMode: 'original';
   diagnostics: AnalysisWarning[];
   kind: 'sql-diagnostic-report';
   packets: ReturnType<typeof buildColumnDiagnosticPacket>[];
   schemaFacts?: SchemaFacts;
+  sourceArtifact: { artifactKind: 'original_query' };
   symptom?: {
     expectedEffects: DiagnosticConcernEffect[];
     intent: DiagnosticProblemIntent;
@@ -69,6 +75,10 @@ const excludedDirectories = new Set(['.git', 'node_modules', 'dist', 'build', 'c
 
 export async function runCli(): Promise<void> {
   const [command, ...argv] = process.argv.slice(2);
+  if (command === 'discover') {
+    process.stdout.write(`${JSON.stringify(discoverInvestigationTargetsForCli(argv), null, 2)}\n`);
+    return;
+  }
   if (command === 'investigate') {
     process.stdout.write(`${JSON.stringify(createInvestigationPlanForCli(argv), null, 2)}\n`);
     return;
@@ -81,7 +91,7 @@ export async function runCli(): Promise<void> {
 
   const sql = readTextFile(args.sql);
   const schemaFacts = loadSchemaFacts(args);
-  const { lineage } = analyzeSql(sql, { schemaFacts });
+  const { lineage } = analyzeSql(sql, { analysisMode: 'original', optimizeConditions: false, schemaFacts });
   const outputNode = lineage.nodes.find((node) => node.id === 'main_output');
   if (!outputNode) {
     throw new Error('Could not find the main output node.');
@@ -96,6 +106,7 @@ export async function runCli(): Promise<void> {
   }
 
   const report: SqlDiagnosticReport = {
+    analysisMode: 'original',
     diagnostics: lineage.analysisWarnings,
     kind: 'sql-diagnostic-report',
     packets: selectedColumns.map((column) =>
@@ -106,6 +117,7 @@ export async function runCli(): Promise<void> {
       }, { schemaFacts, symptom: args.symptom }),
     ),
     schemaFacts,
+    sourceArtifact: { artifactKind: 'original_query' },
     symptom: args.symptom ? {
       expectedEffects: symptomEffectMap[args.symptom],
       intent: args.symptom,
@@ -171,17 +183,17 @@ function parseArgs(argv: string[]): DiagnoseArgs {
  */
 export function createInvestigationPlanForCli(
   argv: string[],
-  dependencies: InvestigationCliDependencies = { createPlan: createInvestigationPlan },
+  dependencies: Partial<InvestigationCliDependencies> = {},
 ): InvestigationPlanV1 {
   const args = parseInvestigateArgs(argv);
   if (!args.sql) {
     throw new Error('Missing required --sql <file> option.');
   }
-  if (!args.targetNode) {
-    throw new Error('Missing required --target-node <node-id> option.');
-  }
-  if (!args.targetColumn) {
-    throw new Error('Missing required --target-column <column-name> option.');
+  const hasTargetId = args.targetId !== undefined;
+  const hasDirectTarget = args.targetNode !== undefined || args.targetColumn !== undefined;
+  if (hasTargetId && hasDirectTarget) throw new Error('--target-id cannot be combined with --target-node or --target-column.');
+  if (!hasTargetId && (!args.targetNode || !args.targetColumn)) {
+    throw new Error('Supply either --target-id <id> or both --target-node <node-id> and --target-column <column-name>.');
   }
   if (args.schemaFacts && (args.ddl.length > 0 || args.ddlDir.length > 0)) {
     throw new Error('Use either --schema-facts <file> or --ddl/--ddl-dir inputs, not both.');
@@ -190,13 +202,36 @@ export function createInvestigationPlanForCli(
   const ddl = loadDdlInputs(args);
   const schemaFacts = args.schemaFacts ? normalizeLoadedSchemaFacts(JSON.parse(readTextFile(args.schemaFacts))) : undefined;
   const parameters = args.parameters ? parseParameterFile(args.parameters) : undefined;
-  return dependencies.createPlan({
+  const staticInput = {
     ...(ddl.length > 0 ? { ddl } : {}),
-    ...(parameters ? { parameters } : {}),
     ...(schemaFacts ? { schemaFacts } : {}),
     sql: readTextFile(args.sql),
+  };
+  const target = args.targetId
+    ? (dependencies.resolveTarget ?? resolveInvestigationTarget)((dependencies.discoverTargets ?? discoverInvestigationTargets)(staticInput), args.targetId)
+    : { columnName: args.targetColumn!, nodeId: args.targetNode! };
+  return (dependencies.createPlan ?? createInvestigationPlan)({
+    ...staticInput,
+    ...(parameters ? { parameters } : {}),
     symptom: args.symptom,
-    target: { columnName: args.targetColumn, nodeId: args.targetNode },
+    target,
+  });
+}
+
+/** Discovers deterministic investigation targets from static CLI inputs. */
+export function discoverInvestigationTargetsForCli(argv: string[]): InvestigationTargetDiscoveryV1 {
+  const args = parseArgs(argv);
+  if (!args.sql) throw new Error('Missing required --sql <file> option.');
+  if (args.out || args.symptom || args.targetColumn) throw new Error('discover accepts only --sql, --ddl, --ddl-dir, --schema-facts, and --contract-version.');
+  if (args.schemaFacts && (args.ddl.length > 0 || args.ddlDir.length > 0)) {
+    throw new Error('Use either --schema-facts <file> or --ddl/--ddl-dir inputs, not both.');
+  }
+  const ddl = loadDdlInputs(args);
+  const schemaFacts = args.schemaFacts ? normalizeLoadedSchemaFacts(JSON.parse(readTextFile(args.schemaFacts))) : undefined;
+  return discoverInvestigationTargets({
+    ...(ddl.length > 0 ? { ddl } : {}),
+    ...(schemaFacts ? { schemaFacts } : {}),
+    sql: readTextFile(args.sql),
   });
 }
 
@@ -228,6 +263,9 @@ function parseInvestigateArgs(argv: string[]): InvestigateArgs {
       index += 1;
     } else if (option === '--target-column') {
       args.targetColumn = requireValue(option, value);
+      index += 1;
+    } else if (option === '--target-id') {
+      args.targetId = requireValue(option, value);
       index += 1;
     } else if (option === '--target-node') {
       args.targetNode = requireValue(option, value);
@@ -309,7 +347,17 @@ export function collectDdlFiles(directory: string): string[] {
 }
 
 function readTextFile(filePath: string): string {
-  return readFileSync(resolve(process.cwd(), filePath), 'utf8');
+  const resolvedPath = resolve(process.cwd(), filePath);
+  try {
+    return readFileSync(resolvedPath, 'utf8');
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      const failure = new Error(`Path does not exist: ${resolvedPath}`) as Error & { code: 'PATH_NOT_FOUND' };
+      failure.code = 'PATH_NOT_FOUND';
+      throw failure;
+    }
+    throw error;
+  }
 }
 
 function requireValue(option: string, value: string | undefined): string {
@@ -324,11 +372,16 @@ function parseContractVersion(value: string): 1 {
   return 1;
 }
 
-function cliFailure(error: unknown): { code: string; kind: 'invalid_input'; message: string; version: 1 } {
+export interface CliFailureV1 { code: string; kind: 'invalid_input'; message: string; version: 1 }
+
+export function cliFailure(error: unknown): CliFailureV1 {
   const message = error instanceof Error ? error.message : String(error);
-  const code = message.startsWith('Unsupported contract version:') ? 'CONTRACT_VERSION_UNSUPPORTED'
+  const typedCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && error.code.length > 0
+    ? error.code
+    : undefined;
+  const code = typedCode ?? (message.startsWith('Unsupported contract version:') ? 'CONTRACT_VERSION_UNSUPPORTED'
     : /ENOENT|does not exist/i.test(message) ? 'PATH_NOT_FOUND'
-      : 'INVALID_INPUT';
+      : 'INVALID_INPUT');
   return { code, kind: 'invalid_input', message, version: 1 };
 }
 
@@ -409,11 +462,11 @@ function parseParameterFile(filePath: string): InvestigationPlannerParametersV1 
 }
 
 function printHelp(): void {
-  process.stdout.write(`rawsql-lineage diagnose --sql <file> [--contract-version 1] [--target-column <name>] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--out <file>]\n`);
+  process.stdout.write(`rawsql-lineage diagnose --sql <file> [--contract-version 1] [--target-column <name>] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--out <file>]\nrawsql-lineage discover --sql <file> [--contract-version 1] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>]\n`);
 }
 
 function printInvestigateHelp(): void {
-  process.stdout.write('rawsql-lineage investigate --sql <file> --target-node <node-id> --target-column <name> [--contract-version 1] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <definitions-and-bindings-file>]\n');
+  process.stdout.write('rawsql-lineage investigate --sql <file> (--target-id <id> | --target-node <node-id> --target-column <name>) [--contract-version 1] [--symptom <intent>] [--ddl <file> ...] [--ddl-dir <dir> ...] [--schema-facts <file>] [--parameters <definitions-and-bindings-file>]\n');
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -1218,7 +1218,7 @@ function createDiagnosticReference(
     usedInScopeIds: [reference.scopeId],
   };
   if (reference.provenance) {
-    Object.defineProperty(result, 'provenance', { configurable: true, value: reference.provenance });
+    result.provenance = reference.provenance;
   }
   return result;
 }
@@ -1252,7 +1252,7 @@ function classifyBothReferences(references: DiagnosticSourceReference[]): Diagno
       usedInScopeIds: dedupeStrings(reference.usages.map((usage) => usage.scopeId)),
     };
     if (reference.provenance) {
-      Object.defineProperty(result, 'provenance', { configurable: true, value: reference.provenance });
+      result.provenance = reference.provenance;
     }
     return result;
   });
@@ -1264,7 +1264,7 @@ function cloneDiagnosticReference(reference: DiagnosticSourceReference): Diagnos
     usages: reference.usages.map((usage) => ({ ...usage })),
   };
   if (reference.provenance) {
-    Object.defineProperty(clone, 'provenance', { configurable: true, value: reference.provenance });
+    clone.provenance = reference.provenance;
   }
   return clone;
 }

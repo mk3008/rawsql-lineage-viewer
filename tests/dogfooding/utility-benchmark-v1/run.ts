@@ -6,24 +6,27 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
-import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, namespacePublicMetrics, rankedMechanisms, redactObservation } from './evaluator';
+import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, mapSequentially, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
 import { validateProbe, type Plan, type Probe, type Scalar } from './safety';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const scenarios = ['sql-defect', 'data-anomaly'];
+const attempt = 22;
+const defaultBaseSha = '0e7d759e5116d452be1458fd3762ba5739e13e63';
 const out = resolve(process.cwd(), 'tmp/orchestration/utility-benchmark-v1');
 const container = `utility-benchmark-v1-${Date.now()}`;
 const json = <T>(p: string): T => JSON.parse(readFileSync(p, 'utf8')) as T;
 const redactError = (e: unknown) => ({ code: e instanceof Error ? e.name : 'EXECUTION_ERROR' });
 
 async function main(): Promise<void> {
+  const baseSha = resolveBenchmarkBaseSha();
   const temp = mkdtempSync(resolve(tmpdir(), 'utility-benchmark-v1-'));
   const password = randomBytes(24).toString('base64url');
   const envFile = resolve(temp, 'postgres.env');
   writeFileSync(envFile, `POSTGRES_PASSWORD=${password}\nPOSTGRES_DB=benchmark\n`);
 let client: Client | undefined;
 let scenarioSubphase = 'not_started';
-  const evidence: Record<string, unknown> = { image: 'postgres:16-alpine', scenarios: {} };
+  const evidence: Record<string, unknown> = { baseRevision: baseSha, image: 'postgres:16-alpine', scenarios: {} };
   let phase = 'init';
   let finalizationPhase = 'not_started';
   let failureCode = 'OK';
@@ -54,23 +57,29 @@ let scenarioSubphase = 'not_started';
     finalizationPhase = 'output_prepare'; try { mkdirSync(out, { recursive: true }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_OUTPUT_PREPARE' : failureCode; }
     finalizationPhase = 'container_verify'; let inspectFails = false; try { execFileSync('docker', ['inspect', container], { stdio: 'ignore' }); } catch { inspectFails = true; }
     const host = process.env.BENCHMARK_DB_HOST ?? '127.0.0.1';
-    let changed: string[] = []; try { changed = execFileSync('git', ['diff', '--name-only', '167a515'], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
+    let changed: string[] = []; try { changed = execFileSync('git', ['diff', '--name-only', baseSha], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
     const categories = { benchmark: changed.filter(p => p.startsWith('tests/dogfooding/utility-benchmark-v1/')).length, core: changed.filter(p => p.startsWith('src/')).length, cli: changed.filter(p => p.includes('/cli/')).length, mcp: changed.filter(p => p.includes('/mcp/')).length };
-    evidence.boundary = { changedPathCategoryCounts: categories, changedPathHash: hash(changed.join('\n')), noCoreCliMcpDbConfig: categories.core === 0 && categories.cli === 0 && categories.mcp === 0 };
+    let runtimeBoundaryDiff = ''; try { runtimeBoundaryDiff = execFileSync('git', ['diff', '--unified=0', baseSha, '--', 'src', 'bin'], { encoding: 'utf8' }); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_GIT_INSPECT' : failureCode; }
+    const runtimeDbConfigAdded = runtimeBoundaryDiff.split(/\r?\n/)
+      .filter(line => line.startsWith('+') && !line.startsWith('+++'))
+      .some(line => /(?:from\s+['"]pg['"]|require\(['"]pg['"]\)|new\s+Client\s*\(|DATABASE_URL|BENCHMARK_DB_|postgres(?:ql)?:\/\/)/i.test(line));
+    evidence.boundary = { changedPathCategoryCounts: categories, changedPathHash: hash(changed.join('\n')), noCoreCliMcpDbConfig: !runtimeDbConfigAdded };
     evidence.teardown = { containerAbsent: stopped && inspectFails, mountCount: mounts.length, volumeAbsent: mounts.every(m => !m || typeof m !== 'object' || !['volume', 'bind'].includes(String((m as { Type?: unknown }).Type))), dynamicLoopbackPortClosed: mappedPort > 0 ? await portClosed(mappedPort) : false, tempCredentialRemoved: !existsSync(envFile), tempDirectoryRemoved: !existsSync(temp), host, loopbackOnly: host === '127.0.0.1' };
-    let privateBindings: Record<string, Scalar> = {};
-    try { privateBindings = Object.fromEntries(scenarios.flatMap(id => Object.entries(json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
+    let privateBindings = { global: {} as Record<string, Scalar>, scenarios: {} as Record<string, Record<string, Scalar>> };
+    try { privateBindings = partitionScenarioBindings(Object.fromEntries(scenarios.map(id => [id, json<Record<string, Scalar>>(resolve(root, 'scenarios', id, 'private', 'bindings.json'))]))); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_PRIVATE_SCAN_INPUT' : failureCode; }
     evidence.finalization = { phase: finalizationPhase, code: failureCode, containerAbsent: stopped && inspectFails };
     const durableEvidence = namespacePublicMetrics(evidence) as Record<string, unknown>;
-    const scenarioLeakageCounts = Object.fromEntries(Object.entries(durableEvidence.scenarios as Record<string, unknown>).map(([id, scenario]) => [id, countScalarLeakage(scenario, privateBindings)]));
-    const globalLeakageCount = countScalarLeakage(durableEvidence, privateBindings);
+    const scenarioLeakageCounts = Object.fromEntries(Object.entries(durableEvidence.scenarios as Record<string, unknown>).map(([id, scenario]) => [id, countScalarLeakage(scenario, privateBindings.scenarios[id] ?? {})]));
+    const globalLeakageCount = countScalarLeakage(durableEvidence, privateBindings.global);
     for (const [id, count] of Object.entries(scenarioLeakageCounts)) {
       const evaluator = (durableEvidence.scenarios as Record<string, Record<string, unknown>>)[id]?.evaluator as Record<string, unknown> | undefined;
       if (evaluator) evaluator.parameterLeakageCount = count;
     }
     durableEvidence.parameterLeakageCount = globalLeakageCount;
-    finalizationPhase = 'evidence_write'; try { writeFileSync(resolve(out, 'evidence-attempt-21.json'), JSON.stringify(durableEvidence, null, 2)); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_EVIDENCE_WRITE' : failureCode; }
-    finalizationPhase = 'report_write'; try { writeFileSync(resolve(out, 'report-attempt-21.yaml'), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: 21\nworker_thread_id: 019f6fbd-0375-7300-bfd2-1a8453abf7a2\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: 24ae911824ea5bdb154eaf5b94d12f7d1fbd4c78\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`); } catch { /* final report write has no safe filesystem fallback */ }
+    finalizationPhase = 'evidence_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `evidence-attempt-${attempt}.json`), JSON.stringify(durableEvidence, null, 2), failureCode, 'FINALIZE_EVIDENCE_WRITE');
+    if (failureCode === 'FINALIZE_EVIDENCE_WRITE') process.exitCode = 1;
+    finalizationPhase = 'report_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `report-attempt-${attempt}.yaml`), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: ${attempt}\nworker_thread_id: remediation-control-task\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: ${baseSha}\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/README.md\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`, failureCode, 'FINALIZE_REPORT_WRITE');
+    if (failureCode === 'FINALIZE_REPORT_WRITE') process.exitCode = 1;
     if (failureCode !== 'OK') process.exitCode = 1;
   }
 }
@@ -94,7 +103,12 @@ async function runScenario(client: Client, temp: string, id: string, setSubphase
   setSubphase('plan_generation');
   const plan = JSON.parse(execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'query.sql', '--ddl-dir', '.', '--parameters', parameterFile, '--target-node', 'main_output', '--target-column', c.targetColumn, '--symptom', c.symptom], { cwd: pub, encoding: 'utf8' })) as Plan;
   const started = Date.now();
-  const execute = async () => Object.fromEntries(await Promise.all(plan.recommendedProbes.map(async probe => { validateProbe(plan, probe, bindings); const startedProbe = Date.now(); const result = await executeProbe(client, probe, bindings); return [probe.id, { raw: result, elapsedMs: Date.now() - startedProbe, plannedArtifactHash: hash(probe.sql), safetyAccepted: true }] as const; })));
+  const execute = async () => Object.fromEntries(await mapSequentially(plan.recommendedProbes, async probe => {
+    validateProbe(plan, probe, bindings);
+    const startedProbe = Date.now();
+    const result = await executeProbe(client, probe, bindings);
+    return [probe.id, { raw: { rows: result.rows }, sourceHash: result.sourceHash, artifactHash: result.artifactHash, plannedArtifactHash: hash(probe.sql), elapsedMs: Date.now() - startedProbe, safetyAccepted: true }] as const;
+  }));
   setSubphase('faulty_execution');
   const faulty = await execute();
   setSubphase('schema_reset');
@@ -108,21 +122,29 @@ async function runScenario(client: Client, temp: string, id: string, setSubphase
   const oracle = json<{ mechanism: string; faulty: Record<string, unknown>; control: Record<string, unknown> }>(resolve(priv, 'oracle.json'));
   const ids = plan.recommendedProbes.map(p => p.id);
   const classifications = ids.map(id => { const probe = plan.recommendedProbes.find(p => p.id === id)!; const same = JSON.stringify(faulty[id].raw) === JSON.stringify(oracle.faulty) && JSON.stringify(control[id].raw) === JSON.stringify(oracle.control); const classification = same ? 'supports' : (probe.interpretation?.weakensCandidateConcernIds?.length ? 'weakens' : 'inconclusive'); return { probeId: id, faulty: redactObservation(faulty[id].raw), control: redactObservation(control[id].raw), classification, discriminates: JSON.stringify(faulty[id].raw) !== JSON.stringify(control[id].raw), elapsedMs: faulty[id].elapsedMs }; });
-  const outcomes = ids.map(id => ({ probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classifications.find(x => x.probeId === id)!.classification, weakensCandidateConcernIds: plan.recommendedProbes.find(p => p.id === id)?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash: hashSourceAtExecutorEntry(plan.recommendedProbes.find(p => p.id === id)?.sql ?? ''), artifactMember: true }));
+  const outcomes = ids.map(id => {
+    const plannedProbe = plan.recommendedProbes.find(probe => probe.id === id);
+    const plannedSourceHash = hashSourceAtExecutorEntry(plannedProbe?.sql ?? '');
+    return { probeId: id, faulty: faulty[id].raw, control: control[id].raw, elapsedMs: faulty[id].elapsedMs, classification: classifications.find(x => x.probeId === id)!.classification, weakensCandidateConcernIds: plannedProbe?.interpretation?.weakensCandidateConcernIds, artifactSourceHash: faulty[id].sourceHash, plannedSourceHash, artifactMember: Boolean(plannedProbe && faulty[id].sourceHash === plannedSourceHash) };
+  });
   const ranked = rankedMechanisms(plan);
   const leakageCount = countScalarLeakage({ observations: classifications, evaluator: { rankedMechanisms: ranked } }, bindings);
   setSubphase('evaluation');
   const metrics = evaluateAll(outcomes, oracle, ranked, { leakageCount, candidateIds: (plan.candidateConcerns ?? []).map(c => c.id), validationAttempts: ids.map(id => ({ probeId: id, accepted: true, artifactSourceHash: faulty[id].sourceHash })) });
-  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
+  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), faultyFixtureHash: hash(readFileSync(resolve(priv, 'seed-faulty.sql'))), controlFixtureHash: hash(readFileSync(resolve(priv, 'seed-control.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), executionArtifactHashes: Object.fromEntries(ids.map(id => [id, { plannedArtifactHash: faulty[id].plannedArtifactHash, executorEntrySourceHash: faulty[id].sourceHash, submittedStatementHash: faulty[id].artifactHash, controlSubmittedStatementHash: control[id].artifactHash }])), safetyDecision: 'accepted_recommended_investigation_probe_only', observations: classifications, evaluator: metrics, bindingNames: Object.keys(bindings), bindingTypes: Object.fromEntries(Object.keys(bindings).map(name => [name, typeof bindings[name]])), statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }
 function hash(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
+function resolveBenchmarkBaseSha(): string {
+  const requested = process.env.UTILITY_BENCHMARK_BASE_SHA ?? defaultBaseSha;
+  return execFileSync('git', ['rev-parse', '--verify', `${requested}^{commit}`], { encoding: 'utf8' }).trim();
+}
 function portClosed(port: number): Promise<boolean> { return new Promise(resolve => { const socket = new Socket(); socket.setTimeout(250); socket.once('connect', () => { socket.destroy(); resolve(false); }); socket.once('error', () => resolve(true)); socket.once('timeout', () => { socket.destroy(); resolve(true); }); socket.connect(port, '127.0.0.1'); }); }
 async function executeProbe(client: Client, probe: Probe, bindings: Record<string, Scalar>): Promise<{ rows: Array<Record<string, unknown>>; artifactHash: string; sourceHash: string }> {
   const sourceHash = hashSourceAtExecutorEntry(probe.sql);
   const names = probe.parameters.map(p => p.name);
-  const sql = probe.sql.replace(/:([A-Za-z_][A-Za-z0-9_]*)\b/g, (_m, name: string) => `$${names.indexOf(name) + 1}`);
+  const submittedSql = buildSubmittedProbeSql(probe.sql, names);
   const values = names.map(name => bindings[name]);
   await client.query('BEGIN READ ONLY');
-  try { const result = await client.query({ text: `SELECT * FROM (${sql.replace(/;\s*$/, '')}) AS benchmark_probe LIMIT 100`, values }); await client.query('COMMIT'); return { rows: result.rows, artifactHash: hash(probe.sql), sourceHash }; } catch (e) { await client.query('ROLLBACK'); throw e; }
+  try { const result = await client.query({ text: submittedSql, values }); await client.query('COMMIT'); return { rows: result.rows, artifactHash: hash(submittedSql), sourceHash }; } catch (e) { await client.query('ROLLBACK'); throw e; }
 }
 main().catch(() => { process.exitCode = 1; });

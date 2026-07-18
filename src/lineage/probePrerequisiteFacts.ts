@@ -15,6 +15,12 @@ import type { SchemaFacts } from './schemaFacts';
 import { collectColumnReferences } from './source-references/resolveColumnReferences';
 
 export type PrerequisiteFactStatusV1 = 'available' | 'ambiguous' | 'blocked' | 'unsupported';
+
+interface TargetReachability {
+  ambiguousNodeIds: Set<string>;
+  nodeIds: Set<string>;
+  traversedEdgeIds: Set<string>;
+}
 export type PrerequisiteIssueCodeV1 =
   | 'aggregate_input_ambiguous'
   | 'aggregate_input_multi_relation'
@@ -151,7 +157,7 @@ export function buildProbePrerequisiteFactsV1(input: {
     });
 
   const reachability = collectReachableSources(input.lineage, input.target.nodeId);
-  const references = collectReferences(input.lineage, reachability.nodeIds);
+  const references = collectReferences(input.lineage, reachability);
   for (const reference of references) {
     addProvenance(provenance, 'lineage_node', reference.nodeId);
     if (reference.scopeId) addProvenance(provenance, 'lineage_scope', reference.scopeId);
@@ -192,20 +198,23 @@ function selectTargetQuery(sql: string, ownerNode: LineageModel['nodes'][number]
   try { return unwrapSelect(SqlParser.parse(targetSql)); } catch { return undefined; }
 }
 
-function collectReferences(lineage: LineageModel, reachableNodeIds: ReadonlySet<string>): ProbePrerequisiteReferenceV1[] {
+function collectReferences(lineage: LineageModel, reachability: TargetReachability): ProbePrerequisiteReferenceV1[] {
   const refs = new Map<string, LineageColumnRef>();
+  const traversedEdges = lineage.edges.filter((edge) => reachability.traversedEdgeIds.has(edge.id));
+  const ownerNodeIds = new Set(traversedEdges.map((edge) => edge.target));
+  const isTraversedReference = (ownerNodeId: string, ref: LineageColumnRef) => traversedEdges.some((edge) => edge.source === ref.nodeId && edge.target === ownerNodeId);
   const add = (ref: LineageColumnRef) => {
     const key = `${ref.nodeId}\u0000${ref.scopeId ?? ''}\u0000${ref.columnName}`;
     if (refs.has(key)) return;
     refs.set(key, { ...ref });
   };
-  for (const node of [...lineage.nodes].sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const node of [...lineage.nodes].filter((candidate) => ownerNodeIds.has(candidate.id)).sort((a, b) => a.id.localeCompare(b.id))) {
     for (const column of [...node.columns].sort((a, b) => (a.outputIndex ?? 9999) - (b.outputIndex ?? 9999) || a.name.localeCompare(b.name))) {
-      for (const ref of column.upstream ?? []) if (reachableNodeIds.has(ref.nodeId)) add(ref);
+      for (const ref of column.upstream ?? []) if (reachability.nodeIds.has(ref.nodeId) && isTraversedReference(node.id, ref)) add(ref);
     }
   }
-  for (const scope of [...lineage.scopes].sort((a, b) => a.id.localeCompare(b.id))) {
-    for (const influence of scope.groupBy ?? []) for (const ref of influence.references) if (reachableNodeIds.has(ref.nodeId)) add(ref);
+  for (const scope of [...lineage.scopes].filter((candidate) => ownerNodeIds.has(candidate.nodeId)).sort((a, b) => a.id.localeCompare(b.id))) {
+    for (const influence of scope.groupBy ?? []) for (const ref of influence.references) if (reachability.nodeIds.has(ref.nodeId) && isTraversedReference(scope.nodeId, ref)) add(ref);
   }
   return [...refs.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, ref], index) => ({
     columnName: ref.columnName,
@@ -217,20 +226,21 @@ function collectReferences(lineage: LineageModel, reachableNodeIds: ReadonlySet<
   }));
 }
 
-function collectSources(lineage: LineageModel, references: ProbePrerequisiteReferenceV1[], provenance: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>, selectedTargetNodeId: string, reachability: { ambiguousNodeIds: Set<string>; nodeIds: Set<string> }): ProbePrerequisiteSourceV1[] {
+function collectSources(lineage: LineageModel, references: ProbePrerequisiteReferenceV1[], provenance: Map<string, ProbePrerequisiteFactsV1['provenance'][number]>, selectedTargetNodeId: string, reachability: TargetReachability): ProbePrerequisiteSourceV1[] {
   return [...lineage.nodes]
     .filter((node) => reachability.nodeIds.has(node.id) && node.id !== selectedTargetNodeId && node.type !== 'output' && node.type !== 'parameter_table' && node.type !== 'scalar_subquery')
     .sort((a, b) => a.id.localeCompare(b.id))
     .map((node, index) => {
       addProvenance(provenance, 'lineage_node', node.id);
       for (const scopeId of node.dependencyProfile?.scopeIds ?? []) addProvenance(provenance, 'lineage_scope', scopeId);
-      const ownerNodeIds = sortedUnique(lineage.edges.filter((edge) => edge.source === node.id).map((edge) => edge.target));
+      const pathEdges = lineage.edges.filter((edge) => reachability.traversedEdgeIds.has(edge.id) && edge.source === node.id);
+      const ownerNodeIds = sortedUnique(pathEdges.map((edge) => edge.target));
       const ownerNodeId = ownerNodeIds.length === 1 ? ownerNodeIds[0] : undefined;
       const ownerScopes = ownerNodeId ? lineage.scopes.filter((scope) => scope.nodeId === ownerNodeId && scope.kind !== 'set_operation') : [];
       const ownerScopeId = ownerScopes.length === 1 ? ownerScopes[0].id : undefined;
       if (ownerNodeId) addProvenance(provenance, 'lineage_node', ownerNodeId);
       if (ownerScopeId) addProvenance(provenance, 'lineage_scope', ownerScopeId);
-      const ownershipEdges = ownerNodeId ? lineage.edges.filter((edge) => edge.source === node.id && edge.target === ownerNodeId) : [];
+      const ownershipEdges = ownerNodeId ? pathEdges.filter((edge) => edge.target === ownerNodeId) : [];
       const hasPredicateEvidence = ownershipEdges.some((edge) => edge.kind === 'predicate_subquery' || edge.kind === 'correlation');
       const hasNonPredicateEvidence = ownershipEdges.some((edge) => edge.kind !== 'predicate_subquery' && edge.kind !== 'correlation');
       const directness = reachability.ambiguousNodeIds.has(node.id) || ownerNodeIds.length !== 1 || hasPredicateEvidence && hasNonPredicateEvidence
@@ -253,12 +263,15 @@ function collectSources(lineage: LineageModel, references: ProbePrerequisiteRefe
     });
 }
 
-function collectReachableSources(lineage: LineageModel, selectedTargetNodeId: string): { ambiguousNodeIds: Set<string>; nodeIds: Set<string> } {
+function collectReachableSources(lineage: LineageModel, selectedTargetNodeId: string): TargetReachability {
   const nodeIds = new Set<string>();
   const ambiguousNodeIds = new Set<string>();
+  const traversedEdgeIds = new Set<string>();
   let cycleDetected = false;
   const walk = (ownerNodeId: string, path: ReadonlySet<string>): void => {
-    const sourceNodeIds = sortedUnique(lineage.edges.filter((edge) => edge.target === ownerNodeId).map((edge) => edge.source));
+    const incomingEdges = lineage.edges.filter((edge) => edge.target === ownerNodeId);
+    for (const edge of incomingEdges) traversedEdgeIds.add(edge.id);
+    const sourceNodeIds = sortedUnique(incomingEdges.map((edge) => edge.source));
     for (const sourceNodeId of sourceNodeIds) {
       nodeIds.add(sourceNodeId);
       if (path.has(sourceNodeId)) {
@@ -272,7 +285,7 @@ function collectReachableSources(lineage: LineageModel, selectedTargetNodeId: st
   };
   walk(selectedTargetNodeId, new Set([selectedTargetNodeId]));
   if (cycleDetected) for (const nodeId of nodeIds) ambiguousNodeIds.add(nodeId);
-  return { ambiguousNodeIds, nodeIds };
+  return { ambiguousNodeIds, nodeIds, traversedEdgeIds };
 }
 
 function collectGroupingKeys(query: SimpleSelectQuery, input: Parameters<typeof buildProbePrerequisiteFactsV1>[0], ownerScopeId: string | undefined, references: ProbePrerequisiteReferenceV1[], sources: ProbePrerequisiteSourceV1[]): GroupingKeyFactV1[] {

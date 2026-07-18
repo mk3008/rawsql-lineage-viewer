@@ -49,3 +49,17 @@ test('shows a recoverable static blocker for ambiguous outputs', async ({ page }
 
   await page.screenshot({ path: resolve(evidenceDir, 'audit-ambiguous-1440x900.png'), fullPage: true });
 });
+
+test('shows every distinct ambiguity and unsupported blocker', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('tab', { name: 'New' }).click();
+  await page.getByRole('textbox', { name: 'SQL editor' }).fill('SELECT missing.value AS repeated, 2 AS repeated FROM source');
+  await page.getByRole('button', { name: 'Analyze SQL' }).click();
+  await page.getByRole('tab', { name: 'Audit' }).click();
+
+  const blocker = page.getByRole('alert');
+  await expect(blocker).toContainText('More than one output has this name');
+  await expect(blocker).toContainText('Static lineage contains unresolved upstream references');
+  await expect(blocker.getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('button', { name: 'Review plan' })).toHaveCount(0);
+});

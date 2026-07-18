@@ -50,6 +50,22 @@ describe('create_investigation_plan MCP adapter', () => {
       .toThrow(expect.objectContaining({ code: 'TARGET_INPUT_CONFLICT' }));
   });
 
+  it('preserves correlated NOT EXISTS provenance in MCP structured plan content', () => {
+    const plan = createInvestigationPlan(normalizeCreateInvestigationPlanInput(temporaryWorkspace(), {
+      sql: 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id)',
+      targetColumn: 'id',
+    }));
+    expect(plan.nextEvidenceChecklist).toContainEqual(expect.objectContaining({
+      kind: 'property',
+      property: {
+        anchorRelationNodeIds: ['table_customers'],
+        conditionId: expect.any(String),
+        kind: 'no_matching_related_record',
+        relatedRelationNodeIds: ['table_customer_favorites'],
+      },
+    }));
+  });
+
   it('normalizes approved parameter maps, inline DDL strings, target defaults, and duplicate file paths', () => {
     const workspace = temporaryWorkspace();
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');

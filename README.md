@@ -29,17 +29,29 @@ entrypoints, and removes the temporary files. It never publishes the package.
 The supported installed entrypoints are:
 
 ```sh
+rawsql-lineage discover --sql query.sql --contract-version 1
+rawsql-lineage investigate --sql query.sql --target-id target:001 --contract-version 1
 rawsql-lineage investigate --sql query.sql --target-node main_output --target-column total --contract-version 1
 rawsql-lineage-mcp --workspace /absolute/path/to/workspace
 ```
 
 JavaScript and TypeScript consumers can import the versioned static contracts
-and planner from `sql-lineage-viewer`; MCP server construction is available
+and planner from `sql-lineage-viewer`, including
+`discoverInvestigationTargets`, `resolveInvestigationTarget`, and
+`createInvestigationPlanForTarget`. The direct `targetNode` / `targetColumn`
+planner input remains a caller-directed compatibility path; target discovery is
+the supported path when a caller needs Core to determine eligibility. MCP server construction is available
 from `sql-lineage-viewer/mcp`. Consumers do not need repository `src` files,
 `tsx`, parser instances, runtime rows, or parameter binding values. CLI errors
 are JSON objects with `kind`, `code`, `message`, and `version`; MCP tool errors
 use the same `invalid_input` kind and stable codes. Contract version 1 is the
 only accepted version.
+
+The CLI and MCP expose the same composable static flow: analyze the submitted
+artifact, discover selectable target identities, then create a plan with the
+selected `targetId`. MCP also exposes `prepare_sql_investigation` as a
+high-level convenience call. Discovery and planning are deterministic for the
+same SQL, DDL/schema facts, and parameter definitions.
 
 All three surfaces are DB-free: they parse only submitted SQL and explicitly
 supplied DDL/schema facts, do not connect to or query a database, and do not

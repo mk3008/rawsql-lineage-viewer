@@ -40,3 +40,19 @@ export type {
   ProbePrerequisiteReferenceV1,
   ProbePrerequisiteSourceV1,
 } from './lineage/probePrerequisiteFacts';
+export {
+  createInvestigationPlanForTarget,
+  discoverInvestigationTargets,
+  InvestigationTargetSelectionError,
+  resolveInvestigationTarget,
+} from './lineage/investigationTargetDiscovery';
+export type {
+  InvestigationAnalysisSummaryV1,
+  InvestigationDiscoveredTargetV1,
+  InvestigationTargetAmbiguityV1,
+  InvestigationTargetDiscoveryInputV1,
+  InvestigationTargetDiscoveryV1,
+  InvestigationTargetIdentityV1,
+  InvestigationTargetReasonV1,
+  InvestigationTargetUnsupportedV1,
+} from './lineage/investigationTargetDiscovery';

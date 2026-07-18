@@ -7,6 +7,11 @@ function facts(sql: string, targetColumn = 'total') {
   return createInvestigationPlan({ sql, target: { columnName: targetColumn, nodeId: 'main_output' } }).probePrerequisiteFacts!;
 }
 
+function expectNonEmptyEvery<T>(items: T[], predicate: (item: T) => boolean): void {
+  expect(items.length).toBeGreaterThan(0);
+  expect(items.every(predicate)).toBe(true);
+}
+
 describe('Probe Prerequisite Facts V1', () => {
   it.each([
     ['COUNT(*)', 'SELECT COUNT(*) AS total FROM orders', 'count', 'star', 'not_distinct'],
@@ -34,14 +39,15 @@ describe('Probe Prerequisite Facts V1', () => {
       expect.objectContaining({ sourceIds: ['source:001'], status: 'available' }),
       expect.objectContaining({ blockedReasons: ['observation_prerequisite_missing'], sourceIds: ['source:002'], status: 'blocked' }),
     ]);
-    expect(result.observations.filter((item) => item.kind.startsWith('aggregate_input')).every((item) => item.status === 'available')).toBe(true);
+    expectNonEmptyEvery(result.observations.filter((item) => item.kind.startsWith('aggregate_input')), (item) => item.status === 'available');
   });
 
   it('fails closed when one physical source has both direct and predicate evidence', () => {
     const result = facts('SELECT SUM(o.amount) AS total FROM orders o WHERE EXISTS (SELECT 1 FROM orders i WHERE i.parent_id = o.id)');
     expect(result.sources).toEqual([expect.objectContaining({ directness: 'unknown', nodeId: 'table_orders', status: 'ambiguous' })]);
-    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.status === 'blocked')).toBe(true);
-    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.blockedReasons.includes('source_provenance_unreconstructable'))).toBe(true);
+    const linked = result.observations.filter((item) => item.sourceIds.length > 0);
+    expectNonEmptyEvery(linked, (item) => item.status === 'blocked');
+    expectNonEmptyEvery(linked, (item) => item.blockedReasons.includes('source_provenance_unreconstructable'));
   });
 
   it('represents multiple and expression grouping keys with source links', () => {
@@ -80,7 +86,7 @@ describe('Probe Prerequisite Facts V1', () => {
 
   it('blocks value observations for COUNT(*) and identifies row counts per source', () => {
     const countStar = facts('SELECT COUNT(*) AS total FROM orders');
-    expect(countStar.observations.filter((item) => item.kind.startsWith('aggregate_input')).every((item) => item.status === 'blocked')).toBe(true);
+    expectNonEmptyEvery(countStar.observations.filter((item) => item.kind.startsWith('aggregate_input')), (item) => item.status === 'blocked');
     const joined = facts('SELECT SUM(o.amount) + COUNT(r.id) AS total FROM orders o JOIN refunds r ON r.order_id = o.id');
     const rowCounts = joined.observations.filter((item) => item.kind === 'source_row_count');
     expect(rowCounts).toHaveLength(2);
@@ -125,7 +131,10 @@ describe('Probe Prerequisite Facts V1', () => {
     ]);
     for (const result of [cte, derived]) {
       const directIds = new Set(result.sources.filter((source) => source.directness === 'direct').map((source) => source.id));
-      expect(result.observations.filter((item) => item.kind === 'source_row_count' && item.status === 'available').every((item) => item.sourceIds.every((id) => directIds.has(id)))).toBe(true);
+      expectNonEmptyEvery(
+        result.observations.filter((item) => item.kind === 'source_row_count' && item.status === 'available'),
+        (item) => item.sourceIds.every((id) => directIds.has(id)),
+      );
     }
   });
 
@@ -142,6 +151,26 @@ describe('Probe Prerequisite Facts V1', () => {
     ]);
   });
 
+  it('uses selected target path edges when sibling CTEs read the same physical relation', () => {
+    const selectedFirst = `
+      WITH selected AS (SELECT customer_id, SUM(amount) AS total FROM payments GROUP BY customer_id),
+           unrelated AS (SELECT customer_id, COUNT(*) AS failures FROM payments WHERE status = 'failed' GROUP BY customer_id)
+      SELECT total FROM selected
+    `;
+    const unrelatedFirst = `
+      WITH unrelated AS (SELECT customer_id, COUNT(*) AS failures FROM payments WHERE status = 'failed' GROUP BY customer_id),
+           selected AS (SELECT customer_id, SUM(amount) AS total FROM payments GROUP BY customer_id)
+      SELECT total FROM selected
+    `;
+    const plan = (sql: string) => createInvestigationPlan({ sql, target: { nodeId: 'cte_selected', columnName: 'total' } }).probePrerequisiteFacts!;
+    const first = plan(selectedFirst);
+    const reversed = plan(unrelatedFirst);
+    expect(first.sources).toEqual([expect.objectContaining({ directness: 'direct', nodeId: 'table_payments', ownerNodeId: 'cte_selected' })]);
+    expect([...new Set(first.references.map((item) => item.columnName))]).toEqual(['amount', 'customer_id']);
+    expect(first.references.map((item) => item.columnName)).not.toContain('status');
+    expect(reversed).toEqual(first);
+  });
+
   it('excludes an unused CTE with derived and physical descendants', () => {
     const sql = 'WITH unused AS (SELECT d.fee FROM (SELECT fee FROM fees) d) SELECT SUM(amount) AS total FROM orders';
     const result = facts(sql);
@@ -153,16 +182,15 @@ describe('Probe Prerequisite Facts V1', () => {
     expect(result.observations.filter((item) => item.kind === 'source_row_count')).toHaveLength(1);
   });
 
-  it.each([
-    ['cycle', (lineage: ReturnType<typeof analyzeSql>['lineage']) => ({ ...lineage, edges: [...lineage.edges, { id: 'synthetic-cycle', source: 'table_orders', target: 'table_orders', type: 'unknown' as const }] })],
-    ['multiple owner', (lineage: ReturnType<typeof analyzeSql>['lineage']) => ({ ...lineage, edges: [...lineage.edges, { id: 'synthetic-second-owner', source: 'table_orders', target: 'other_owner', type: 'unknown' as const }] })],
-  ])('blocks every linked observation for %s ownership', (_label, mutate) => {
+  it('ignores unrelated ownership edges outside the selected target path', () => {
     const sql = 'SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id';
-    const lineage = mutate(analyzeSql(sql, { analysisMode: 'original', optimizeConditions: false }).lineage);
+    const base = analyzeSql(sql, { analysisMode: 'original', optimizeConditions: false }).lineage;
+    const lineage = { ...base, edges: [...base.edges, { id: 'synthetic-second-owner', source: 'table_orders', target: 'other_owner', type: 'unknown' as const }] };
     const result = buildProbePrerequisiteFactsV1({ lineage, parameters: { definitions: [] }, sql, target: { columnName: 'total', nodeId: 'main_output', symptom: 'logic_review' } });
-    expect(result.sources).toEqual([expect.objectContaining({ directness: 'unknown', status: 'ambiguous' })]);
-    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.status === 'blocked')).toBe(true);
-    expect(result.observations.filter((item) => item.sourceIds.length > 0).every((item) => item.blockedReasons.includes('source_provenance_unreconstructable'))).toBe(true);
+    expect(result.sources).toEqual([expect.objectContaining({ directness: 'direct', nodeId: 'table_orders', status: 'resolved' })]);
+    const linked = result.observations.filter((item) => item.sourceIds.length > 0);
+    expect(linked.length).toBeGreaterThan(0);
+    expect(linked.every((item) => item.status === 'available')).toBe(true);
   });
 
   it('distinguishes direct and nested scalar sources and blocks nested row counts', () => {
@@ -221,7 +249,8 @@ describe('Probe Prerequisite Facts V1', () => {
       expect(aggregate.inputReferenceIds.every((id) => factIds.has(id))).toBe(true);
       expect(aggregate.sourceIds.every((id) => factIds.has(id))).toBe(true);
     }
-    expect(JSON.stringify(first)).not.toContain('opaque-secret');
+    const serialized = JSON.stringify(first);
+    for (const forbidden of ['bindings', 'bindingValues', 'value']) expect(serialized).not.toContain(`\"${forbidden}\"`);
   });
 
   it('normalizes reversed lineage collection order to the same result', () => {
@@ -267,7 +296,10 @@ describe('Probe Prerequisite Facts V1', () => {
     expect(scalar.aggregates[0].issueCodes).toContain('aggregate_input_scalar_subquery');
     expect(facts('SELECT mystery_metric(amount) OVER () AS total FROM orders').aggregates[0]).toMatchObject({ operation: 'unknown', status: 'unsupported' });
     expect(facts('SELECT SUM(amount) AS total FROM orders o JOIN refunds r ON r.order_id = o.id').aggregates[0]).toMatchObject({ status: 'ambiguous', sourceIds: [] });
-    expect(facts('SELECT SUM(amount) AS total FROM orders').observations.filter((item) => item.kind === 'rows_per_group' || item.kind === 'distinct_group_count').every((item) => item.status === 'blocked')).toBe(true);
+    expectNonEmptyEvery(
+      facts('SELECT SUM(amount) AS total FROM orders').observations.filter((item) => item.kind === 'rows_per_group' || item.kind === 'distinct_group_count'),
+      (item) => item.status === 'blocked',
+    );
   });
 
   it('keeps observation semantics structured and non-conclusive', () => {

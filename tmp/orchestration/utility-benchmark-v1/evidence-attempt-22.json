@@ -1,23 +1,32 @@
 {
+  "baseRevision": "0e7d759e5116d452be1458fd3762ba5739e13e63",
   "image": "postgres:16-alpine",
   "scenarios": {
     "sql-defect": {
       "schemaHash": "deb60d8984888ea9a000cc4fbcfe631eede7b90de4b127d760fe681fe1bb628f",
       "faultyFixtureHash": "a5193dcc13511d3865b8bf078808040faca1107fff845e8e3f1b397ba772bdba",
       "controlFixtureHash": "a5193dcc13511d3865b8bf078808040faca1107fff845e8e3f1b397ba772bdba",
-      "planHash": "ad37dcfc52a5fe0e934af8d20f4868c9ba6106527e3d805d93863f955ad400e4",
+      "planHash": "14d3be14f58acf7a9b1995279f5c3be9b877123222e7d8ecac960c9b569cf653",
       "recommendedProbeIds": [
         "probe:node-query-outer-filter:01"
       ],
       "probeHashes": {
         "probe:node-query-outer-filter:01": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b"
       },
+      "executionArtifactHashes": {
+        "probe:node-query-outer-filter:01": {
+          "plannedArtifactHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "executorEntrySourceHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "submittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022",
+          "controlSubmittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022"
+        }
+      },
       "safetyDecision": "accepted_recommended_investigation_probe_only",
       "observations": [
         {
           "probeId": "probe:node-query-outer-filter:01",
           "faulty": {
-            "rowCount": "row-count-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "rowShape": "single_row",
             "columns": [
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
@@ -25,11 +34,10 @@
             "columnTypes": {
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
-            },
-            "canonicalHash": "observation-sha256:1cab1a1f0304674e4b29c8c1b60cc681a832532240cb0674d661b578ce118c13"
+            }
           },
           "control": {
-            "rowCount": "row-count-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "rowShape": "single_row",
             "columns": [
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
@@ -37,32 +45,32 @@
             "columnTypes": {
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
-            },
-            "canonicalHash": "observation-sha256:1cab1a1f0304674e4b29c8c1b60cc681a832532240cb0674d661b578ce118c13"
+            }
           },
-          "classification": "weakens",
+          "classification": "supports",
           "discriminates": "metric-boolean:false",
-          "elapsedMs": "metric-number:6"
+          "elapsedMs": "metric-number:5"
         }
       ],
       "evaluator": {
         "top1MechanismHit": "metric-number:0",
         "top3MechanismHit": "metric-number:0",
-        "actionableCoverage": "metric-number:0",
+        "actionableCoverage": "metric-number:1",
         "executionSuccess": "metric-number:1",
-        "candidateReduction": "metric-number:0.25",
+        "candidateReduction": "metric-number:0",
         "remainingCandidates": [
           "concern:aggregate-expression:01",
           "concern:group-by:02",
-          "concern:source-data-value:03"
+          "concern:source-data-value:03",
+          "concern:where:04"
         ],
-        "informationGain": "metric-number:0",
-        "discrimination": "metric-number:0",
-        "inconclusive": "metric-boolean:true",
-        "semanticEditFree": "metric-boolean:false",
-        "timeToFirstUsefulEvidenceMs": "metric-null",
+        "informationGain": "metric-number:1",
+        "discrimination": "metric-number:1",
+        "inconclusive": "metric-boolean:false",
+        "semanticEditFree": "metric-boolean:true",
+        "timeToFirstUsefulEvidenceMs": "metric-number:5",
         "probesToIsolate": "metric-number:1",
-        "informationGainPerProbe": "metric-number:0",
+        "informationGainPerProbe": "metric-number:1",
         "manualSqlAvoided": "metric-number:1",
         "unsafeProbeCount": "metric-number:0",
         "overclaimCount": "metric-number:0",
@@ -70,7 +78,7 @@
         "classifications": [
           {
             "probeId": "probe:node-query-outer-filter:01",
-            "classification": "weakens"
+            "classification": "supports"
           }
         ]
       },
@@ -90,19 +98,27 @@
       "schemaHash": "deb60d8984888ea9a000cc4fbcfe631eede7b90de4b127d760fe681fe1bb628f",
       "faultyFixtureHash": "02f49c79f0bf35eef9b0a15d4257633aa2f28378132b34e0888bcba531ebca41",
       "controlFixtureHash": "a5193dcc13511d3865b8bf078808040faca1107fff845e8e3f1b397ba772bdba",
-      "planHash": "ad37dcfc52a5fe0e934af8d20f4868c9ba6106527e3d805d93863f955ad400e4",
+      "planHash": "14d3be14f58acf7a9b1995279f5c3be9b877123222e7d8ecac960c9b569cf653",
       "recommendedProbeIds": [
         "probe:node-query-outer-filter:01"
       ],
       "probeHashes": {
         "probe:node-query-outer-filter:01": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b"
       },
+      "executionArtifactHashes": {
+        "probe:node-query-outer-filter:01": {
+          "plannedArtifactHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "executorEntrySourceHash": "52684191bbec41612db4955dc75b4909063ab10aad868942ee09ae178983255b",
+          "submittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022",
+          "controlSubmittedStatementHash": "2e53aa92cd0a9fa0868489a0867c062c1ba51094a6bcdf09296d5feaa5c6b022"
+        }
+      },
       "safetyDecision": "accepted_recommended_investigation_probe_only",
       "observations": [
         {
           "probeId": "probe:node-query-outer-filter:01",
           "faulty": {
-            "rowCount": "row-count-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "rowShape": "single_row",
             "columns": [
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
@@ -110,11 +126,10 @@
             "columnTypes": {
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
-            },
-            "canonicalHash": "observation-sha256:1cab1a1f0304674e4b29c8c1b60cc681a832532240cb0674d661b578ce118c13"
+            }
           },
           "control": {
-            "rowCount": "row-count-sha256:6b86b273ff34fce19d6b804eff5a3f5747ada4eaa22f1d49c01e52ddb7875b4b",
+            "rowShape": "single_row",
             "columns": [
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72"
@@ -122,10 +137,9 @@
             "columnTypes": {
               "column-sha256:1e38d67dbe8f47d244e0ba9ff270b34e68b87c5bb5eac86ceb6447f6b4a0c40c": "type-sha256:12886f9d00055adf24c40579e22d31b2b45f2023f892954ffd5567beb60825f8",
               "column-sha256:b0f0c212bc6f600f8467a76515aac08f78a9bc9cfe06b9fae19a67ebdaa0ba72": "type-sha256:473287f8298dba7163a897908958f7c0eae733e25d2e027992ea2edc9bed2fa8"
-            },
-            "canonicalHash": "observation-sha256:1cab1a1f0304674e4b29c8c1b60cc681a832532240cb0674d661b578ce118c13"
+            }
           },
-          "classification": "weakens",
+          "classification": "supports",
           "discriminates": "metric-boolean:false",
           "elapsedMs": "metric-number:3"
         }
@@ -133,21 +147,22 @@
       "evaluator": {
         "top1MechanismHit": "metric-number:0",
         "top3MechanismHit": "metric-number:0",
-        "actionableCoverage": "metric-number:0",
+        "actionableCoverage": "metric-number:1",
         "executionSuccess": "metric-number:1",
-        "candidateReduction": "metric-number:0.25",
+        "candidateReduction": "metric-number:0",
         "remainingCandidates": [
           "concern:aggregate-expression:01",
           "concern:group-by:02",
-          "concern:source-data-value:03"
+          "concern:source-data-value:03",
+          "concern:where:04"
         ],
-        "informationGain": "metric-number:0",
-        "discrimination": "metric-number:0",
-        "inconclusive": "metric-boolean:true",
-        "semanticEditFree": "metric-boolean:false",
-        "timeToFirstUsefulEvidenceMs": "metric-null",
+        "informationGain": "metric-number:1",
+        "discrimination": "metric-number:1",
+        "inconclusive": "metric-boolean:false",
+        "semanticEditFree": "metric-boolean:true",
+        "timeToFirstUsefulEvidenceMs": "metric-number:3",
         "probesToIsolate": "metric-number:1",
-        "informationGainPerProbe": "metric-number:0",
+        "informationGainPerProbe": "metric-number:1",
         "manualSqlAvoided": "metric-number:1",
         "unsafeProbeCount": "metric-number:0",
         "overclaimCount": "metric-number:0",
@@ -155,7 +170,7 @@
         "classifications": [
           {
             "probeId": "probe:node-query-outer-filter:01",
-            "classification": "weakens"
+            "classification": "supports"
           }
         ]
       },
@@ -176,12 +191,12 @@
   "serverVersion": "PostgreSQL 16.11",
   "boundary": {
     "changedPathCategoryCounts": {
-      "benchmark": "metric-number:18",
-      "core": "metric-number:0",
-      "cli": "metric-number:0",
-      "mcp": "metric-number:0"
+      "benchmark": "metric-number:5",
+      "core": "metric-number:13",
+      "cli": "metric-number:2",
+      "mcp": "metric-number:1"
     },
-    "changedPathHash": "97a01ff11acde157d66ee7eca383000475620cd0c1739351f043bc3a23603df0",
+    "changedPathHash": "2b1c1357171ed1adc8033d7408d47b52f73b63d9c35b80b5b59b3fc6b15d26bb",
     "noCoreCliMcpDbConfig": "metric-boolean:true"
   },
   "teardown": {

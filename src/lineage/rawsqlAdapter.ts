@@ -1550,10 +1550,13 @@ function collectInlineQueryLocalAliases(inlineQuery: InlineQuery): ReadonlySet<s
   return new Set(
     (query.fromClause?.getSources() ?? [])
       .map((source) => {
-        if (!(source.datasource instanceof TableSource)) {
-          return [];
+        if (source.aliasExpression) {
+          const alias = source.getAliasName();
+          return alias ? [alias] : [];
         }
-        return source.aliasExpression ? [source.getAliasName()] : getUnaliasedTableSourceAliases(source.datasource);
+        return source.datasource instanceof TableSource
+          ? getUnaliasedTableSourceAliases(source.datasource)
+          : [];
       })
       .flat()
       .filter((namespace): namespace is string => Boolean(namespace)),

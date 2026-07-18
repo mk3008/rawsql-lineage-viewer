@@ -136,11 +136,17 @@ function PlanAudit({ plan, target }: { plan: InvestigationPlanV1; target: Invest
 }
 
 function AuditBlocker({ discovery }: { discovery: InvestigationTargetDiscoveryV1 }) {
-  const messages = [...discovery.ambiguities.map((item) => item.message), ...discovery.unsupported.map((item) => item.message)];
+  const messages = unique([...discovery.ambiguities.map((item) => item.message), ...discovery.unsupported.map((item) => item.message)]);
   return (
     <div className="investigation-audit-empty-state" role="alert">
       <AlertTriangle size={20} aria-hidden="true" />
-      <div><strong>No reviewable target</strong><p>{messages[0] ?? 'The submitted SQL has no output target that can be identified statically.'}</p><span>Clarify duplicate outputs or provide schema facts, then analyze the SQL again.</span></div>
+      <div>
+        <strong>No reviewable target</strong>
+        {messages.length > 0
+          ? <ul>{messages.map((message) => <li key={message}>{message}</li>)}</ul>
+          : <p>The submitted SQL has no output target that can be identified statically.</p>}
+        <span>Clarify duplicate outputs or provide schema facts, then analyze the SQL again.</span>
+      </div>
     </div>
   );
 }

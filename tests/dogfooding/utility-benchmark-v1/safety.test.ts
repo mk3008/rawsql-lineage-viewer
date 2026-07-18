@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { validateProbe } from './safety';
-import { countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, namespacePublicMetrics, rankedMechanisms, redactObservation } from './evaluator';
+import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hashSourceAtExecutorEntry, mapSequentially, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
 describe('benchmark probe safety', () => {
   it('requires recommended investigation probes and rejects DML/locks', () => {
@@ -15,11 +15,37 @@ describe('benchmark probe safety', () => {
     expect(() => validateProbe(plan, plan.recommendedProbes[0], { status: 'ok' })).not.toThrow();
   });
   it('redacts sentinel scalar values from durable observations', () => {
-    const durable = JSON.stringify(redactObservation({ rows: [{ status: 'SENTINEL_PRIVATE', count: 7 }] }));
+    const observation = redactObservation({ rows: [{ status: 'SENTINEL_PRIVATE', count: 7 }] });
+    const durable = JSON.stringify(observation);
     expect(durable).not.toContain('SENTINEL_PRIVATE');
     expect(durable).not.toContain('"count":7');
-    expect(durable).toContain('rowCount');
-    expect(durable).not.toMatch(/"rowCount":\s*\d/);
+    expect(observation).toMatchObject({ rowShape: 'single_row' });
+    expect(observation).not.toHaveProperty('canonicalHash');
+  });
+  it('partitions scenario bindings and qualifies the global scan keys', () => {
+    const partitioned = partitionScenarioBindings({ alpha: { status: 'a' }, beta: { status: 'b' } });
+    expect(partitioned.scenarios).toEqual({ alpha: { status: 'a' }, beta: { status: 'b' } });
+    expect(partitioned.global).toEqual({ 'alpha:status': 'a', 'beta:status': 'b' });
+  });
+  it('executes probes sequentially in deterministic order', async () => {
+    const events: string[] = [];
+    const result = await mapSequentially(['first', 'second'], async (id) => {
+      events.push(`start:${id}`);
+      await Promise.resolve();
+      events.push(`end:${id}`);
+      return id;
+    });
+    expect(result).toEqual(['first', 'second']);
+    expect(events).toEqual(['start:first', 'end:first', 'start:second', 'end:second']);
+  });
+  it('returns distinct fail-closed codes when durable writes fail', () => {
+    const fail = () => { throw new Error('write failed'); };
+    expect(writeDurableFile(fail, 'evidence.json', '{}', 'OK', 'FINALIZE_EVIDENCE_WRITE')).toBe('FINALIZE_EVIDENCE_WRITE');
+    expect(writeDurableFile(fail, 'report.yaml', '', 'OK', 'FINALIZE_REPORT_WRITE')).toBe('FINALIZE_REPORT_WRITE');
+  });
+  it('accepts planner-supported function sources while preserving static-only safety', () => {
+    const probe = { ...base, id: 'p', sql: 'SELECT value FROM generate_series(1, 3) AS series(value)' };
+    expect(() => validateProbe({ recommendedProbes: [probe], unresolvedParameters: [] }, probe, {})).not.toThrow();
   });
   it('scans string, number, boolean, and null leaves without emitting values', () => {
     expect(countScalarLeakage({ a: 'secret', b: 42, c: true, d: null }, { s: 'secret', n: 42, b: true, z: null })).toBe(4);
@@ -62,5 +88,11 @@ describe('benchmark probe safety', () => {
     expect(evaluateAll([], oracle, ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 1 });
     expect(evaluateAll([], oracle, ['m1', 'm2', 'm4'])).toMatchObject({ top1MechanismHit: 0, top3MechanismHit: 0 });
     expect(hashSourceAtExecutorEntry('SELECT 1')).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('separates planned/executor-entry identity from the actual submitted statement', () => {
+    const planned = 'SELECT id FROM orders WHERE status = :status';
+    const submitted = buildSubmittedProbeSql(planned, ['status']);
+    expect(submitted).toBe('SELECT * FROM (SELECT id FROM orders WHERE status = $1) AS benchmark_probe LIMIT 100');
+    expect(hashSourceAtExecutorEntry(submitted)).not.toBe(hashSourceAtExecutorEntry(planned));
   });
 });

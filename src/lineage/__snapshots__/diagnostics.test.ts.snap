@@ -810,7 +810,8 @@ end",
             ],
             "usedInScopeIds": [
               "scope_cte_payment_summary"
-            ]
+            ],
+            "provenance": "anchor"
           }
         ],
         "signals": [
@@ -931,7 +932,8 @@ end",
             ],
             "usedInScopeIds": [
               "scope_main_output"
-            ]
+            ],
+            "provenance": "anchor"
           },
           {
             "columnName": "id",
@@ -952,7 +954,8 @@ end",
             ],
             "usedInScopeIds": [
               "scope_main_output"
-            ]
+            ],
+            "provenance": "anchor"
           }
         ],
         "signals": [
@@ -2176,6 +2179,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customers:id",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -2212,6 +2216,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customers:region",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -2248,6 +2253,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customers:status",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -2292,6 +2298,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customers:id",
               "nodeId": "table_customers",
               "nodeLabel": "customers",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -2313,6 +2320,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customer_favorites:customer_id",
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
+              "provenance": "related",
               "roles": [
                 "row_lineage",
               ],
@@ -2334,6 +2342,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_customer_favorites:is_active",
               "nodeId": "table_customer_favorites",
               "nodeLabel": "customer_favorites",
+              "provenance": "related",
               "roles": [
                 "row_lineage",
               ],
@@ -2907,6 +2916,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:cte_order_totals:customer_id",
               "nodeId": "cte_order_totals",
               "nodeLabel": "order_totals",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -2928,6 +2938,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:cte_customer_scope:id",
               "nodeId": "cte_customer_scope",
               "nodeLabel": "customer_scope",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -3434,6 +3445,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:table_payments:status",
               "nodeId": "table_payments",
               "nodeLabel": "payments",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -3557,6 +3569,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:cte_payment_summary:customer_id",
               "nodeId": "cte_payment_summary",
               "nodeLabel": "payment_summary",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -3578,6 +3591,7 @@ exports[`column diagnostics > snapshots representative demo diagnostic packets u
               "id": "ref:cte_customer_scope:id",
               "nodeId": "cte_customer_scope",
               "nodeLabel": "customer_scope",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -4219,6 +4233,7 @@ end",
               "id": "ref:table_payments:status",
               "nodeId": "table_payments",
               "nodeLabel": "payments",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -4342,6 +4357,7 @@ end",
               "id": "ref:cte_payment_summary:customer_id",
               "nodeId": "cte_payment_summary",
               "nodeLabel": "payment_summary",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -4363,6 +4379,7 @@ end",
               "id": "ref:cte_customer_scope:id",
               "nodeId": "cte_customer_scope",
               "nodeLabel": "customer_scope",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5230,6 +5247,7 @@ end",
               "id": "ref:table_orders:order_date",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5266,6 +5284,7 @@ end",
               "id": "ref:table_orders:order_date",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5303,6 +5322,7 @@ end",
               "id": "ref:table_orders:id",
               "nodeId": "table_orders",
               "nodeLabel": "orders",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5324,6 +5344,7 @@ end",
               "id": "ref:table_order_items:order_id",
               "nodeId": "table_order_items",
               "nodeLabel": "order_items",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5448,6 +5469,7 @@ end",
               "id": "ref:cte_order_totals:customer_id",
               "nodeId": "cte_order_totals",
               "nodeLabel": "order_totals",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],
@@ -5469,6 +5491,7 @@ end",
               "id": "ref:cte_customer_scope:id",
               "nodeId": "cte_customer_scope",
               "nodeLabel": "customer_scope",
+              "provenance": "anchor",
               "roles": [
                 "row_lineage",
               ],

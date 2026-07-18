@@ -1,4 +1,4 @@
-import { BinarySelectQuery, DeleteQuery, InsertQuery, MergeQuery, ParenSource, SimpleSelectQuery, SqlParser, SubQuerySource, TableSource, UpdateQuery } from 'rawsql-ts';
+import { BinarySelectQuery, DeleteQuery, FunctionSource, InsertQuery, MergeQuery, ParenSource, SimpleSelectQuery, SqlParser, SubQuerySource, TableSource, UpdateQuery } from 'rawsql-ts';
 
 export type CandidateConcern = { id: string; mechanism?: string };
 export type EvidenceChecklistItem = { kind: string; mechanism?: string; candidateConcernIds?: string[]; condition?: string };
@@ -17,7 +17,7 @@ function supportedCte(q: unknown): boolean {
   return supported(q);
 }
 function source(s: unknown): boolean {
-  if (s instanceof TableSource) return true;
+  if (s instanceof TableSource || s instanceof FunctionSource) return true;
   if (s instanceof SubQuerySource) return supported(s.query);
   if (s instanceof ParenSource) return source(s.source);
   return false;

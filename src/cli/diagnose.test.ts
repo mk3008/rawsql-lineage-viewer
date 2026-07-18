@@ -151,6 +151,18 @@ describe('rawsql-lineage diagnose CLI', () => {
     }
   });
 
+  it('normalizes missing input files to the stable PATH_NOT_FOUND code', () => {
+    let failure = '';
+    try {
+      execFileSync(process.execPath, [
+        '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', 'missing-query.sql', '--target-node', 'main_output', '--target-column', 'value',
+      ], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+    } catch (error) {
+      failure = String((error as { stderr?: Buffer }).stderr);
+    }
+    expect(JSON.parse(failure)).toMatchObject({ code: 'PATH_NOT_FOUND', kind: 'invalid_input', version: 1 });
+  });
+
   it('emits all output column packets with DDL file input', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
     try {
@@ -284,7 +296,7 @@ describe('rawsql-lineage diagnose CLI', () => {
     }
   });
 
-  it('preserves WHERE candidates unless safe optimization moves a joined-source predicate into JOIN ON', () => {
+  it('diagnoses the submitted SQL without moving WHERE predicates into JOIN ON', () => {
     const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
     try {
       const movedPredicateSqlPath = resolve(root, 'moved-predicate.sql');
@@ -310,21 +322,67 @@ describe('rawsql-lineage diagnose CLI', () => {
         '--symptom',
         'duplicate_rows',
       ], { encoding: 'utf8' })) as {
+        analysisMode: string;
+        sourceArtifact: { artifactKind: string };
         packets: Array<{
           rowLineage: { influences: Array<{ expressionSql?: string; mechanism: string }> };
         }>;
       };
 
-      const movedPredicateMechanisms = diagnose(movedPredicateSqlPath).packets[0].rowLineage.influences;
+      const movedReport = diagnose(movedPredicateSqlPath);
+      expect(movedReport).toMatchObject({ analysisMode: 'original', sourceArtifact: { artifactKind: 'original_query' } });
+      const movedPredicateMechanisms = movedReport.packets[0].rowLineage.influences;
       expect(movedPredicateMechanisms).toEqual(expect.arrayContaining([
-        expect.objectContaining({ mechanism: 'join', expressionSql: expect.stringContaining('ct.is_active = true') }),
+        expect.objectContaining({ mechanism: 'where', expressionSql: 'ct.is_active = true' }),
       ]));
-      expect(movedPredicateMechanisms.map((influence) => influence.mechanism)).not.toContain('where');
+      expect(movedPredicateMechanisms.filter((influence) => influence.expressionSql?.includes('ct.is_active = true'))).toHaveLength(1);
 
       const wherePredicateMechanisms = diagnose(wherePredicateSqlPath).packets[0].rowLineage.influences;
       expect(wherePredicateMechanisms).toEqual(expect.arrayContaining([
         expect.objectContaining({ mechanism: 'where', expressionSql: 'c.is_active = true' }),
       ]));
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('discovers selectable targets and round-trips --target-id while preserving the direct compatibility path', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      writeFileSync(sqlPath, 'select customer_id, total from summaries');
+      const invoke = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), ...args], { encoding: 'utf8' });
+      const discovery = JSON.parse(invoke('discover', '--sql', sqlPath)) as { kind: string; targets: Array<{ id: string; identity: { column: { name: string } }; selection: { status: string } }> };
+      const target = discovery.targets.find((item) => item.identity.column.name === 'total' && item.selection.status === 'selectable');
+      expect(discovery.kind).toBe('investigation-target-discovery');
+      expect(target).toBeDefined();
+      expect(JSON.parse(invoke('investigate', '--sql', sqlPath, '--target-id', target!.id)).target).toMatchObject({ columnName: 'total', nodeId: 'main_output' });
+      expect(JSON.parse(invoke('investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'total')).target).toMatchObject({ columnName: 'total', nodeId: 'main_output' });
+
+      let conflict = '';
+      try { invoke('investigate', '--sql', sqlPath, '--target-id', target!.id, '--target-column', 'total'); } catch (error) { conflict = String((error as { stderr?: Buffer }).stderr); }
+      expect(JSON.parse(conflict)).toMatchObject({ code: 'INVALID_INPUT' });
+    } finally {
+      rmSync(root, { force: true, recursive: true });
+    }
+  });
+
+  it('serializes correlated NOT EXISTS anchor and related provenance into plan evidence', () => {
+    const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-cli-'));
+    try {
+      const sqlPath = resolve(root, 'query.sql');
+      writeFileSync(sqlPath, 'SELECT c.id FROM customers c WHERE NOT EXISTS (SELECT 1 FROM customer_favorites f WHERE f.customer_id = c.id AND f.is_active = true)');
+      const plan = JSON.parse(execFileSync(process.execPath, [
+        '--import', 'tsx', resolve(process.cwd(), 'src/cli/diagnose.ts'), 'investigate', '--sql', sqlPath, '--target-node', 'main_output', '--target-column', 'id',
+      ], { encoding: 'utf8' })) as { nextEvidenceChecklist: Array<{ kind: string; property?: { anchorRelationNodeIds: string[]; kind: string; relatedRelationNodeIds: string[] } }> };
+      expect(plan.nextEvidenceChecklist).toContainEqual(expect.objectContaining({
+        kind: 'property',
+        property: expect.objectContaining({
+          anchorRelationNodeIds: ['table_customers'],
+          kind: 'no_matching_related_record',
+          relatedRelationNodeIds: ['table_customer_favorites'],
+        }),
+      }));
     } finally {
       rmSync(root, { force: true, recursive: true });
     }

@@ -158,7 +158,7 @@ function collectConditionInfluences(
     };
     const existencePolarity = classifyExistencePredicate(item);
     if (existencePolarity) {
-      Object.defineProperty(result, 'existencePolarity', { configurable: true, value: existencePolarity });
+      result.existencePolarity = existencePolarity;
     }
     return [result];
   });
@@ -324,7 +324,7 @@ function toSourceReferences(
   return refs.map((ref) => {
     const result: LineageSourceReference = { columnName: ref.columnName, nodeId: ref.nodeId, role, scopeId };
     if (provenance) {
-      Object.defineProperty(result, 'provenance', { configurable: true, value: provenance });
+      result.provenance = provenance;
     }
     return result;
   });
