@@ -213,7 +213,7 @@ SHA-256 hashes for the final-review remediation evidence:
 | --- | --- |
 | `tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json` | `525F8C1714AC2561CEC69225CBFDF1F9ECBDE17AD86ADDF6386E5CB97FC4E766` |
 | `tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml` | `481D0DF9D38054C3CF1A1C9974620F8E7FBEF8319D949160CA961B5585A65FD0` |
-| `tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml` | `4A55DBAEB172F1C18833F72F4A54097E688F203C5F79ABB40495B66885DE8EFE` |
+| `tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml` | `E44F60DA9B04E53EACBB03CD9C9E45C1C903C47364A81128C778B6D51967BE80` |
 | `scripts/package-smoke.mjs` | `21781E1A74F14F1FA2CE6125E46CDD96B7109BBAAAFFB2DF208D3D075E68D8C9` |
 | `tests/e2e/lineage.spec.ts` | `79DB1125B6A7887ED71478ABA7DFEF3A92071C411DC4CFEFE1A0808FF9367BCC` |
 | `tests/e2e/investigation-audit.spec.ts` | `4D3BF3F29424A1E2F8DAD505BD550FD126B5BC8827C5AB227E1E97E649405C2B` |

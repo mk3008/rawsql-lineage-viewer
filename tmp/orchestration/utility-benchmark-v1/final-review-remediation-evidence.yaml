@@ -1,5 +1,21 @@
 evidence_version: 1
 scope: pr-19-final-review-remediation
+changed_paths:
+  - docs/investigation/static-investigation-compiler-program-report.md
+  - scripts/package-smoke.mjs
+  - tests/dogfooding/utility-benchmark-v1/README.md
+  - tests/dogfooding/utility-benchmark-v1/evaluator.ts
+  - tests/dogfooding/utility-benchmark-v1/executor.ts
+  - tests/dogfooding/utility-benchmark-v1/parameterRewrite.ts
+  - tests/dogfooding/utility-benchmark-v1/run.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.test.ts
+  - tests/dogfooding/utility-benchmark-v1/safety.ts
+  - tests/e2e/lineage.spec.ts
+  - tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json
+  - tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml
+  - tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml
+scope_notes:
+  - report-attempt-23.yaml is the benchmark-slice worker report; this file is the authoritative final-remediation handoff inventory.
 benchmark:
   attempt: 23
   execution_count: 2
@@ -41,6 +57,11 @@ distribution:
   generated_chunks:
     investigationPlan: 0
     investigationTargetDiscovery: 1
+  compiled_contracts:
+    public_import: passed
+    cli_discovery: passed
+    mcp_client_stdio_protocol: passed
+    typed_cli_mcp_error_parity: passed
 repository_verification:
   vitest:
     command: npm test -- --run
@@ -49,4 +70,7 @@ repository_verification:
     tests_skipped: 4
   typecheck:
     command: npx tsc --noEmit
+    status: passed
+  viewer_build:
+    command: npm run build
     status: passed
