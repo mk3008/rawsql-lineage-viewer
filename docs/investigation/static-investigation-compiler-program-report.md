@@ -4,7 +4,8 @@
 
 - Accepted local program commit: `f74c8c7d70fea1576c63b5ea75015ce94f8d6b39`
 - Integration base: `origin/main` at `33305a3dfc74a084a91a2f91a31c89d9eb21a6e3`
-- Final-review remediation base: PR head `1ab7c40fb9692f4442760a6def238e19de6dfebc`
+- Final benchmark-contract remediation base: PR head `9572dee9505281a83ac202d8b0d64ab4a36b9ecc`
+- Final benchmark-contract remediation head: the bounded commit containing this report; its exact SHA is recorded in PR #19 after push because a commit cannot contain its own SHA.
 - Relationship: the integration base is an ancestor of the accepted result; no rebase was required.
 - Scope: a practical baseline for a static SQL investigation compiler through both CLI and MCP.
 
@@ -58,7 +59,7 @@ Observation-contract agreement is not reported as defect discrimination. This
 evidence establishes the current utility ceiling rather than universal probe
 usefulness.
 
-Attempt 23 replaced regex parameter substitution with tokenizer-derived,
+Attempt 24 retains the tokenizer-derived,
 source-position-aware rewriting. It skips SQL lexical regions and PostgreSQL
 casts, reuses positional parameters, permits declared-but-unused definitions,
 and rejects unknown, duplicate, or unsupported parameter tokens. The executor
@@ -66,10 +67,21 @@ submits only used bindings, preserves the original execution error if rollback
 also fails, and records planner, executor-entry, and submitted-statement hashes
 separately.
 
-Attempt 23 was executed twice. The durable outputs were identical except for the
-explicit `elapsedMs` observation. After removing that volatile timing field,
-both evidence documents had normalized SHA-256
-`b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270`.
+Mechanism ranking is derived from the version 1 checklist contract:
+`nextEvidenceChecklist[].condition.mechanism`, linked through
+`condition.candidateConcernIds`. Candidate concern order, checklist order, and
+first occurrence determine the ranking; relation and property items are ignored.
+Both scenarios ranked `group_by` then `where`. Their public synthetic oracle
+labels (`sql_defect` and `data_anomaly`) were absent from the first three ranked
+mechanisms, so Top-1 and Top-3 mechanism hit rates were both zero. Candidate
+reduction and faulty/control discrimination were also zero, so
+`rootMechanismInconclusive` was recalculated as true for both scenarios.
+
+Attempt 24 was executed twice from a stable changed-path state. The durable
+outputs were byte-identical. After also applying the documented normalization
+that removes only the volatile `elapsedMs` observation, both evidence documents
+had normalized SHA-256
+`9d4dac97c8611d1ba60a315b4ce7e2914f4348e109166522a5cd36707622c928`.
 The two raw hashes, normalization procedure, and equality result are preserved
 in the [final-review remediation evidence](../../tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml).
 
@@ -81,8 +93,8 @@ Repository evidence:
 
 - [Utility Benchmark runner](../../tests/dogfooding/utility-benchmark-v1/run.ts)
 - [Utility Benchmark safety contract](../../tests/dogfooding/utility-benchmark-v1/safety.ts)
-- [Final benchmark evidence](../../tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json)
-- [Final benchmark report](../../tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml)
+- [Final benchmark evidence](../../tmp/orchestration/utility-benchmark-v1/evidence-attempt-24.json)
+- [Final benchmark report](../../tmp/orchestration/utility-benchmark-v1/report-attempt-24.yaml)
 - [Probe feasibility decision](../probe-feasibility-decision-v1.md)
 
 ## CLI, MCP, and package validation
@@ -135,7 +147,7 @@ Repository evidence:
 
 ## Verification summary
 
-- Integrated Vitest suite with Docker-backed synthetic scenarios available: 317 passed, 4 skipped.
+- Integrated Vitest suite with Docker-backed synthetic scenarios available: 319 passed, 4 skipped.
 - TypeScript typecheck: passed.
 - Viewer and package build: passed.
 - Offline package smoke and allowlist: passed.
@@ -211,9 +223,9 @@ SHA-256 hashes for the final-review remediation evidence:
 
 | Repository path | SHA-256 |
 | --- | --- |
-| `tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json` | `525F8C1714AC2561CEC69225CBFDF1F9ECBDE17AD86ADDF6386E5CB97FC4E766` |
-| `tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml` | `481D0DF9D38054C3CF1A1C9974620F8E7FBEF8319D949160CA961B5585A65FD0` |
-| `tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml` | `E44F60DA9B04E53EACBB03CD9C9E45C1C903C47364A81128C778B6D51967BE80` |
+| `tmp/orchestration/utility-benchmark-v1/evidence-attempt-24.json` | `E1407DB57E894D76C24A1DFF762145C9FBF3B3CFBACE9D836CBDB951212E9FB0` |
+| `tmp/orchestration/utility-benchmark-v1/report-attempt-24.yaml` | `4BDE12A1E07F5D2444DA6BD6578BB951DA8CDA079899DD6AB9B7C31D176093E3` |
+| `tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml` | `B016636F7C09D293CF2D67EEAABA6F3473E66EFF2EBF901BAC0F860FAF503DB9` |
 | `scripts/package-smoke.mjs` | `21781E1A74F14F1FA2CE6125E46CDD96B7109BBAAAFFB2DF208D3D075E68D8C9` |
 | `tests/e2e/lineage.spec.ts` | `79DB1125B6A7887ED71478ABA7DFEF3A92071C411DC4CFEFE1A0808FF9367BCC` |
 | `tests/e2e/investigation-audit.spec.ts` | `4D3BF3F29424A1E2F8DAD505BD550FD126B5BC8827C5AB227E1E97E649405C2B` |

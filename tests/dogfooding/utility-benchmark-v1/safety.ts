@@ -1,10 +1,12 @@
 import { BinarySelectQuery, DeleteQuery, FunctionSource, InsertQuery, MergeQuery, ParenSource, SimpleSelectQuery, SqlParser, SubQuerySource, TableSource, UpdateQuery } from 'rawsql-ts';
+import type { InvestigationPlanV1 } from '../../../src/lineage/investigationPlan';
 import { collectProbeParameterNames } from './parameterRewrite';
 
-export type CandidateConcern = { id: string; mechanism?: string };
-export type EvidenceChecklistItem = { kind: string; mechanism?: string; candidateConcernIds?: string[]; condition?: string };
 export type Probe = { id: string; artifactKind?: string; sql: string; parameters: Array<{ name: string; status: string }>; staticSafetyEvidence: { statementClassification: string; confidence: string; version: number }; interpretation?: { supportsCandidateConcernIds?: string[]; weakensCandidateConcernIds?: string[]; observationRules?: unknown[] } };
-export type Plan = { recommendedProbes: Probe[]; unresolvedParameters: Array<{ name: string }>; candidateConcerns?: CandidateConcern[]; nextEvidenceChecklist?: EvidenceChecklistItem[]; sourceSql?: string };
+export type Plan = Pick<
+  InvestigationPlanV1,
+  'candidateConcerns' | 'nextEvidenceChecklist' | 'recommendedProbes' | 'unresolvedParameters'
+>;
 export type Scalar = string | number | boolean | null;
 
 function supported(q: unknown): boolean {
@@ -23,7 +25,11 @@ function source(s: unknown): boolean {
   if (s instanceof ParenSource) return source(s.source);
   return false;
 }
-export function validateProbe(plan: Plan, probe: Probe, bindings: Record<string, Scalar>): void {
+export function validateProbe(
+  plan: Pick<Plan, 'recommendedProbes' | 'unresolvedParameters'>,
+  probe: Probe,
+  bindings: Record<string, Scalar>,
+): void {
   if (!plan.recommendedProbes.some(p => p.id === probe.id) || probe.artifactKind !== 'investigation_probe') throw new Error('PROBE_NOT_RECOMMENDED');
   if (plan.unresolvedParameters.length || probe.parameters.some(p => p.status === 'unresolved')) throw new Error('PARAMETER_UNRESOLVED');
   let ast; try { ast = SqlParser.parse(probe.sql); } catch { throw new Error('PROBE_PARSE_FAILED'); }

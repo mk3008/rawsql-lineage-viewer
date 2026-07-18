@@ -2,34 +2,48 @@ evidence_version: 1
 scope: pr-19-final-review-remediation
 changed_paths:
   - docs/investigation/static-investigation-compiler-program-report.md
-  - scripts/package-smoke.mjs
-  - tests/dogfooding/utility-benchmark-v1/README.md
   - tests/dogfooding/utility-benchmark-v1/evaluator.ts
-  - tests/dogfooding/utility-benchmark-v1/executor.ts
-  - tests/dogfooding/utility-benchmark-v1/parameterRewrite.ts
   - tests/dogfooding/utility-benchmark-v1/run.ts
   - tests/dogfooding/utility-benchmark-v1/safety.test.ts
   - tests/dogfooding/utility-benchmark-v1/safety.ts
-  - tests/e2e/lineage.spec.ts
-  - tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json
+  - tmp/orchestration/utility-benchmark-v1/evidence-attempt-24.json
   - tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml
-  - tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml
+  - tmp/orchestration/utility-benchmark-v1/report-attempt-24.yaml
 scope_notes:
-  - report-attempt-23.yaml is the benchmark-slice worker report; this file is the authoritative final-remediation handoff inventory.
+  - report-attempt-24.yaml is the benchmark-slice report; this file is the authoritative final-remediation handoff inventory.
 benchmark:
-  attempt: 23
+  attempt: 24
   execution_count: 2
+  execution_scope: final-contract-verification-pair
   normalization:
     format: parsed-json
     excluded_keys:
       - elapsedMs
     serialization: JSON.stringify
     hash: sha256
-  run_1_raw_sha256: 179504f7cc58d3bf2ea04d982ce822cd2a5b774a3aa616c138022c2dc613bc2e
-  run_2_raw_sha256: 525f8c1714ac2561cec69225cbfdf1f9ecbde17ad86addf6386e5cb97fc4e766
-  run_1_normalized_sha256: b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270
-  run_2_normalized_sha256: b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270
+  run_1_raw_sha256: e1407db57e894d76c24a1dff762145c9fbf3b3cfbace9d836cbdb951212e9fb0
+  run_2_raw_sha256: e1407db57e894d76c24a1dff762145c9fbf3b3cfbace9d836cbdb951212e9fb0
+  run_1_normalized_sha256: 9d4dac97c8611d1ba60a315b4ce7e2914f4348e109166522a5cd36707622c928
+  run_2_normalized_sha256: 9d4dac97c8611d1ba60a315b4ce7e2914f4348e109166522a5cd36707622c928
   normalized_equal: true
+  metric_consistency_checks: passed
+  scenarios:
+    data-anomaly:
+      ranked_mechanisms: [group_by, where]
+      oracle_mechanism: data_anomaly
+      top1_mechanism_hit_rate: 0
+      top3_mechanism_hit_rate: 0
+      faulty_control_discrimination_rate: 0
+      candidate_reduction_rate: 0
+      root_mechanism_inconclusive: true
+    sql-defect:
+      ranked_mechanisms: [group_by, where]
+      oracle_mechanism: sql_defect
+      top1_mechanism_hit_rate: 0
+      top3_mechanism_hit_rate: 0
+      faulty_control_discrimination_rate: 0
+      candidate_reduction_rate: 0
+      root_mechanism_inconclusive: true
 e2e:
   integration_base:
     commit: 33305a3dfc74a084a91a2f91a31c89d9eb21a6e3
@@ -49,7 +63,7 @@ e2e:
     passed: 69
     failed: 0
     skipped: 0
-    duration: 1.1m
+    duration: 1.2m
 distribution:
   command: npm run smoke:package
   status: passed
@@ -63,10 +77,14 @@ distribution:
     mcp_client_stdio_protocol: passed
     typed_cli_mcp_error_parity: passed
 repository_verification:
+  focused:
+    command: npx vitest run tests/dogfooding/utility-benchmark-v1/safety.test.ts src/lineage/investigationPlan.test.ts src/lineage/investigationPlanner.test.ts
+    test_files_passed: 3
+    tests_passed: 73
   vitest:
     command: npm test -- --run
     test_files_passed: 26
-    tests_passed: 317
+    tests_passed: 319
     tests_skipped: 4
   typecheck:
     command: npx tsc --noEmit

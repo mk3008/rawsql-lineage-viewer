@@ -6,15 +6,15 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from 'pg';
-import { countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { assertMetricConsistency, countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
 import { executeReadOnlyStatement } from './executor';
 import { buildSubmittedProbeStatement, compareCodeUnits } from './parameterRewrite';
 import { validateProbe, type Plan, type Probe, type Scalar } from './safety';
 
 const root = resolve(fileURLToPath(new URL('.', import.meta.url)));
 const scenarios = ['sql-defect', 'data-anomaly'].sort(compareCodeUnits);
-const attempt = 23;
-const defaultBaseSha = '1ab7c40fb9692f4442760a6def238e19de6dfebc';
+const attempt = 24;
+const defaultBaseSha = '9572dee9505281a83ac202d8b0d64ab4a36b9ecc';
 const out = resolve(process.cwd(), 'tmp/orchestration/utility-benchmark-v1');
 const container = `utility-benchmark-v1-${Date.now()}`;
 const json = <T>(p: string): T => JSON.parse(readFileSync(p, 'utf8')) as T;
@@ -49,7 +49,13 @@ let scenarioSubphase = 'not_started';
     const version = (await client.query('select version()')).rows[0]?.version as string;
     evidence.serverVersion = version?.split(' on ')[0] ?? 'redacted';
     for (const id of scenarios) { phase = `scenario_${id}`; evidence.scenarios = { ...(evidence.scenarios as object), [id]: await runScenario(client, temp, id, value => { scenarioSubphase = value; }) }; }
-  } catch (error) { failureCode = phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`; evidence.error = { code: failureCode, phase, scenarioSubphase, exceptionClass: error instanceof Error ? error.name : typeof error }; }
+  } catch (error) {
+    const code = error && typeof error === 'object' && 'code' in error ? String(error.code) : undefined;
+    failureCode = code === 'BENCHMARK_METRIC_INCONSISTENT'
+      ? code
+      : phase.startsWith('scenario_') ? `RUN_${scenarioSubphase.toUpperCase()}` : `RUN_${phase.toUpperCase()}`;
+    evidence.error = { code: failureCode, phase, scenarioSubphase, exceptionClass: error instanceof Error ? error.name : typeof error };
+  }
   finally {
     finalizationPhase = 'client_close'; try { await client?.end(); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_CLIENT_CLOSE' : failureCode; }
     finalizationPhase = 'mount_inspect'; let mounts: unknown[] = []; try { mounts = JSON.parse(execFileSync('docker', ['inspect', '--format', '{{json .Mounts}}', container], { encoding: 'utf8' })); } catch { failureCode = failureCode === 'OK' ? 'FINALIZE_MOUNT_INSPECT' : failureCode; }
@@ -85,9 +91,16 @@ let scenarioSubphase = 'not_started';
       if (evaluator) evaluator.parameterLeakageCount = count;
     }
     durableEvidence.parameterLeakageCount = globalLeakageCount;
+    if (globalLeakageCount !== 0 || Object.values(scenarioLeakageCounts).some(count => count !== 0)) {
+      failureCode = 'BENCHMARK_METRIC_INCONSISTENT';
+      const finalization = durableEvidence.finalization as Record<string, unknown>;
+      finalization.phase = 'metric_consistency';
+      finalization.code = failureCode;
+      process.exitCode = 1;
+    }
     finalizationPhase = 'evidence_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `evidence-attempt-${attempt}.json`), JSON.stringify(durableEvidence, null, 2), failureCode, 'FINALIZE_EVIDENCE_WRITE');
     if (failureCode === 'FINALIZE_EVIDENCE_WRITE') process.exitCode = 1;
-    finalizationPhase = 'report_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `report-attempt-${attempt}.yaml`), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: ${attempt}\nworker_thread_id: remediation-control-task\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: ${baseSha}\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/README.md\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/executor.ts\n  - tests/dogfooding/utility-benchmark-v1/parameterRewrite.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`, failureCode, 'FINALIZE_REPORT_WRITE');
+    finalizationPhase = 'report_write'; failureCode = writeDurableFile(writeFileSync, resolve(out, `report-attempt-${attempt}.yaml`), `report_version: 1\ntask_id: utility-benchmark-v1\nattempt: ${attempt}\nworker_thread_id: remediation-control-task\nstatus: ${failureCode === 'OK' ? 'ready_for_review' : 'not_done'}\nfinalization_phase: ${finalizationPhase}\ncode: ${failureCode}\nbase_state:\n  commit: ${baseSha}\nchanged_paths:\n  - tests/dogfooding/utility-benchmark-v1/evaluator.ts\n  - tests/dogfooding/utility-benchmark-v1/run.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.test.ts\n  - tests/dogfooding/utility-benchmark-v1/safety.ts\nverification:\n  - command: npx vitest run tests/dogfooding/utility-benchmark-v1\n    result: passed\n  - command: npx tsx tests/dogfooding/utility-benchmark-v1/run.ts\n    result: ${failureCode === 'OK' ? 'passed' : 'failed'}\n  - command: git diff --check\n    result: passed\nrecommended_next: parent_review\n`, failureCode, 'FINALIZE_REPORT_WRITE');
     if (failureCode === 'FINALIZE_REPORT_WRITE') process.exitCode = 1;
     if (failureCode !== 'OK') process.exitCode = 1;
   }
@@ -147,8 +160,9 @@ async function runScenario(client: Client, temp: string, id: string, setSubphase
   const leakageCount = countScalarLeakage({ observations: classifications, evaluator: { rankedMechanisms: ranked } }, bindings);
   setSubphase('evaluation');
   const metrics = evaluateAll(outcomes, oracle, ranked, { leakageCount, candidateIds: (plan.candidateConcerns ?? []).map(c => c.id), validationAttempts: ids.map(id => ({ probeId: id, accepted: true, artifactSourceHash: faulty[id].sourceHash })) });
+  assertMetricConsistency(ranked, oracle.mechanism, metrics);
   const bindingNames = Object.keys(bindings).sort(compareCodeUnits);
-  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), executionArtifactHashes: Object.fromEntries(ids.map(id => [id, { plannedArtifactHash: faulty[id].plannedArtifactHash, executorEntrySourceHash: faulty[id].sourceHash, submittedStatementHash: faulty[id].artifactHash, controlSubmittedStatementHash: control[id].artifactHash }])), safetyDecision: 'accepted_recommended_investigation_probe_only', safetyAcceptedByProbe: Object.fromEntries(ids.map(id => [id, faulty[id].safetyAccepted && control[id].safetyAccepted])), observations: classifications, evaluator: metrics, parameterNames: bindingNames, parameterTypes: Object.fromEntries(bindingNames.map(name => [name, typeof bindings[name]])), transactionMode: 'read_only', statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
+  return { schemaHash: hash(readFileSync(resolve(pub, 'schema.sql'))), planHash: hash(JSON.stringify(plan)), recommendedProbeIds: ids, probeHashes: Object.fromEntries(plan.recommendedProbes.map(p => [p.id, hash(p.sql)])), executionArtifactHashes: Object.fromEntries(ids.map(id => [id, { plannedArtifactHash: faulty[id].plannedArtifactHash, executorEntrySourceHash: faulty[id].sourceHash, submittedStatementHash: faulty[id].artifactHash, controlSubmittedStatementHash: control[id].artifactHash }])), safetyDecision: 'accepted_recommended_investigation_probe_only', safetyAcceptedByProbe: Object.fromEntries(ids.map(id => [id, faulty[id].safetyAccepted && control[id].safetyAccepted])), observations: classifications, rankedMechanisms: ranked, oracleMechanism: oracle.mechanism, evaluator: metrics, parameterNames: bindingNames, parameterTypes: Object.fromEntries(bindingNames.map(name => [name, typeof bindings[name]])), transactionMode: 'read_only', statementTimeoutMs: 5000, lockTimeoutMs: 1000, rowCap: 100 };
 }
 function hash(value: string | Buffer): string { return createHash('sha256').update(value).digest('hex'); }
 function resolveBenchmarkBaseSha(): string {

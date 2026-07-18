@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { createInvestigationPlan, type InvestigationPlanV1 } from '../../../src/lineage/investigationPlan';
 import { validateProbe } from './safety';
-import { buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
+import { assertMetricConsistency, buildSubmittedProbeSql, countScalarLeakage, evaluateAll, hasRuntimeDbConfigAddition, hashSourceAtExecutorEntry, mapSequentially, mergeChangedPaths, namespacePublicMetrics, partitionScenarioBindings, rankedMechanisms, redactObservation, writeDurableFile } from './evaluator';
 import { executeReadOnlyStatement } from './executor';
 import { buildSubmittedProbeStatement, compareCodeUnits, encodeBindingKey } from './parameterRewrite';
 const base = { artifactKind: 'investigation_probe', parameters: [], staticSafetyEvidence: { statementClassification: 'select_statement', confidence: 'syntax_only', version: 1 } };
@@ -102,7 +103,35 @@ describe('benchmark probe safety', () => {
     expect(result).toMatchObject({ overclaimCount: 1, semanticEditFreeRate: 1 });
   });
   it('derives ranked mechanisms from checklist conditions, not concern ids', () => {
-    expect(rankedMechanisms({ recommendedProbes: [], unresolvedParameters: [], candidateConcerns: [{ id: 'c1' }, { id: 'c2' }], nextEvidenceChecklist: [{ kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c1'] }, { kind: 'condition', mechanism: 'm1', candidateConcernIds: ['c2'] }, { kind: 'condition', mechanism: 'm2', candidateConcernIds: ['c2'] }] })).toEqual(['m1', 'm2']);
+    const concern = (id: string) => ({ id, evidence: [], hypothesis: id, limitations: [], status: 'candidate' as const });
+    const plan: Pick<InvestigationPlanV1, 'candidateConcerns' | 'nextEvidenceChecklist'> = {
+      candidateConcerns: [concern('concern:where:01'), concern('concern:join:02')],
+      nextEvidenceChecklist: [
+        { id: 'next-evidence:condition:02', kind: 'condition', status: 'to_verify', condition: { candidateConcernIds: ['concern:join:02'], influenceId: 'influence:join:01', kind: 'join', mechanism: 'join', scopeId: 'scope:root' } },
+        { id: 'next-evidence:relation:01', kind: 'relation', status: 'to_verify', relation: { conditionIds: [], columnNames: [], nodeId: 'table:orders', relationName: 'orders', scopeIds: [] } },
+        { id: 'next-evidence:property:01', kind: 'property', status: 'to_verify', property: { anchorRelationNodeIds: [], conditionId: 'condition:exists:01', kind: 'matching_related_record', relatedRelationNodeIds: [] } },
+        { id: 'next-evidence:condition:01', kind: 'condition', status: 'to_verify', condition: { candidateConcernIds: ['concern:where:01'], influenceId: 'influence:where:01', kind: 'where', mechanism: 'where', scopeId: 'scope:root' } },
+        { id: 'next-evidence:condition:duplicate', kind: 'condition', status: 'to_verify', condition: { candidateConcernIds: ['concern:join:02'], influenceId: 'influence:where:02', kind: 'where', mechanism: 'where', scopeId: 'scope:root' } },
+      ],
+    };
+    expect(plan.nextEvidenceChecklist.filter((item) => item.kind === 'condition').map((item) => item.condition.mechanism)).toEqual(['join', 'where', 'where']);
+    expect(rankedMechanisms(plan)).toEqual(['where', 'join']);
+  });
+  it('ranks mechanisms from real planner output without reading relation or property items', () => {
+    const plan = createInvestigationPlan({
+      sql: 'SELECT o.status FROM orders o WHERE o.status = :status',
+      target: { columnName: 'status', nodeId: 'main_output' },
+      parameters: { bindingPresence: { providedNames: ['status'] }, definitions: [{ name: 'status', origin: 'original_query_parameter' }] },
+    });
+    const conditionMechanisms = plan.nextEvidenceChecklist
+      .filter((item) => item.kind === 'condition')
+      .map((item) => item.condition.mechanism);
+    const ranked = rankedMechanisms(plan);
+    expect(conditionMechanisms.length).toBeGreaterThan(0);
+    expect(ranked.length).toBeGreaterThan(0);
+    expect(ranked).toEqual([...new Set(conditionMechanisms)]);
+    expect(ranked).not.toContain('relation');
+    expect(ranked).not.toContain('property');
   });
   it('weakens only linked candidates and leaves inconclusive unchanged', () => {
     const result = evaluateAll([{ probeId: 'p1', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 1, classification: 'supports', supportsCandidateConcernIds: ['c1'] }, { probeId: 'p2', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 2, classification: 'weakens', weakensCandidateConcernIds: ['c2'] }, { probeId: 'p3', faulty: { rows: [] }, control: { rows: [] }, elapsedMs: 3, classification: 'inconclusive' }], { mechanism: 'm1', faulty: { rows: [] }, control: { rows: [] } }, ['m1'], { candidateIds: ['c1', 'c2', 'c3'] });
@@ -111,10 +140,24 @@ describe('benchmark probe safety', () => {
     expect(result.timeToFirstUsefulEvidenceMs).toBe(2);
   });
   it('distinguishes Top3-only and mechanism misses, and hashes source with SHA-256', () => {
-    const oracle = { mechanism: 'm3', faulty: {}, control: {} };
-    expect(evaluateAll([], oracle, ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 1 });
-    expect(evaluateAll([], oracle, ['m1', 'm2', 'm4'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 0 });
+    const oracle = (mechanism: string) => ({ mechanism, faulty: {}, control: {} });
+    expect(evaluateAll([], oracle('m1'), ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 1, top3MechanismHitRate: 1 });
+    expect(evaluateAll([], oracle('m2'), ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 1 });
+    expect(evaluateAll([], oracle('m3'), ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 1 });
+    expect(evaluateAll([], oracle('missing'), ['m1', 'm2', 'm3'])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 0 });
+    expect(evaluateAll([], oracle('missing'), [])).toMatchObject({ top1MechanismHitRate: 0, top3MechanismHitRate: 0 });
     expect(hashSourceAtExecutorEntry('SELECT 1')).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it('fails closed when mechanism metrics or zero-tolerance safety metrics are inconsistent', () => {
+    const valid = evaluateAll([], { mechanism: 'm1', faulty: {}, control: {} }, ['m1']);
+    expect(() => assertMetricConsistency(['m1'], 'm1', valid)).not.toThrow();
+    expect(() => assertMetricConsistency(['m1'], 'm1', { ...valid, top3MechanismHitRate: 0 })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
+    expect(() => assertMetricConsistency(['m1'], 'm1', { ...valid, top1MechanismHitRate: 0 })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
+    expect(() => assertMetricConsistency(['m2', 'm1'], 'm1', { ...valid, top1MechanismHitRate: 0, top3MechanismHitRate: 1 })).not.toThrow();
+    expect(() => assertMetricConsistency(['m2'], 'm1', { ...valid, top1MechanismHitRate: 0, top3MechanismHitRate: 1 })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
+    expect(() => assertMetricConsistency([], 'm1', { ...valid, top1MechanismHitRate: 0, top3MechanismHitRate: 0, rootMechanismInconclusive: true, parameterLeakageCount: 1 })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
+    expect(() => assertMetricConsistency([], 'm1', { ...valid, top1MechanismHitRate: 0, top3MechanismHitRate: 0, rootMechanismInconclusive: true, unsafeProbeCount: 1 })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
+    expect(() => assertMetricConsistency([], 'm1', { ...valid, top1MechanismHitRate: 0, top3MechanismHitRate: 0, rootMechanismInconclusive: false })).toThrow('BENCHMARK_METRIC_INCONSISTENT');
   });
   it('separates planned/executor-entry identity from the actual submitted statement', () => {
     const planned = 'SELECT id FROM orders WHERE status = :status';

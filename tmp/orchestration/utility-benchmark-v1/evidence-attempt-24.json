@@ -1,5 +1,5 @@
 {
-  "baseRevision": "1ab7c40fb9692f4442760a6def238e19de6dfebc",
+  "baseRevision": "9572dee9505281a83ac202d8b0d64ab4a36b9ecc",
   "image": "postgres:16-alpine",
   "scenarios": {
     "data-anomaly": {
@@ -54,6 +54,11 @@
           "elapsedMs": "metric-number:6"
         }
       ],
+      "rankedMechanisms": [
+        "group_by",
+        "where"
+      ],
+      "oracleMechanism": "data_anomaly",
       "evaluator": {
         "executionSuccessRate": "metric-number:1",
         "observationContractMatchRate": "metric-number:1",
@@ -147,6 +152,11 @@
           "elapsedMs": "metric-number:3"
         }
       ],
+      "rankedMechanisms": [
+        "group_by",
+        "where"
+      ],
+      "oracleMechanism": "sql_defect",
       "evaluator": {
         "executionSuccessRate": "metric-number:1",
         "observationContractMatchRate": "metric-number:1",
@@ -193,12 +203,12 @@
   "serverVersion": "PostgreSQL 16.11",
   "boundary": {
     "changedPathCategoryCounts": {
-      "benchmark": "metric-number:7",
+      "benchmark": "metric-number:4",
       "core": "metric-number:0",
       "cli": "metric-number:0",
       "mcp": "metric-number:0"
     },
-    "changedPathHash": "d183c5e1a2f2140b9bef883ae3f535938c5f940c26acd1a11d2a898662afd423",
+    "changedPathHash": "de41b018a5eb8bebcc8655bf8b189dc7a9a82aa200dd1217426dfcd9847d9124",
     "noCoreCliMcpDbConfig": "metric-boolean:true"
   },
   "teardown": {

@@ -73,9 +73,19 @@ export function writeDurableFile(
     return currentCode === 'OK' ? failureCode : currentCode;
   }
 }
-export function rankedMechanisms(plan: Plan): string[] {
-  const seen = new Set<string>(); const result: string[] = [];
-  for (const concern of plan.candidateConcerns ?? []) for (const item of plan.nextEvidenceChecklist ?? []) if (item.kind === 'condition' && item.candidateConcernIds?.includes(concern.id) && item.mechanism && !seen.has(item.mechanism)) { seen.add(item.mechanism); result.push(item.mechanism); }
+export function rankedMechanisms(plan: Pick<Plan, 'candidateConcerns' | 'nextEvidenceChecklist'>): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const concern of plan.candidateConcerns) {
+    for (const item of plan.nextEvidenceChecklist) {
+      if (item.kind !== 'condition') continue;
+      const { condition } = item;
+      if (condition.candidateConcernIds.includes(concern.id) && !seen.has(condition.mechanism)) {
+        seen.add(condition.mechanism);
+        result.push(condition.mechanism);
+      }
+    }
+  }
   return result;
 }
 export type EvaluationOptions = { leakageCount?: number; validationAttempts?: ValidationAttempt[]; candidateIds?: string[] };
@@ -112,6 +122,23 @@ export function evaluateAll(outcomes: ProbeOutcome[], oracle: Oracle, mechanisms
     remainingCandidates: [...remaining],
     classifications: outcomes.map(o => ({ probeId: o.probeId, classification: o.classification })),
   };
+}
+export function assertMetricConsistency(mechanisms: string[], oracleMechanism: string, metrics: UtilityMetricsV1): void {
+  const expectedTop1 = mechanisms[0] === oracleMechanism ? 1 : 0;
+  const expectedTop3 = mechanisms.slice(0, 3).includes(oracleMechanism) ? 1 : 0;
+  const expectedRootInconclusive =
+    expectedTop3 === 0 &&
+    metrics.candidateReductionRate === 0 &&
+    metrics.faultyControlDiscriminationRate === 0;
+  const consistent =
+    metrics.top1MechanismHitRate === expectedTop1 &&
+    metrics.top3MechanismHitRate === expectedTop3 &&
+    metrics.rootMechanismInconclusive === expectedRootInconclusive &&
+    metrics.parameterLeakageCount === 0 &&
+    metrics.unsafeProbeCount === 0;
+  if (!consistent) {
+    throw Object.assign(new Error('BENCHMARK_METRIC_INCONSISTENT'), { code: 'BENCHMARK_METRIC_INCONSISTENT' });
+  }
 }
 export function hashSourceAtExecutorEntry(source: string): string { return hash(source); }
 export function countScalarLeakage(durable: unknown, privateBindings: Record<string, unknown>): number {
