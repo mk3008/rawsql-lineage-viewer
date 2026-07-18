@@ -4,6 +4,7 @@
 
 - Accepted local program commit: `f74c8c7d70fea1576c63b5ea75015ce94f8d6b39`
 - Integration base: `origin/main` at `33305a3dfc74a084a91a2f91a31c89d9eb21a6e3`
+- Final-review remediation base: PR head `1ab7c40fb9692f4442760a6def238e19de6dfebc`
 - Relationship: the integration base is an ancestor of the accepted result; no rebase was required.
 - Scope: a practical baseline for a static SQL investigation compiler through both CLI and MCP.
 
@@ -50,9 +51,27 @@ directory removal.
 
 The accepted investigation probe executed successfully in both the SQL-defect
 and data-anomaly scenarios, with zero unsafe probes, overclaims, or parameter
-leakage. It did not discriminate the faulty and control observations and was
-classified as inconclusive. This evidence established the current utility
-ceiling rather than universal probe usefulness.
+leakage. Each observation matched its private observation contract, but the
+faulty and control results did not differ. Consequently, the benchmark reports
+zero faulty/control discrimination and marks the root mechanism inconclusive.
+Observation-contract agreement is not reported as defect discrimination. This
+evidence establishes the current utility ceiling rather than universal probe
+usefulness.
+
+Attempt 23 replaced regex parameter substitution with tokenizer-derived,
+source-position-aware rewriting. It skips SQL lexical regions and PostgreSQL
+casts, reuses positional parameters, permits declared-but-unused definitions,
+and rejects unknown, duplicate, or unsupported parameter tokens. The executor
+submits only used bindings, preserves the original execution error if rollback
+also fails, and records planner, executor-entry, and submitted-statement hashes
+separately.
+
+Attempt 23 was executed twice. The durable outputs were identical except for the
+explicit `elapsedMs` observation. After removing that volatile timing field,
+both evidence documents had normalized SHA-256
+`b3fe58208f50d10ef6b142c9c7311fd3e74bedb6c6d08eb8e4d1cf3e4bdc6270`.
+The two raw hashes, normalization procedure, and equality result are preserved
+in the [final-review remediation evidence](../../tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml).
 
 The subsequent feasibility decision therefore generated no new aggregate/grain
 probe SQL. Missing provenance-closed SQL artifacts, authorized binding
@@ -62,8 +81,8 @@ Repository evidence:
 
 - [Utility Benchmark runner](../../tests/dogfooding/utility-benchmark-v1/run.ts)
 - [Utility Benchmark safety contract](../../tests/dogfooding/utility-benchmark-v1/safety.ts)
-- [Final benchmark evidence](../../tmp/orchestration/utility-benchmark-v1/evidence-attempt-21.json)
-- [Final benchmark report](../../tmp/orchestration/utility-benchmark-v1/report-attempt-21.yaml)
+- [Final benchmark evidence](../../tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json)
+- [Final benchmark report](../../tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml)
 - [Probe feasibility decision](../probe-feasibility-decision-v1.md)
 
 ## CLI, MCP, and package validation
@@ -78,8 +97,8 @@ Validation covered:
 - compiled MCP startup;
 - deterministic V1 errors for unsupported versions, missing paths or inputs,
   and invalid workspaces;
-- a strict 25-file package allowlist with no source, test, Viewer asset, or
-  orchestration leakage.
+- a strict 25-file package allowlist with an exact generated-chunk contract and
+  no source, test, Viewer asset, or orchestration leakage.
 
 The CLI and MCP share the static planning contract. Parameter scalar values are
 validated only at caller boundaries and reduced to deterministic binding
@@ -111,17 +130,20 @@ Repository evidence:
 
 - [Viewer audit component](../../src/components/InvestigationAuditViewer.tsx)
 - [Viewer Chromium E2E](../../tests/e2e/investigation-audit.spec.ts)
+- [Lineage Chromium E2E](../../tests/e2e/lineage.spec.ts)
+- [Final-review remediation evidence](../../tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml)
 
 ## Verification summary
 
-- Critical contract, target, prerequisite, CLI, and MCP suite: 59 passed, 4 skipped.
-- DB-free full suite: 295 passed, 4 skipped.
-- Integrated local suite with the Docker-backed scenarios available: 300 passed, 4 skipped.
+- Integrated Vitest suite with Docker-backed synthetic scenarios available: 317 passed, 4 skipped.
 - TypeScript typecheck: passed.
 - Viewer and package build: passed.
 - Offline package smoke and allowlist: passed.
 - Compiled public, CLI, MCP, and V1 error probes: passed.
-- Viewer Chromium E2E: 2 passed.
+- Viewer Chromium E2E: 69 passed. The 38 lineage-suite failures reproduced on
+  the integration base were stale Viewer expectations; the final suite has no skipped E2E tests.
+  The compared commits, commands, counts, and durations are recorded in the
+  [final-review remediation evidence](../../tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml).
 - Leakage and security scans: passed.
 - `git diff --check`: passed.
 
@@ -185,14 +207,16 @@ This program does not claim:
 
 ## Evidence hashes
 
-SHA-256 hashes at accepted commit `f74c8c7`:
+SHA-256 hashes for the final-review remediation evidence:
 
 | Repository path | SHA-256 |
 | --- | --- |
-| `tmp/orchestration/utility-benchmark-v1/evidence-attempt-21.json` | `720E6820996B31D896B5F331ABC0483C5F5A576075EED892A309A887E34CF150` |
-| `tmp/orchestration/utility-benchmark-v1/report-attempt-21.yaml` | `2C45684359D676FA376ECD1B771771755063DDD800208F03CBB3AE8D50487EEE` |
-| `scripts/package-smoke.mjs` | `EE89567D5FCD936AC370F1BDC2CA510D9FFFCBDC30B79AF8C9B30D4146E66B68` |
-| `tests/e2e/investigation-audit.spec.ts` | `34685607BD07D5694058EEE2F47033E7B14B8A4BDD601116D75DA0374AF9C330` |
+| `tmp/orchestration/utility-benchmark-v1/evidence-attempt-23.json` | `525F8C1714AC2561CEC69225CBFDF1F9ECBDE17AD86ADDF6386E5CB97FC4E766` |
+| `tmp/orchestration/utility-benchmark-v1/report-attempt-23.yaml` | `481D0DF9D38054C3CF1A1C9974620F8E7FBEF8319D949160CA961B5585A65FD0` |
+| `tmp/orchestration/utility-benchmark-v1/final-review-remediation-evidence.yaml` | `4A55DBAEB172F1C18833F72F4A54097E688F203C5F79ABB40495B66885DE8EFE` |
+| `scripts/package-smoke.mjs` | `21781E1A74F14F1FA2CE6125E46CDD96B7109BBAAAFFB2DF208D3D075E68D8C9` |
+| `tests/e2e/lineage.spec.ts` | `79DB1125B6A7887ED71478ABA7DFEF3A92071C411DC4CFEFE1A0808FF9367BCC` |
+| `tests/e2e/investigation-audit.spec.ts` | `4D3BF3F29424A1E2F8DAD505BD550FD126B5BC8827C5AB227E1E97E649405C2B` |
 | `docs/probe-feasibility-decision-v1.md` | `8F3D9290E574C461D45D0C0B29D4C8AF119E575C2F1A9B2F662C05FF0E57F21F` |
 
 Raw AI transcripts, machine-specific paths, private fixture oracles, credentials,

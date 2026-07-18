@@ -43,8 +43,19 @@ try {
   for (const required of requiredPaths) {
     if (!paths.includes(required)) throw new Error(`Packed artifact is missing ${required}`);
   }
+  const generatedChunkContracts = {
+    investigationPlan: { expected: 0, pattern: /^dist\/package\/investigationPlan-[A-Za-z0-9_-]+\.js$/ },
+    investigationTargetDiscovery: { expected: 1, pattern: /^dist\/package\/investigationTargetDiscovery-[A-Za-z0-9_-]+\.js$/ },
+  };
+  const generatedChunks = Object.fromEntries(Object.entries(generatedChunkContracts).map(([name, contract]) => {
+    const count = paths.filter((path) => contract.pattern.test(path)).length;
+    if (count !== contract.expected) {
+      throw new Error(`Packed artifact expected ${contract.expected} ${name} generated chunks; found ${count}.`);
+    }
+    return [name, count];
+  }));
   const allowedPath = (path) => requiredPaths.includes(path)
-    || /^dist\/package\/investigation(?:Plan|TargetDiscovery)-[A-Za-z0-9_-]+\.js$/.test(path);
+    || Object.values(generatedChunkContracts).some(({ pattern }) => pattern.test(path));
   const unexpected = paths.filter((path) => !allowedPath(path));
   if (unexpected.length) throw new Error(`Packed artifact contains unexpected paths: ${unexpected.join(', ')}`);
   if (paths.some((path) => path === 'dist/package/favicon.svg' || path === 'dist/package/icons.svg')) {
@@ -119,7 +130,7 @@ try {
   } finally {
     await client.close();
   }
-  process.stdout.write(`${JSON.stringify({ cli: 'passed', cliDiscovery: 'passed', mcp: 'protocol-passed', packedFiles: paths.length, publicImport: 'passed', typedErrorParity: 'passed' })}\n`);
+  process.stdout.write(`${JSON.stringify({ cli: 'passed', cliDiscovery: 'passed', generatedChunks, mcp: 'protocol-passed', packedFiles: paths.length, publicImport: 'passed', typedErrorParity: 'passed' })}\n`);
 } finally {
   rmSync(root, { force: true, recursive: true });
 }
