@@ -104,6 +104,11 @@ interface OccurrenceGraph {
   occurrences: Occurrence[];
 }
 
+interface PropagatedConstraint {
+  kind: 'parameter' | 'static';
+  value: string;
+}
+
 interface BoundedDraft {
   boundaryReason: FixtureExtractionBoundedStepV0['boundary']['reason'];
   boundaryRelationColumns: string[];
@@ -114,7 +119,7 @@ interface BoundedDraft {
   loadAfter?: Occurrence;
   occurrence: Occurrence;
   parameterNames: string[];
-  parameterByColumn: Map<string, string>;
+  constraintsByColumn: Map<string, PropagatedConstraint[]>;
   predicateSql: string;
   resultExpectation: FixtureExtractionResultExpectationV0;
   sql: string;
@@ -323,7 +328,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
     evidenceKeys: rootEvidenceKeys,
     hop: 0,
     occurrence: root,
-    parameterByColumn: new Map(rootResult.mappings.map((mapping) => [normalizeIdentifier(mapping.rootColumn), mapping.parameterName])),
+    constraintsByColumn: new Map(rootResult.mappings.map((mapping) => [normalizeIdentifier(mapping.rootColumn), [{ kind: 'parameter', value: mapping.parameterName } satisfies PropagatedConstraint]])),
     parameterNames: rootResult.mappings.map((mapping) => mapping.parameterName).sort(compareCodeUnits),
     predicateSql: rootPredicate,
     resultExpectation: rowsMayBePresent(),
@@ -809,14 +814,16 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   const evidenceKeys = [...relationEvidence, fkEvidence];
   const relatedColumn = fkResult.relatedColumn;
   const anchorColumn = fkResult.anchorColumn;
-  const directParameter = anchor.parameterByColumn.get(normalizeIdentifier(anchorColumn));
+  const anchorConstraints = anchor.constraintsByColumn.get(normalizeIdentifier(anchorColumn)) ?? [];
+  const directParameter = anchorConstraints.length === 1 && anchorConstraints[0].kind === 'parameter'
+    ? anchorConstraints[0].value
+    : undefined;
   const sameColumnParameters = edge.localParameterEqualities
     .filter((item) => normalizeIdentifier(item.column) === normalizeIdentifier(relatedColumn));
   const sameColumnStaticEqualities = edge.localStaticEqualities
     .filter((item) => normalizeIdentifier(item.column) === normalizeIdentifier(relatedColumn));
-  if (!directParameter
-    ? sameColumnParameters.length > 0 || sameColumnStaticEqualities.length > 0
-    : sameColumnParameters.some((item) => item.parameter !== directParameter) || sameColumnStaticEqualities.length > 0) {
+  if (sameColumnStaticEqualities.length > 0
+    || sameColumnParameters.some((item) => !directParameter || item.parameter !== directParameter)) {
     return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
   const localParameters = edge.localParameterEqualities
@@ -836,7 +843,7 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   }
   let predicateSql: string;
   let boundaryReason: BoundedDraft['boundaryReason'];
-  const parameterByColumn = new Map<string, string>();
+  const constraintsByColumn = new Map<string, PropagatedConstraint[]>();
   if (directParameter) {
     const predicates = [{ column: relatedColumn, parameter: directParameter }, ...localParameters.map((item) => ({ column: item.column, parameter: item.parameter }))]
       .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.parameter, right.parameter));
@@ -844,7 +851,8 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
       ...predicates.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
       ...localStaticEqualities.map((item) => `${quoteIdentifier(item.column)} = ${item.literalSql}`),
     ].join(' and ');
-    predicates.forEach((item) => parameterByColumn.set(normalizeIdentifier(item.column), item.parameter));
+    predicates.forEach((item) => addPropagatedConstraint(constraintsByColumn, item.column, { kind: 'parameter', value: item.parameter }));
+    localStaticEqualities.forEach((item) => addPropagatedConstraint(constraintsByColumn, item.column, { kind: 'static', value: item.literalSql }));
     boundaryReason = edge.kind === 'exists' ? 'correlated_exists_key_equality' : 'direct_key_equality_propagation';
   } else {
     if (attemptedHopCount !== 2) {
@@ -855,7 +863,8 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
       ...localParameters.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
       ...localStaticEqualities.map((item) => `${quoteIdentifier(item.column)} = ${item.literalSql}`),
     ].join(' and ');
-    localParameters.forEach((item) => parameterByColumn.set(normalizeIdentifier(item.column), item.parameter));
+    localParameters.forEach((item) => addPropagatedConstraint(constraintsByColumn, item.column, { kind: 'parameter', value: item.parameter }));
+    localStaticEqualities.forEach((item) => addPropagatedConstraint(constraintsByColumn, item.column, { kind: 'static', value: item.literalSql }));
     boundaryReason = 'nested_foreign_key_subquery';
   }
   const parameterNames = collectParameterNamesFromSql(`select * from ${quoteRelation(edge.related.relationName)} where ${predicateSql};`);
@@ -878,12 +887,23 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
     hop: attemptedHopCount as 1 | 2,
     loadAfter: fkResult.relatedIsChild ? anchor.occurrence : undefined,
     occurrence: edge.related,
-    parameterByColumn,
+    constraintsByColumn,
     parameterNames,
     predicateSql,
     resultExpectation,
     sql,
   };
+}
+
+function addPropagatedConstraint(
+  constraintsByColumn: Map<string, PropagatedConstraint[]>,
+  column: string,
+  constraint: PropagatedConstraint,
+): void {
+  const key = normalizeIdentifier(column);
+  const current = constraintsByColumn.get(key) ?? [];
+  if (current.some((item) => item.kind === constraint.kind && item.value === constraint.value)) return;
+  constraintsByColumn.set(key, [...current, constraint].sort((left, right) => compareCodeUnits(left.kind, right.kind) || compareCodeUnits(left.value, right.value)));
 }
 
 function unknownDraft(

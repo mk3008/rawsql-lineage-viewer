@@ -127,6 +127,80 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(plan.steps[2].sql).toBe('select item_id, order_id, quantity, sku\nfrom order_item\nwhere order_id in (\n  select order_id\n  from purchase_order\n  where customer_id = :customer_id\n) and sku = :sku;');
   });
 
+  it('preserves every intermediate-key constraint in a two-hop NOT EXISTS boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_a and o.order_id = :order_b where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps.map((step) => step.relationName)).toEqual(['customer', 'purchase_order', 'order_item']);
+    expect(plan.steps[2]).toMatchObject({
+      dependsOnStepIds: ['fixture-step:002'],
+      loadAfterStepIds: ['fixture-step:002'],
+      parameterNames: ['customer_id', 'order_a', 'order_b'],
+      resultExpectation: { kind: 'empty_result_required' },
+      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2, relationColumns: ['order_id'] },
+    });
+    expect(plan.steps[2].sql).toBe('select item_id, order_id\nfrom order_item\nwhere order_id in (\n  select order_id\n  from purchase_order\n  where customer_id = :customer_id and order_id = :order_a and order_id = :order_b\n);');
+    expect(new Set(plan.steps.flatMap((step) => step.dependsOnStepIds)).has('fixture-step:002')).toBe(true);
+  });
+
+  it('preserves every intermediate-key constraint across a two-hop JOIN boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id, i.item_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_a and o.order_id = :order_b join order_item i on i.order_id = o.order_id where c.customer_id = :customer_id;',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[2]).toMatchObject({
+      dependsOnStepIds: ['fixture-step:002'],
+      loadAfterStepIds: ['fixture-step:002'],
+      parameterNames: ['customer_id', 'order_a', 'order_b'],
+      resultExpectation: { kind: 'rows_may_be_present' },
+      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2 },
+    });
+    expect(plan.steps[2].sql).toContain('where customer_id = :customer_id and order_id = :order_a and order_id = :order_b');
+  });
+
+  it('fails closed instead of dropping mixed parameter and literal intermediate-key constraints', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_id and o.order_id = 42 where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expect(plan.status).toBe('partial');
+    expect(plan.steps.filter((step) => step.relationName !== 'customer')).toHaveLength(2);
+    expect(plan.steps.filter((step) => step.relationName !== 'customer').every((step) => (
+      step.sql === null && step.resultExpectation.kind === 'rows_may_be_present'
+    ))).toBe(true);
+    expect(plan.blockedReasons.map((reason) => reason.code))
+      .toEqual(['PARAMETER_PROPAGATION_UNPROVEN', 'PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED', 'CAPTURE_BOUNDARY_UNBOUNDED']);
+  });
+
+  it('keeps direct two-hop propagation for semantically identical intermediate constraints', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_id and o.order_id = :order_id where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[2]).toMatchObject({
+      sql: 'select item_id, order_id from order_item where order_id = :order_id;',
+      parameterNames: ['order_id'],
+      resultExpectation: { kind: 'empty_result_required' },
+      boundary: { status: 'bounded', reason: 'correlated_exists_key_equality', hopCount: 2 },
+    });
+  });
+
   it.each([
     ['exists', 'rows_may_be_present', false],
     ['not exists', 'empty_result_required', true],
