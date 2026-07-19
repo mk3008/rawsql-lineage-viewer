@@ -84,11 +84,16 @@ function visitSelect(query: SimpleSelectQuery | BinarySelectQuery, path: string,
   }
 
   const values = [
-    ...query.selectClause.items.map((item) => item.value),
+    query.selectClause,
     query.whereClause?.condition,
     query.havingClause?.condition,
     ...(query.groupByClause?.grouping ?? []),
     ...(query.orderByClause?.order ?? []),
+    ...(query.fromClause?.joins ?? []).map((join) => join.condition),
+    query.windowClause,
+    query.limitClause?.value,
+    query.offsetClause?.value,
+    query.fetchClause,
   ];
   values.forEach((value, index) => visitValue(value, `${path}.value[${index}]`, blockers, new Set<object>()));
 }
@@ -123,13 +128,26 @@ function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBl
     visitSelectQueryLike(value.selectQuery, `${path}.inline`, blockers, false);
     return;
   }
-  if (value instanceof FunctionCall && isKnownVolatileFunction(identifierValue(value.name))) {
-    blockers.push(blocker('VOLATILE_SOURCE_UNSUPPORTED', path, 'function:volatile'));
+  if (value instanceof FunctionCall) {
+    const functionName = identifierValue(value.name);
+    if (!isV0ProvenDeterministicFunction(value, functionName)) {
+      blockers.push(blocker(
+        'VOLATILE_SOURCE_UNSUPPORTED',
+        path,
+        isKnownVolatileFunction(functionName) ? 'function:volatile' : 'function:unclassified',
+      ));
+    }
   }
   for (const nested of Object.values(value)) {
     if (Array.isArray(nested)) nested.forEach((item, index) => visitValue(item, `${path}[${index}]`, blockers, seen));
     else visitValue(nested, path, blockers, seen);
   }
+}
+
+function isV0ProvenDeterministicFunction(call: FunctionCall, name: string): boolean {
+  // This is intentionally a narrow V0 capability list, not a general SQL volatility registry.
+  return !call.qualifiedName.namespaces?.length
+    && ['coalesce', 'count', 'max', 'sum'].includes(name.toLowerCase());
 }
 
 function isKnownVolatileFunction(name: string): boolean {

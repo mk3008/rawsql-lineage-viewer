@@ -394,4 +394,65 @@ describe('generateFixtureExtractionPlanV0', () => {
     ));
     expect(volatile.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
   });
+
+  it('fails closed for scalar functions whose volatility is not proven', () => {
+    const unclassified = generateFixtureExtractionPlanV0(input(
+      'select lower(t.subject) from support_ticket as t where t.ticket_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(unclassified.status).toBe('blocked');
+    expect(unclassified.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
+    expect(unclassified.steps).toEqual([]);
+
+    const resultShapeAffecting = generateFixtureExtractionPlanV0(input(
+      'select distinct on (lower(t.subject)) t.ticket_id from support_ticket as t where t.ticket_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(resultShapeAffecting.status).toBe('blocked');
+    expect(resultShapeAffecting.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
+    expect(resultShapeAffecting.steps).toEqual([]);
+
+    const populationAffecting = generateFixtureExtractionPlanV0(input(
+      "select a.account_id from billing_account as a left join synthetic_payment as p on p.account_id = a.account_id and lower(p.payment_state) = 'paid' where a.account_id = :account_id;",
+      'create table billing_account (account_id integer primary key); create table synthetic_payment (payment_id integer primary key, account_id integer not null references billing_account(account_id), payment_state text not null);',
+      'billing_account',
+      'account_id',
+    ));
+    expect(populationAffecting.status).toBe('blocked');
+    expect(populationAffecting.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
+    expect(populationAffecting.steps).toEqual([]);
+
+    const qualifiedLookalike = generateFixtureExtractionPlanV0(input(
+      'select custom.sum(t.ticket_id) from support_ticket as t where t.ticket_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(qualifiedLookalike.status).toBe('blocked');
+    expect(qualifiedLookalike.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
+    expect(qualifiedLookalike.steps).toEqual([]);
+
+    const knownVolatile = generateFixtureExtractionPlanV0(input(
+      'select random(), t.subject from support_ticket as t where t.ticket_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(knownVolatile.status).toBe('blocked');
+    expect(knownVolatile.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
+    expect(knownVolatile.steps).toEqual([]);
+
+    const functionFree = generateFixtureExtractionPlanV0(input(
+      'select t.subject from support_ticket as t where t.ticket_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expectReadySql(functionFree);
+    expect(functionFree.steps).toHaveLength(1);
+  });
 });
