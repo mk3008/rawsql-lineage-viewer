@@ -28,30 +28,31 @@ import {
 } from '../schemaFacts';
 import {
   compareCodeUnits,
-  FixtureExtractionInputErrorV0,
-  type FixtureExtractionBlockedCodeV0,
-  type FixtureExtractionBlockedReasonV0,
-  type FixtureExtractionBoundedStepV0,
-  type FixtureExtractionCaptureColumnsV0,
-  type FixtureExtractionColumnParameterMappingV0,
-  type FixtureExtractionInputV0,
-  type FixtureExtractionLimitationCodeV0,
-  type FixtureExtractionLimitationV0,
-  type FixtureExtractionPlanV0,
-  type FixtureExtractionPredicateDerivationV0,
-  type FixtureExtractionReproductionKeyV0,
-  type FixtureExtractionRequiredFactV0,
-  type FixtureExtractionResultExpectationV0,
-  type FixtureExtractionSourceEvidenceKindV0,
-  type FixtureExtractionSourceEvidenceV0,
-  type FixtureExtractionStepV0,
-  type FixtureExtractionUnknownStepV0,
-} from './fixtureExtractionPlanV0';
-import { inspectStaticSelectSafetyV0, type StaticSelectSafetyBlockerV0 } from './staticSelectSafety';
+  FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
+  FixtureExtractionInputError,
+  type FixtureExtractionBlockedCode,
+  type FixtureExtractionBlockedReason,
+  type FixtureExtractionBoundedStep,
+  type FixtureExtractionCaptureColumns,
+  type FixtureExtractionColumnParameterMapping,
+  type FixtureExtractionInput,
+  type FixtureExtractionLimitationCode,
+  type FixtureExtractionLimitation,
+  type FixtureExtractionPlan,
+  type FixtureExtractionPredicateDerivation,
+  type FixtureExtractionReproductionKey,
+  type FixtureExtractionRequiredFact,
+  type FixtureExtractionResultExpectation,
+  type FixtureExtractionSourceEvidenceKind,
+  type FixtureExtractionSourceEvidence,
+  type FixtureExtractionStep,
+  type FixtureExtractionUnknownStep,
+} from './fixtureExtractionPlan';
+import { inspectStaticSelectSafety, type StaticSelectSafetyBlocker } from './staticSelectSafety';
 
 interface EvidenceDraft {
   key: string;
-  kind: FixtureExtractionSourceEvidenceKindV0;
+  kind: FixtureExtractionSourceEvidenceKind;
   sourceId: string;
   sourcePath?: string;
 }
@@ -113,10 +114,10 @@ interface PropagatedConstraint {
 }
 
 interface BoundedDraft {
-  boundaryReason: FixtureExtractionBoundedStepV0['boundary']['reason'];
+  boundaryReason: FixtureExtractionBoundedStep['boundary']['reason'];
   boundaryRelationColumns: string[];
   dependsOn?: Occurrence;
-  derivation: FixtureExtractionPredicateDerivationV0;
+  derivation: FixtureExtractionPredicateDerivation;
   evidenceKeys: string[];
   hop: 0 | 1 | 2;
   loadAfter?: Occurrence;
@@ -124,25 +125,25 @@ interface BoundedDraft {
   parameterNames: string[];
   constraintsByColumn: Map<string, PropagatedConstraint[]>;
   predicateSql: string;
-  resultExpectation: FixtureExtractionResultExpectationV0;
+  resultExpectation: FixtureExtractionResultExpectation;
   sql: string;
 }
 
 interface UnknownDraft {
   attemptedHopCount: number;
   dependsOn?: Occurrence;
-  derivation: FixtureExtractionPredicateDerivationV0;
+  derivation: FixtureExtractionPredicateDerivation;
   evidenceKeys: string[];
   occurrence: Occurrence;
   parameterNames: string[];
-  reasonCodes: FixtureExtractionBlockedCodeV0[];
+  reasonCodes: FixtureExtractionBlockedCode[];
 }
 
 type StepDraft = BoundedDraft | UnknownDraft;
 
 interface BlockedReasonDraft {
   affectedOccurrence?: Occurrence;
-  code: FixtureExtractionBlockedCodeV0;
+  code: FixtureExtractionBlockedCode;
   evidenceKeys: string[];
 }
 
@@ -154,10 +155,10 @@ interface StrictSchemaIndex {
 const FORBIDDEN_INPUT_KEYS = new Set(['binding', 'bindings', 'bindingValue', 'bindingValues', 'value', 'values', 'providedValues']);
 const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-const BLOCKED_CATALOG: Record<FixtureExtractionBlockedCodeV0, {
+const BLOCKED_CATALOG: Record<FixtureExtractionBlockedCode, {
   message: string;
   rank: number;
-  requiredFacts: readonly FixtureExtractionRequiredFactV0[];
+  requiredFacts: readonly FixtureExtractionRequiredFact[];
 }> = {
   SQL_PARSE_UNSUPPORTED: { rank: 1, requiredFacts: ['static SQL text'], message: 'The submitted statement cannot be classified by the supported parser-backed SELECT policy.' },
   DML_STATEMENT_UNSUPPORTED: { rank: 2, requiredFacts: [], message: 'Top-level data modification is unsupported for fixture extraction.' },
@@ -180,16 +181,16 @@ const BLOCKED_CATALOG: Record<FixtureExtractionBlockedCodeV0, {
   CAPTURE_BOUNDARY_UNBOUNDED: { rank: 19, requiredFacts: ['missing foreign key', 'root key column'], message: 'A required capture query would be unbounded.' },
 };
 
-const LIMITATION_CATALOG: Record<FixtureExtractionLimitationCodeV0, { message: string; rank: number }> = {
+const LIMITATION_CATALOG: Record<FixtureExtractionLimitationCode, { message: string; rank: number }> = {
   STATIC_ONLY_NO_EXECUTION: { rank: 1, message: 'This plan is static and did not execute SQL or inspect data.' },
   SENSITIVE_COLUMN_POLICY_NOT_EVALUATED: { rank: 2, message: 'Sensitive column policy was not evaluated.' },
   GENERATED_IDENTITY_LOADING_OUTSIDE_POC: { rank: 3, message: 'Generated and identity column loading is outside the PoC.' },
   LARGE_OBJECT_MIGRATION_OUTSIDE_POC: { rank: 4, message: 'Large object migration is outside the PoC.' },
-  TWO_HOP_PROPAGATION_LIMIT: { rank: 5, message: 'Static key propagation is limited to two hops in V0.' },
+  TWO_HOP_PROPAGATION_LIMIT: { rank: 5, message: 'Static key propagation is limited to two hops in .' },
   PARTIAL_PLAN_INCOMPLETE: { rank: 6, message: 'This partial plan is not a complete reproduction fixture.' },
 };
 
-const EVIDENCE_KIND_RANK: Record<FixtureExtractionSourceEvidenceKindV0, number> = {
+const EVIDENCE_KIND_RANK: Record<FixtureExtractionSourceEvidenceKind, number> = {
   parser_ast: 1,
   target_discovery: 2,
   lineage_node: 3,
@@ -205,8 +206,8 @@ const EVIDENCE_KIND_RANK: Record<FixtureExtractionSourceEvidenceKindV0, number> 
   schema_diagnostic: 13,
 };
 
-/** Builds a pure, internal, fail-closed V0 fixture-capture SELECT plan. */
-export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0): FixtureExtractionPlanV0 {
+/** Builds a pure, internal, fail-closed  fixture-capture SELECT plan. */
+export function generateFixtureExtractionPlan(input: FixtureExtractionInput): FixtureExtractionPlan {
   assertInput(input);
   const sqlHash = `sha256:${createHash('sha256').update(input.sql, 'utf8').digest('hex')}`;
   const source = {
@@ -215,7 +216,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
     sqlHash,
     ...(input.targetId ? { targetId: input.targetId } : {}),
   };
-  const safety = inspectStaticSelectSafetyV0(input.sql);
+  const safety = inspectStaticSelectSafety(input.sql);
   if (!safety.ok) return globalBlockedPlan(input, source, safety.blockers);
   if (collectParameterNamesFromAst(safety.statement).some((parameter) => !PARAMETER_NAME.test(parameter))) {
     return blockedBeforeRoot(input, source, 'PARAMETER_PROPAGATION_UNPROVEN', 'blocked', [{
@@ -241,7 +242,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
       analyzeSql(input.sql, { analysisMode: 'original', optimizeConditions: false, schemaFacts });
     }
   } catch {
-    const code: FixtureExtractionBlockedCodeV0 = hasWildcard(safety.statement) ? 'UNRESOLVED_WILDCARD' : 'COLUMN_REFERENCE_AMBIGUOUS';
+    const code: FixtureExtractionBlockedCode = hasWildcard(safety.statement) ? 'UNRESOLVED_WILDCARD' : 'COLUMN_REFERENCE_AMBIGUOUS';
     return blockedBeforeRoot(input, source, code, 'blocked', [{ kind: 'target_discovery', sourceId: 'target:unsupported', sourcePath: 'target' }]);
   }
 
@@ -359,7 +360,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
 
   const drafts = deriveSteps(graph, rootDraft, evidence);
   const finalized = finalizeSteps(drafts, evidence);
-  const unknowns = finalized.steps.filter((step): step is FixtureExtractionUnknownStepV0 => step.sql === null);
+  const unknowns = finalized.steps.filter((step): step is FixtureExtractionUnknownStep => step.sql === null);
   const status = unknowns.length > 0 || graph.hasSetOperation ? 'partial' : 'ready';
   const blockedReasonDrafts = drafts.flatMap((draft): BlockedReasonDraft[] => isUnknownDraft(draft)
     ? draft.reasonCodes.map((code) => ({ affectedOccurrence: draft.occurrence, code, evidenceKeys: draft.evidenceKeys }))
@@ -369,7 +370,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
   }
 
   const blockedReasons = finalizeBlockedReasons(blockedReasonDrafts, finalized.stepIdByOccurrence, evidence);
-  const reproductionKey: FixtureExtractionReproductionKeyV0 = {
+  const reproductionKey: FixtureExtractionReproductionKey = {
     parameterNames: [...new Set(rootResult.mappings.map((mapping) => mapping.parameterName))].sort(compareCodeUnits),
     rootRelation: root.relationName,
     rootRelationOccurrenceId: root.occurrenceId,
@@ -381,7 +382,7 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
   const finalStatus = status === 'ready' && blockedReasons.length === 0 ? 'ready' : 'partial';
   return {
     kind: 'fixture-extraction-plan',
-    version: 0,
+    schemaVersion: FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
     status: finalStatus,
     source,
     reproductionKey,
@@ -394,34 +395,34 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
   };
 }
 
-function assertInput(input: FixtureExtractionInputV0): void {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+function assertInput(input: FixtureExtractionInput): void {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   assertAllowedKeys(input as unknown as Record<string, unknown>, ['sql', 'ddl', 'schemaFacts', 'targetId', 'reproductionKey']);
-  if (typeof input.sql !== 'string' || input.sql.trim().length === 0) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
-  if (!input.reproductionKey || typeof input.reproductionKey !== 'object' || Array.isArray(input.reproductionKey)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+  if (typeof input.sql !== 'string' || input.sql.trim().length === 0) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
+  if (!input.reproductionKey || typeof input.reproductionKey !== 'object' || Array.isArray(input.reproductionKey)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   assertAllowedKeys(input.reproductionKey as unknown as Record<string, unknown>, ['parameterNames', 'rootColumns', 'rootRelation']);
   const names = input.reproductionKey.parameterNames;
   if (!Array.isArray(names) || names.some((name) => typeof name !== 'string' || !PARAMETER_NAME.test(name)) || new Set(names).size !== names.length) {
-    throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   }
   if (input.reproductionKey.rootRelation !== undefined && (typeof input.reproductionKey.rootRelation !== 'string' || input.reproductionKey.rootRelation.length === 0)) {
-    throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   }
   if (input.reproductionKey.rootColumns !== undefined && (!Array.isArray(input.reproductionKey.rootColumns)
     || input.reproductionKey.rootColumns.some((column) => typeof column !== 'string' || column.length === 0))) {
-    throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   }
-  if (input.targetId !== undefined && (typeof input.targetId !== 'string' || input.targetId.length === 0)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+  if (input.targetId !== undefined && (typeof input.targetId !== 'string' || input.targetId.length === 0)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   if (input.ddl !== undefined) {
-    if (!Array.isArray(input.ddl)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    if (!Array.isArray(input.ddl)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
     for (const item of input.ddl) {
-      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+      if (!item || typeof item !== 'object' || Array.isArray(item)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
       assertAllowedKeys(item as unknown as Record<string, unknown>, ['filePath', 'sql']);
-      if (typeof item.sql !== 'string' || (item.filePath !== undefined && typeof item.filePath !== 'string')) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+      if (typeof item.sql !== 'string' || (item.filePath !== undefined && typeof item.filePath !== 'string')) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
     }
   }
   if (input.schemaFacts !== undefined && !isSchemaFactsShape(input.schemaFacts)) {
-    throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   }
 }
 
@@ -498,8 +499,8 @@ function isOptionalNestedStringArray(value: unknown): boolean {
 
 function assertAllowedKeys(value: Record<string, unknown>, allowed: readonly string[]): void {
   for (const key of Object.keys(value)) {
-    if (FORBIDDEN_INPUT_KEYS.has(key)) throw new FixtureExtractionInputErrorV0('VALUE_BEARING_INPUT_FORBIDDEN');
-    if (!allowed.includes(key)) throw new FixtureExtractionInputErrorV0('INPUT_SHAPE_INVALID');
+    if (FORBIDDEN_INPUT_KEYS.has(key)) throw new FixtureExtractionInputError('VALUE_BEARING_INPUT_FORBIDDEN');
+    if (!allowed.includes(key)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
   }
 }
 
@@ -929,7 +930,7 @@ function deriveRelatedStep(
   hasPopulationPrerequisite = false,
 ): StepDraft {
   const attemptedHopCount = anchor.hop + 1;
-  const derivation: FixtureExtractionPredicateDerivationV0 = edge.kind === 'exists'
+  const derivation: FixtureExtractionPredicateDerivation = edge.kind === 'exists'
     ? 'exists_dependency'
     : attemptedHopCount === 2 ? 'foreign_key_dependency' : 'join_key_propagation';
   const evidenceKind = edge.kind === 'exists' ? 'exists' : 'join';
@@ -941,7 +942,7 @@ function deriveRelatedStep(
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
   if (edge.unsafePredicate || anchor.occurrence.unsafePopulationPredicate) {
-    const codes: FixtureExtractionBlockedCodeV0[] = edge.kind === 'join' && edge.equalityPairs.length === 0
+    const codes: FixtureExtractionBlockedCode[] = edge.kind === 'join' && edge.equalityPairs.length === 0
       ? ['NON_EQUALITY_JOIN_UNSUPPORTED']
       : ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED'];
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, codes);
@@ -1062,10 +1063,10 @@ function addPropagatedConstraint(
 function unknownDraft(
   edge: OccurrenceEdge,
   anchor: BoundedDraft,
-  derivation: FixtureExtractionPredicateDerivationV0,
+  derivation: FixtureExtractionPredicateDerivation,
   evidenceKeys: string[],
   attemptedHopCount: number,
-  reasonCodes: FixtureExtractionBlockedCodeV0[],
+  reasonCodes: FixtureExtractionBlockedCode[],
 ): UnknownDraft {
   return {
     attemptedHopCount,
@@ -1108,12 +1109,12 @@ function resolveForeignKey(edge: OccurrenceEdge):
 }
 
 function resolveRoot(
-  input: FixtureExtractionInputV0,
+  input: FixtureExtractionInput,
   occurrences: Occurrence[],
   schemaIndex: StrictSchemaIndex,
-): { codes: FixtureExtractionBlockedCodeV0[]; ok: false; status: 'ambiguous' | 'blocked' } | {
+): { codes: FixtureExtractionBlockedCode[]; ok: false; status: 'ambiguous' | 'blocked' } | {
   keyKind: 'primary' | 'unique';
-  mappings: FixtureExtractionColumnParameterMappingV0[];
+  mappings: FixtureExtractionColumnParameterMapping[];
   ok: true;
   root: Occurrence;
   rootEquality: ParameterEquality;
@@ -1159,13 +1160,13 @@ function resolveRoot(
   };
 }
 
-function finalizeSteps(drafts: StepDraft[], evidence: EvidenceRegistry): { stepIdByOccurrence: Map<Occurrence, string>; steps: FixtureExtractionStepV0[] } {
+function finalizeSteps(drafts: StepDraft[], evidence: EvidenceRegistry): { stepIdByOccurrence: Map<Occurrence, string>; steps: FixtureExtractionStep[] } {
   const sorted = [...drafts].sort((left, right) => draftHop(left) - draftHop(right)
     || compareCodeUnits(left.occurrence.relationName, right.occurrence.relationName)
     || compareCodeUnits(left.occurrence.occurrenceId, right.occurrence.occurrenceId)
     || compareCodeUnits(left.derivation, right.derivation));
   const stepIdByOccurrence = new Map(sorted.map((draft, index) => [draft.occurrence, `fixture-step:${String(index + 1).padStart(3, '0')}`]));
-  const steps = sorted.map((draft): FixtureExtractionStepV0 => {
+  const steps = sorted.map((draft): FixtureExtractionStep => {
     const common = {
       id: stepIdByOccurrence.get(draft.occurrence)!,
       relationName: draft.occurrence.relationName,
@@ -1191,9 +1192,9 @@ function finalizeSteps(drafts: StepDraft[], evidence: EvidenceRegistry): { stepI
           sourceEvidenceIds: evidence.ids(draft.evidenceKeys),
         },
         blockedReasonCodes: sortBlockedCodes(draft.reasonCodes),
-      } satisfies FixtureExtractionUnknownStepV0;
+      } satisfies FixtureExtractionUnknownStep;
     }
-    const reparse = inspectStaticSelectSafetyV0(draft.sql);
+    const reparse = inspectStaticSelectSafety(draft.sql);
     if (!reparse.ok) throw new Error('Generated fixture extraction SQL failed static SELECT reparse.');
     return {
       ...common,
@@ -1208,18 +1209,18 @@ function finalizeSteps(drafts: StepDraft[], evidence: EvidenceRegistry): { stepI
         sourceEvidenceIds: evidence.ids(draft.evidenceKeys),
       },
       blockedReasonCodes: [],
-    } satisfies FixtureExtractionBoundedStepV0;
+    } satisfies FixtureExtractionBoundedStep;
   });
   return { stepIdByOccurrence, steps };
 }
 
-function finalizeBlockedReasons(drafts: BlockedReasonDraft[], stepIds: Map<Occurrence, string>, evidence: EvidenceRegistry): FixtureExtractionBlockedReasonV0[] {
-  const unique = new Map<string, FixtureExtractionBlockedReasonV0>();
+function finalizeBlockedReasons(drafts: BlockedReasonDraft[], stepIds: Map<Occurrence, string>, evidence: EvidenceRegistry): FixtureExtractionBlockedReason[] {
+  const unique = new Map<string, FixtureExtractionBlockedReason>();
   for (const draft of drafts) {
     const affectedStepIds = draft.affectedOccurrence ? [stepIds.get(draft.affectedOccurrence)!].filter(Boolean) : [];
     const sourceEvidenceIds = evidence.ids(draft.evidenceKeys);
     const catalog = BLOCKED_CATALOG[draft.code];
-    const reason: FixtureExtractionBlockedReasonV0 = {
+    const reason: FixtureExtractionBlockedReason = {
       code: draft.code,
       message: catalog.message,
       requiredFacts: [...catalog.requiredFacts].sort(compareCodeUnits),
@@ -1234,10 +1235,10 @@ function finalizeBlockedReasons(drafts: BlockedReasonDraft[], stepIds: Map<Occur
 }
 
 function globalBlockedPlan(
-  input: FixtureExtractionInputV0,
-  source: FixtureExtractionPlanV0['source'],
-  blockers: readonly StaticSelectSafetyBlockerV0[],
-): FixtureExtractionPlanV0 {
+  input: FixtureExtractionInput,
+  source: FixtureExtractionPlan['source'],
+  blockers: readonly StaticSelectSafetyBlocker[],
+): FixtureExtractionPlan {
   const evidence = new EvidenceRegistry();
   const drafts: BlockedReasonDraft[] = blockers.map((item) => ({
     code: item.code,
@@ -1246,7 +1247,7 @@ function globalBlockedPlan(
   const evidenceIds = evidence.ids(drafts.flatMap((draft) => draft.evidenceKeys));
   return {
     kind: 'fixture-extraction-plan',
-    version: 0,
+    schemaVersion: FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
     status: 'blocked',
     source,
     reproductionKey: blockedReproductionKey(input, 'blocked', evidenceIds),
@@ -1260,19 +1261,19 @@ function globalBlockedPlan(
 }
 
 function blockedBeforeRoot(
-  input: FixtureExtractionInputV0,
-  source: FixtureExtractionPlanV0['source'],
-  code: FixtureExtractionBlockedCodeV0,
+  input: FixtureExtractionInput,
+  source: FixtureExtractionPlan['source'],
+  code: FixtureExtractionBlockedCode,
   reproductionStatus: 'ambiguous' | 'blocked',
   evidenceInputs: Array<Omit<EvidenceDraft, 'key'>>,
-  additionalCodes: FixtureExtractionBlockedCodeV0[] = [],
-): FixtureExtractionPlanV0 {
+  additionalCodes: FixtureExtractionBlockedCode[] = [],
+): FixtureExtractionPlan {
   const evidence = new EvidenceRegistry();
   const evidenceKeys = evidenceInputs.map((item) => evidence.add(item.kind, item.sourceId, item.sourcePath));
   const codes = sortBlockedCodes([code, ...additionalCodes]);
   return {
     kind: 'fixture-extraction-plan',
-    version: 0,
+    schemaVersion: FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
     status: 'blocked',
     source,
     reproductionKey: blockedReproductionKey(input, reproductionStatus, evidence.ids(evidenceKeys)),
@@ -1286,10 +1287,10 @@ function blockedBeforeRoot(
 }
 
 function blockedReproductionKey(
-  input: FixtureExtractionInputV0,
+  input: FixtureExtractionInput,
   status: 'ambiguous' | 'blocked',
   sourceEvidenceIds: string[],
-): FixtureExtractionReproductionKeyV0 {
+): FixtureExtractionReproductionKey {
   return {
     parameterNames: [...input.reproductionKey.parameterNames].sort(compareCodeUnits),
     ...(input.reproductionKey.rootRelation ? { rootRelation: input.reproductionKey.rootRelation } : {}),
@@ -1327,7 +1328,7 @@ function createRelatedEvidence(
 class EvidenceRegistry {
   private readonly drafts = new Map<string, EvidenceDraft>();
 
-  add(kind: FixtureExtractionSourceEvidenceKindV0, sourceId: string, sourcePath?: string): string {
+  add(kind: FixtureExtractionSourceEvidenceKind, sourceId: string, sourcePath?: string): string {
     const key = `${kind}\u0000${sourcePath ?? ''}\u0000${sourceId}`;
     this.drafts.set(key, { key, kind, sourceId, ...(sourcePath ? { sourcePath } : {}) });
     return key;
@@ -1338,7 +1339,7 @@ class EvidenceRegistry {
     return [...new Set(keys.map((key) => idByKey.get(key)).filter((id): id is string => Boolean(id)))].sort(compareCodeUnits);
   }
 
-  values(): FixtureExtractionSourceEvidenceV0[] {
+  values(): FixtureExtractionSourceEvidence[] {
     return this.sorted().map((draft, index) => ({
       id: `fixture-evidence:${String(index + 1).padStart(4, '0')}`,
       kind: draft.kind,
@@ -1354,8 +1355,8 @@ class EvidenceRegistry {
   }
 }
 
-function createLimitations(steps: readonly FixtureExtractionStepV0[], status: FixtureExtractionPlanV0['status']): FixtureExtractionLimitationV0[] {
-  const codes: FixtureExtractionLimitationCodeV0[] = [
+function createLimitations(steps: readonly FixtureExtractionStep[], status: FixtureExtractionPlan['status']): FixtureExtractionLimitation[] {
+  const codes: FixtureExtractionLimitationCode[] = [
     'STATIC_ONLY_NO_EXECUTION',
     'SENSITIVE_COLUMN_POLICY_NOT_EVALUATED',
     'GENERATED_IDENTITY_LOADING_OUTSIDE_POC',
@@ -1371,8 +1372,8 @@ function createLimitations(steps: readonly FixtureExtractionStepV0[], status: Fi
   }));
 }
 
-function topologicalOrder(steps: readonly FixtureExtractionStepV0[], key: 'dependsOnStepIds' | 'loadAfterStepIds'): string[] {
-  const bounded = steps.filter((step): step is FixtureExtractionBoundedStepV0 => step.sql !== null);
+function topologicalOrder(steps: readonly FixtureExtractionStep[], key: 'dependsOnStepIds' | 'loadAfterStepIds'): string[] {
+  const bounded = steps.filter((step): step is FixtureExtractionBoundedStep => step.sql !== null);
   const remaining = new Map(bounded.map((step) => [step.id, new Set(step[key].filter((dependency) => bounded.some((item) => item.id === dependency)))]));
   const order: string[] = [];
   while (remaining.size > 0) {
@@ -1445,7 +1446,7 @@ function buildDirectSelect(occurrence: Occurrence, predicateSql: string): string
   return `select ${projection} from ${quoteRelation(occurrence.relationName)} where ${predicateSql};`;
 }
 
-function captureColumns(occurrence: Occurrence): FixtureExtractionCaptureColumnsV0 {
+function captureColumns(occurrence: Occurrence): FixtureExtractionCaptureColumns {
   const columns = captureColumnNames(occurrence);
   return columns.length > 0 ? { mode: 'ddl_columns', columnNames: columns } : { mode: 'all_columns' };
 }
@@ -1552,15 +1553,15 @@ function draftHop(draft: StepDraft): number {
   return isUnknownDraft(draft) ? draft.attemptedHopCount : draft.hop;
 }
 
-function sortBlockedCodes(codes: readonly FixtureExtractionBlockedCodeV0[]): FixtureExtractionBlockedCodeV0[] {
+function sortBlockedCodes(codes: readonly FixtureExtractionBlockedCode[]): FixtureExtractionBlockedCode[] {
   return [...new Set(codes)].sort((left, right) => BLOCKED_CATALOG[left].rank - BLOCKED_CATALOG[right].rank);
 }
 
-function rowsMayBePresent(): FixtureExtractionResultExpectationV0 {
+function rowsMayBePresent(): FixtureExtractionResultExpectation {
   return { kind: 'rows_may_be_present', note: null };
 }
 
-function emptyResultRequired(): FixtureExtractionResultExpectationV0 {
+function emptyResultRequired(): FixtureExtractionResultExpectation {
   return { kind: 'empty_result_required', note: 'The required reproduction state may be an empty result for this relation.' };
 }
 

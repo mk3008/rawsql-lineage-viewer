@@ -1,38 +1,38 @@
 import type { DdlInput, SchemaFacts } from '../schemaFacts';
 
-export interface FixtureExtractionInputV0 {
+export interface FixtureExtractionInput {
   readonly sql: string;
   readonly ddl?: readonly DdlInput[];
   readonly schemaFacts?: SchemaFacts;
   readonly targetId?: string;
-  readonly reproductionKey: FixtureExtractionReproductionKeyInputV0;
+  readonly reproductionKey: FixtureExtractionReproductionKeyInput;
 }
 
-export interface FixtureExtractionReproductionKeyInputV0 {
+export interface FixtureExtractionReproductionKeyInput {
   readonly parameterNames: readonly string[];
   readonly rootRelation?: string;
   readonly rootColumns?: readonly string[];
 }
 
-export type FixtureExtractionInputErrorCodeV0 =
+export type FixtureExtractionInputErrorCode =
   | 'INPUT_SHAPE_INVALID'
   | 'VALUE_BEARING_INPUT_FORBIDDEN';
 
-export class FixtureExtractionInputErrorV0 extends Error {
-  readonly code: FixtureExtractionInputErrorCodeV0;
+export class FixtureExtractionInputError extends Error {
+  readonly code: FixtureExtractionInputErrorCode;
 
-  constructor(code: FixtureExtractionInputErrorCodeV0) {
+  constructor(code: FixtureExtractionInputErrorCode) {
     super(code === 'VALUE_BEARING_INPUT_FORBIDDEN'
       ? 'Value-bearing input is forbidden for fixture extraction.'
       : 'Fixture extraction input has an invalid shape.');
-    this.name = 'FixtureExtractionInputErrorV0';
+    this.name = 'FixtureExtractionInputError';
     this.code = code;
   }
 }
 
-export type FixtureExtractionPlanStatusV0 = 'ready' | 'partial' | 'blocked';
+export type FixtureExtractionPlanStatus = 'ready' | 'partial' | 'blocked';
 
-export type FixtureExtractionBlockedCodeV0 =
+export type FixtureExtractionBlockedCode =
   | 'SQL_PARSE_UNSUPPORTED'
   | 'DML_STATEMENT_UNSUPPORTED'
   | 'RETURNING_UNSUPPORTED'
@@ -53,7 +53,7 @@ export type FixtureExtractionBlockedCodeV0 =
   | 'PARAMETER_PROPAGATION_UNPROVEN'
   | 'CAPTURE_BOUNDARY_UNBOUNDED';
 
-export type FixtureExtractionRequiredFactV0 =
+export type FixtureExtractionRequiredFact =
   | 'function volatility metadata'
   | 'missing foreign key'
   | 'relation identity'
@@ -62,43 +62,53 @@ export type FixtureExtractionRequiredFactV0 =
   | 'static SQL text'
   | 'transaction-independent semantics';
 
-export interface FixtureExtractionPlanV0 {
+/**
+ * Schema version 0 deliberately marks this as an internal, experimental contract.
+ * Keep it at 0 while breaking shape or semantic changes are expected during the
+ * fixture-extraction investigation. Promote it to 1 only when the contract is
+ * intentionally adopted by a long-lived consumer and its compatibility policy,
+ * migration expectations, documentation, and contract tests are all established.
+ * This is independent of the library package version.
+ */
+export const FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION = 0 as const;
+
+export interface FixtureExtractionPlan {
   readonly kind: 'fixture-extraction-plan';
-  readonly version: 0;
-  readonly status: FixtureExtractionPlanStatusV0;
-  readonly source: FixtureExtractionSourceV0;
-  readonly reproductionKey: FixtureExtractionReproductionKeyV0;
-  readonly sourceEvidence: readonly FixtureExtractionSourceEvidenceV0[];
-  readonly steps: readonly FixtureExtractionStepV0[];
+  readonly schemaVersion: typeof FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION;
+  readonly status: FixtureExtractionPlanStatus;
+  readonly source: FixtureExtractionSource;
+  readonly reproductionKey: FixtureExtractionReproductionKey;
+  readonly sourceEvidence: readonly FixtureExtractionSourceEvidence[];
+  readonly steps: readonly FixtureExtractionStep[];
   readonly suggestedCaptureOrder: readonly string[];
   readonly suggestedLoadOrder: readonly string[];
-  readonly blockedReasons: readonly FixtureExtractionBlockedReasonV0[];
-  readonly limitations: readonly FixtureExtractionLimitationV0[];
+  readonly blockedReasons: readonly FixtureExtractionBlockedReason[];
+  readonly limitations: readonly FixtureExtractionLimitation[];
 }
 
-export interface FixtureExtractionSourceV0 {
+export interface FixtureExtractionSource {
   readonly analysisMode: 'original';
   readonly hashAlgorithm: 'sha256';
   readonly sqlHash: string;
   readonly targetId?: string;
 }
 
-export interface FixtureExtractionReproductionKeyV0 {
+export interface FixtureExtractionReproductionKey {
   readonly parameterNames: readonly string[];
   readonly rootRelation?: string;
   readonly rootRelationOccurrenceId?: string;
   readonly rootColumns: readonly string[];
-  readonly columnParameterMappings: readonly FixtureExtractionColumnParameterMappingV0[];
+  readonly columnParameterMappings: readonly FixtureExtractionColumnParameterMapping[];
   readonly sourceEvidenceIds: readonly string[];
   readonly status: 'resolved' | 'ambiguous' | 'blocked';
 }
 
-export interface FixtureExtractionColumnParameterMappingV0 {
+export interface FixtureExtractionColumnParameterMapping {
   readonly parameterName: string;
   readonly rootColumn: string;
 }
 
-export type FixtureExtractionSourceEvidenceKindV0 =
+export type FixtureExtractionSourceEvidenceKind =
   | 'parser_ast'
   | 'target_discovery'
   | 'lineage_node'
@@ -113,49 +123,49 @@ export type FixtureExtractionSourceEvidenceKindV0 =
   | 'schema_foreign_key'
   | 'schema_diagnostic';
 
-export interface FixtureExtractionSourceEvidenceV0 {
+export interface FixtureExtractionSourceEvidence {
   readonly id: string;
-  readonly kind: FixtureExtractionSourceEvidenceKindV0;
+  readonly kind: FixtureExtractionSourceEvidenceKind;
   readonly sourceId: string;
   readonly sourcePath?: string;
 }
 
-export type FixtureExtractionPredicateDerivationV0 =
+export type FixtureExtractionPredicateDerivation =
   | 'root_predicate'
   | 'join_key_propagation'
   | 'exists_dependency'
   | 'foreign_key_dependency';
 
-export interface FixtureExtractionStepBaseV0 {
+export interface FixtureExtractionStepBase {
   readonly id: string;
   readonly relationName: string;
   readonly relationOccurrenceId: string;
   readonly artifactKind: 'fixture_extraction_query';
   readonly dependsOnStepIds: readonly string[];
   readonly loadAfterStepIds: readonly string[];
-  readonly predicateDerivation: FixtureExtractionPredicateDerivationV0;
+  readonly predicateDerivation: FixtureExtractionPredicateDerivation;
   readonly sourceEvidenceIds: readonly string[];
-  readonly captureColumns: FixtureExtractionCaptureColumnsV0;
-  readonly resultExpectation: FixtureExtractionResultExpectationV0;
+  readonly captureColumns: FixtureExtractionCaptureColumns;
+  readonly resultExpectation: FixtureExtractionResultExpectation;
 }
 
-export interface FixtureExtractionBoundedStepV0 extends FixtureExtractionStepBaseV0 {
+export interface FixtureExtractionBoundedStep extends FixtureExtractionStepBase {
   readonly sql: string;
   readonly parameterNames: readonly string[];
-  readonly boundary: FixtureExtractionBoundedBoundaryV0;
+  readonly boundary: FixtureExtractionBoundedBoundary;
   readonly blockedReasonCodes: readonly [];
 }
 
-export interface FixtureExtractionUnknownStepV0 extends FixtureExtractionStepBaseV0 {
+export interface FixtureExtractionUnknownStep extends FixtureExtractionStepBase {
   readonly sql: null;
   readonly parameterNames: readonly string[];
-  readonly boundary: FixtureExtractionUnknownBoundaryV0;
-  readonly blockedReasonCodes: readonly FixtureExtractionBlockedCodeV0[];
+  readonly boundary: FixtureExtractionUnknownBoundary;
+  readonly blockedReasonCodes: readonly FixtureExtractionBlockedCode[];
 }
 
-export type FixtureExtractionStepV0 = FixtureExtractionBoundedStepV0 | FixtureExtractionUnknownStepV0;
+export type FixtureExtractionStep = FixtureExtractionBoundedStep | FixtureExtractionUnknownStep;
 
-export interface FixtureExtractionBoundedBoundaryV0 {
+export interface FixtureExtractionBoundedBoundary {
   readonly status: 'bounded';
   readonly reason:
     | 'root_key_parameter_equality'
@@ -168,36 +178,36 @@ export interface FixtureExtractionBoundedBoundaryV0 {
   readonly sourceEvidenceIds: readonly string[];
 }
 
-export interface FixtureExtractionUnknownBoundaryV0 {
+export interface FixtureExtractionUnknownBoundary {
   readonly status: 'unknown';
   readonly reason: 'unproven';
   readonly attemptedHopCount?: number;
-  readonly reasonCodes: readonly FixtureExtractionBlockedCodeV0[];
+  readonly reasonCodes: readonly FixtureExtractionBlockedCode[];
   readonly sourceEvidenceIds: readonly string[];
 }
 
-export type FixtureExtractionBoundaryV0 = FixtureExtractionBoundedBoundaryV0 | FixtureExtractionUnknownBoundaryV0;
+export type FixtureExtractionBoundary = FixtureExtractionBoundedBoundary | FixtureExtractionUnknownBoundary;
 
-export type FixtureExtractionCaptureColumnsV0 =
+export type FixtureExtractionCaptureColumns =
   | { readonly mode: 'all_columns' }
   | { readonly mode: 'ddl_columns'; readonly columnNames: readonly string[] };
 
-export type FixtureExtractionResultExpectationV0 =
+export type FixtureExtractionResultExpectation =
   | { readonly kind: 'rows_may_be_present'; readonly note: null }
   | {
     readonly kind: 'empty_result_required';
     readonly note: 'The required reproduction state may be an empty result for this relation.';
   };
 
-export interface FixtureExtractionBlockedReasonV0 {
-  readonly code: FixtureExtractionBlockedCodeV0;
+export interface FixtureExtractionBlockedReason {
+  readonly code: FixtureExtractionBlockedCode;
   readonly message: string;
-  readonly requiredFacts: readonly FixtureExtractionRequiredFactV0[];
+  readonly requiredFacts: readonly FixtureExtractionRequiredFact[];
   readonly sourceEvidenceIds: readonly string[];
   readonly affectedStepIds: readonly string[];
 }
 
-export type FixtureExtractionLimitationCodeV0 =
+export type FixtureExtractionLimitationCode =
   | 'STATIC_ONLY_NO_EXECUTION'
   | 'SENSITIVE_COLUMN_POLICY_NOT_EVALUATED'
   | 'GENERATED_IDENTITY_LOADING_OUTSIDE_POC'
@@ -205,14 +215,14 @@ export type FixtureExtractionLimitationCodeV0 =
   | 'TWO_HOP_PROPAGATION_LIMIT'
   | 'PARTIAL_PLAN_INCOMPLETE';
 
-export interface FixtureExtractionLimitationV0 {
-  readonly code: FixtureExtractionLimitationCodeV0;
+export interface FixtureExtractionLimitation {
+  readonly code: FixtureExtractionLimitationCode;
   readonly message: string;
   readonly appliesToStepIds: readonly string[];
 }
 
 /** Produces the contract's canonical, code-unit-ordered JSON representation. */
-export function canonicalFixtureExtractionPlanJsonV0(plan: FixtureExtractionPlanV0): string {
+export function canonicalFixtureExtractionPlanJson(plan: FixtureExtractionPlan): string {
   return JSON.stringify(sortCanonicalValue(plan));
 }
 

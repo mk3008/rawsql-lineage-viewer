@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { SqlParser, SimpleSelectQuery } from 'rawsql-ts';
 import type { Client } from 'pg';
-import { generateFixtureExtractionPlanV0 } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlanV0';
-import type { FixtureExtractionStepV0 } from '../../../src/lineage/fixture-extraction/fixtureExtractionPlanV0';
+import { generateFixtureExtractionPlan } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlan';
+import type { FixtureExtractionStep } from '../../../src/lineage/fixture-extraction/fixtureExtractionPlan';
 import type {
   AcceptedHarnessCase,
   ExpectedCaptureResult,
@@ -46,7 +46,7 @@ export async function runHarnessCase(
   target: Client,
   scenario: AcceptedHarnessCase,
 ): Promise<ScenarioEvidence> {
-  const plan = generateFixtureExtractionPlanV0({
+  const plan = generateFixtureExtractionPlan({
     sql: scenario.sql,
     ddl: [{ sql: scenario.ddl }],
     reproductionKey: scenario.reproductionKey,
@@ -158,7 +158,7 @@ export function assertExpectedCapture(
   return { expectedColumnsMatch: true, expectedRowsMatch: true };
 }
 
-export function requireExecutableStep(scenarioId: string, step: FixtureExtractionStepV0 | undefined) {
+export function requireExecutableStep(scenarioId: string, step: FixtureExtractionStep | undefined) {
   if (!step || step.sql === null || step.boundary.status !== 'bounded' || step.blockedReasonCodes.length > 0) {
     throw new Error(`${scenarioId}: refused to execute an absent, partial, unknown, or blocked capture step.`);
   }

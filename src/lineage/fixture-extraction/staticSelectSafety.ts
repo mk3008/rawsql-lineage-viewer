@@ -13,20 +13,20 @@ import {
   SubQuerySource,
   UpdateQuery,
 } from 'rawsql-ts';
-import type { FixtureExtractionBlockedCodeV0 } from './fixtureExtractionPlanV0';
-import { compareCodeUnits } from './fixtureExtractionPlanV0';
+import type { FixtureExtractionBlockedCode } from './fixtureExtractionPlan';
+import { compareCodeUnits } from './fixtureExtractionPlan';
 
-export interface StaticSelectSafetyBlockerV0 {
-  readonly code: FixtureExtractionBlockedCodeV0;
+export interface StaticSelectSafetyBlocker {
+  readonly code: FixtureExtractionBlockedCode;
   readonly sourcePath: string;
   readonly sourceId: string;
 }
 
-export type StaticSelectSafetyResultV0 =
+export type StaticSelectSafetyResult =
   | { readonly ok: true; readonly statement: SimpleSelectQuery | BinarySelectQuery }
-  | { readonly ok: false; readonly blockers: readonly StaticSelectSafetyBlockerV0[] };
+  | { readonly ok: false; readonly blockers: readonly StaticSelectSafetyBlocker[] };
 
-const BLOCKED_CODE_RANK: Partial<Record<FixtureExtractionBlockedCodeV0, number>> = {
+const BLOCKED_CODE_RANK: Partial<Record<FixtureExtractionBlockedCode, number>> = {
   SQL_PARSE_UNSUPPORTED: 1,
   DML_STATEMENT_UNSUPPORTED: 2,
   RETURNING_UNSUPPORTED: 3,
@@ -51,7 +51,7 @@ const ENVIRONMENT_STATE_RAW_VALUES = new Set([
 ]);
 
 /** Parser-backed recursive preflight. Syntax acceptance is not execution authorization. */
-export function inspectStaticSelectSafetyV0(sql: string): StaticSelectSafetyResultV0 {
+export function inspectStaticSelectSafety(sql: string): StaticSelectSafetyResult {
   let statement: unknown;
   try {
     statement = SqlParser.parse(sql);
@@ -68,14 +68,14 @@ export function inspectStaticSelectSafetyV0(sql: string): StaticSelectSafetyResu
     return { ok: false, blockers: [blocker('SQL_PARSE_UNSUPPORTED', 'statement', 'statement:unsupported')] };
   }
 
-  const blockers: StaticSelectSafetyBlockerV0[] = [];
+  const blockers: StaticSelectSafetyBlocker[] = [];
   visitSelect(statement, 'statement', blockers);
   return blockers.length > 0
     ? { ok: false, blockers: sortAndDedupe(blockers) }
     : { ok: true, statement };
 }
 
-function visitSelect(query: SimpleSelectQuery | BinarySelectQuery, path: string, blockers: StaticSelectSafetyBlockerV0[]): void {
+function visitSelect(query: SimpleSelectQuery | BinarySelectQuery, path: string, blockers: StaticSelectSafetyBlocker[]): void {
   if (query instanceof BinarySelectQuery) {
     visitSelectQueryLike(query.left, `${path}.left`, blockers, false);
     visitSelectQueryLike(query.right, `${path}.right`, blockers, false);
@@ -115,7 +115,7 @@ function visitSelect(query: SimpleSelectQuery | BinarySelectQuery, path: string,
   values.forEach((value, index) => visitValue(value, `${path}.value[${index}]`, blockers, new Set<object>()));
 }
 
-function visitSelectQueryLike(query: unknown, path: string, blockers: StaticSelectSafetyBlockerV0[], cteBody: boolean): void {
+function visitSelectQueryLike(query: unknown, path: string, blockers: StaticSelectSafetyBlocker[], cteBody: boolean): void {
   if (isDml(query)) {
     if (hasReturning(query)) blockers.push(blocker('RETURNING_UNSUPPORTED', `${path}.returning`, 'cte:returning'));
     blockers.push(blocker('DML_CTE_UNSUPPORTED', path, `cte:${query.constructor.name}`));
@@ -128,7 +128,7 @@ function visitSelectQueryLike(query: unknown, path: string, blockers: StaticSele
   blockers.push(blocker(cteBody ? 'DML_CTE_UNSUPPORTED' : 'SQL_PARSE_UNSUPPORTED', path, 'query:unsupported'));
 }
 
-function visitParenSource(source: ParenSource, path: string, blockers: StaticSelectSafetyBlockerV0[]): void {
+function visitParenSource(source: ParenSource, path: string, blockers: StaticSelectSafetyBlocker[]): void {
   if (source.source instanceof FunctionSource) {
     blockers.push(blocker('VOLATILE_SOURCE_UNSUPPORTED', path, 'source:function'));
   } else if (source.source instanceof SubQuerySource) {
@@ -138,7 +138,7 @@ function visitParenSource(source: ParenSource, path: string, blockers: StaticSel
   }
 }
 
-function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBlockerV0[], seen: Set<object>): void {
+function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBlocker[], seen: Set<object>): void {
   if (!value || typeof value !== 'object' || seen.has(value)) return;
   seen.add(value);
   if (value instanceof InlineQuery) {
@@ -150,7 +150,7 @@ function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBl
   }
   if (value instanceof FunctionCall) {
     const functionName = identifierValue(value.name);
-    if (!isV0ProvenDeterministicFunction(value, functionName)) {
+    if (!isProvenDeterministicFunction(value, functionName)) {
       blockers.push(blocker(
         'VOLATILE_SOURCE_UNSUPPORTED',
         path,
@@ -164,8 +164,8 @@ function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBl
   }
 }
 
-function isV0ProvenDeterministicFunction(call: FunctionCall, name: string): boolean {
-  // This is intentionally a narrow V0 capability list, not a general SQL volatility registry.
+function isProvenDeterministicFunction(call: FunctionCall, name: string): boolean {
+  // This is intentionally a narrow  capability list, not a general SQL volatility registry.
   return !call.qualifiedName.namespaces?.length
     && ['coalesce', 'count', 'max', 'sum'].includes(name.toLowerCase());
 }
@@ -192,11 +192,11 @@ function hasReturning(value: InsertQuery | UpdateQuery | DeleteQuery | MergeQuer
   return Boolean(value.returningClause);
 }
 
-function blocker(code: FixtureExtractionBlockedCodeV0, sourcePath: string, sourceId: string): StaticSelectSafetyBlockerV0 {
+function blocker(code: FixtureExtractionBlockedCode, sourcePath: string, sourceId: string): StaticSelectSafetyBlocker {
   return { code, sourcePath, sourceId };
 }
 
-function sortAndDedupe(blockers: StaticSelectSafetyBlockerV0[]): StaticSelectSafetyBlockerV0[] {
+function sortAndDedupe(blockers: StaticSelectSafetyBlocker[]): StaticSelectSafetyBlocker[] {
   const unique = new Map(blockers.map((item) => [`${item.code}\u0000${item.sourcePath}\u0000${item.sourceId}`, item]));
   return [...unique.values()].sort((left, right) =>
     (BLOCKED_CODE_RANK[left.code] ?? Number.MAX_SAFE_INTEGER) - (BLOCKED_CODE_RANK[right.code] ?? Number.MAX_SAFE_INTEGER)

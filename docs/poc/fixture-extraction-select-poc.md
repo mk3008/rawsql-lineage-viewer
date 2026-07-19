@@ -2,8 +2,10 @@
 
 ## Status
 
-This is an experimental, internal V0 proof of concept. It is not a public API,
-a production-readiness claim, or a contract for arbitrary SQL.
+This is an experimental, internal proof of concept. It is not a public API, a
+production-readiness claim, or a contract for arbitrary SQL. The returned plan
+carries `schemaVersion: 0` while its shape and semantics remain intentionally
+unstable; the promotion criteria are documented beside the schema-version constant.
 
 The PoC shows that a pure, static Core component can derive bounded fixture
 extraction `SELECT` plans for a deliberately narrow set of SQL and schema shapes.
@@ -43,7 +45,7 @@ The product-side flow is intentionally static:
 ```text
 SQL text + DDL-derived SchemaFacts + reproduction-key metadata
     -> internal static safety and relation analysis
-    -> internal FixtureExtractionPlanV0
+    -> internal FixtureExtractionPlan
     -> bounded SELECT text or an explicit non-ready result
 ```
 
@@ -55,7 +57,7 @@ The boundary is:
 - Unsupported or unproven population, schema, volatility, environment-state, and
   propagation cases fail closed instead of emitting an executable step.
 - Ready SQL is parser-backed and bounded by proven key and foreign-key evidence for
-  the supported V0 shapes.
+  the supported experimental shapes.
 - No fixture-loading API is exposed. Product `INSERT`, `COPY`, CSV/JSON transfer,
   database clients, Docker control, and source-to-target execution are out of scope.
 - The PostgreSQL runner is an external test harness. Its test-only parameterized
@@ -98,7 +100,7 @@ therefore remain **partial and unexecuted**.
 
 | Hypothesis | Verdict | Evidence boundary |
 | --- | --- | --- |
-| H1 — bounded plan generation is feasible | Demonstrated | Exact relation sets and bounded parser-valid `SELECT` plans were produced for the five required supported cases and the optional static case. This is limited to the evaluated V0 shapes. |
+| H1 — bounded plan generation is feasible | Demonstrated | Exact relation sets and bounded parser-valid `SELECT` plans were produced for the five required supported cases and the optional static case. This is limited to the evaluated experimental shapes. |
 | H2 — generated captures can reproduce an observation | Demonstrated | The five executed supported synthetic cases matched after transferring only generated capture results. Optional aggregate and real or remote data were not executed. |
 | H3 — fixture extraction reduces migration cost | Partially demonstrated | A narrow SELECT-authoring proxy improved, but assisted end-to-end human steps, historical omission retries, and elapsed time were not measured in comparable units. |
 | H4 — unsupported work can fail closed | Demonstrated for tested forms | The DML CTE produced zero steps and zero execution. Required negative tests and eleven tested environment/session expressions also blocked with zero steps. This does not cover every unsupported SQL form. |
@@ -171,7 +173,7 @@ Install the locked dependencies and run the repository checks:
 
 ```sh
 npm ci
-npx vitest run tests/poc/fixture-extraction src/lineage/fixture-extraction/generateFixtureExtractionPlanV0.test.ts
+npx vitest run tests/poc/fixture-extraction src/lineage/fixture-extraction/generateFixtureExtractionPlan.test.ts
 npm test
 npx tsc --noEmit
 npm run build

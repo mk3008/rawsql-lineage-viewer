@@ -1,13 +1,14 @@
 import { SqlParser, SimpleSelectQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
 import {
-  canonicalFixtureExtractionPlanJsonV0,
-  FixtureExtractionInputErrorV0,
-  type FixtureExtractionInputV0,
-} from './fixtureExtractionPlanV0';
-import { generateFixtureExtractionPlanV0 } from './generateFixtureExtractionPlanV0';
+  canonicalFixtureExtractionPlanJson,
+  FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
+  FixtureExtractionInputError,
+  type FixtureExtractionInput,
+} from './fixtureExtractionPlan';
+import { generateFixtureExtractionPlan } from './generateFixtureExtractionPlan';
 
-function input(sql: string, ddl: string | undefined, rootRelation: string, rootColumn: string, parameterName = rootColumn): FixtureExtractionInputV0 {
+function input(sql: string, ddl: string | undefined, rootRelation: string, rootColumn: string, parameterName = rootColumn): FixtureExtractionInput {
   return {
     sql,
     ...(ddl ? { ddl: [{ sql: ddl }] } : {}),
@@ -15,7 +16,7 @@ function input(sql: string, ddl: string | undefined, rootRelation: string, rootC
   };
 }
 
-function expectReadySql(plan: ReturnType<typeof generateFixtureExtractionPlanV0>): void {
+function expectReadySql(plan: ReturnType<typeof generateFixtureExtractionPlan>): void {
   expect(plan.status).toBe('ready');
   expect(plan.blockedReasons).toEqual([]);
   for (const step of plan.steps) {
@@ -27,9 +28,9 @@ function expectReadySql(plan: ReturnType<typeof generateFixtureExtractionPlanV0>
   }
 }
 
-describe('generateFixtureExtractionPlanV0', () => {
+describe('generateFixtureExtractionPlan', () => {
   it('generates the contract-aligned single-table root plan', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select t.ticket_id, t.subject, t.priority\nfrom support_ticket as t\nwhere t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null, priority integer not null);',
       'support_ticket',
@@ -37,6 +38,10 @@ describe('generateFixtureExtractionPlanV0', () => {
     ));
 
     expectReadySql(plan);
+    expect(plan).toMatchObject({
+      kind: 'fixture-extraction-plan',
+      schemaVersion: FIXTURE_EXTRACTION_PLAN_SCHEMA_VERSION,
+    });
     expect(plan.source.sqlHash).toBe('sha256:ff6a4c5e65999765edfd34f5524930361c1bd518ac5528dbcc8d3290b70d961e');
     expect(plan.reproductionKey).toMatchObject({
       parameterNames: ['ticket_id'],
@@ -61,7 +66,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('validates an explicit main-output target without falling back to another target', () => {
-    const plan = generateFixtureExtractionPlanV0({
+    const plan = generateFixtureExtractionPlan({
       ...input(
         'select t.ticket_id, t.subject from support_ticket as t where t.ticket_id = :ticket_id;',
         'create table support_ticket (ticket_id integer primary key, subject text not null);',
@@ -73,7 +78,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expectReadySql(plan);
     expect(plan.source.targetId).toBe('target:001');
 
-    const missing = generateFixtureExtractionPlanV0({
+    const missing = generateFixtureExtractionPlan({
       ...input(
         'select t.ticket_id from support_ticket as t where t.ticket_id = :ticket_id;',
         'create table support_ticket (ticket_id integer primary key);',
@@ -87,7 +92,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('propagates a root key across a LEFT JOIN with FK proof', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select a.account_id, a.display_label, n.note_id, n.note_body from account as a left join account_note as n on n.account_id = a.account_id where a.account_id = :account_id order by n.note_id;',
       'create table account (account_id integer primary key, display_label text not null); create table account_note (note_id integer primary key, account_id integer not null references account(account_id), note_body text null);',
       'account',
@@ -108,7 +113,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('uses a bounded nested key subquery for the second hop', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id, i.item_id, i.sku, i.quantity from customer as c join purchase_order as o on o.customer_id = c.customer_id join order_item as i on i.order_id = o.order_id and i.sku = :sku where c.customer_id = :customer_id order by o.order_id, i.item_id;',
       'create table customer (customer_id integer primary key, display_label text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id), sku text not null, quantity integer not null);',
       'customer',
@@ -128,7 +133,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves every intermediate-key constraint in a two-hop NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_a and o.order_id = :order_b where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -149,7 +154,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves every intermediate-key constraint across a two-hop JOIN boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id, i.item_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_a and o.order_id = :order_b join order_item i on i.order_id = o.order_id where c.customer_id = :customer_id;',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -168,7 +173,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed instead of dropping mixed parameter and literal intermediate-key constraints', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_id and o.order_id = 42 where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -185,7 +190,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('keeps direct two-hop propagation for semantically identical intermediate constraints', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_id = :order_id and o.order_id = :order_id where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -202,7 +207,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves an outer-WHERE parameter through a two-hop NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -220,7 +225,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     });
     expect(plan.steps[2].sql).toContain('where customer_id = :customer_id and order_state = :order_state');
 
-    const reordered = generateFixtureExtractionPlanV0(input(
+    const reordered = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id) and o.order_state = :order_state;',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -232,7 +237,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves an outer-WHERE literal through a two-hop NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = 'open' and not exists (select 1 from order_item i where i.order_id = o.order_id);",
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -250,7 +255,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for an outer-WHERE non-equality on an intermediate occurrence', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state <> 'closed' and not exists (select 1 from order_item i where i.order_id = o.order_id);",
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -267,7 +272,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves a root-WHERE parameter through a dependent NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state = :customer_state and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -289,7 +294,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves a root-WHERE literal through a dependent NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state = 'active' and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -306,7 +311,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for a root-WHERE non-equality on a dependent NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state <> 'closed' and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -324,7 +329,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves an anchor-side JOIN parameter through both propagation hops', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state = :customer_state where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -345,7 +350,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves an anchor-side JOIN literal through a dependent NOT EXISTS boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state = 'active' where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -360,7 +365,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails anchor-side JOIN non-equality propagation closed', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state <> 'closed' where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -374,7 +379,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails an anchor-side outer-JOIN constraint closed instead of filtering the anchor row', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c left join purchase_order o on o.customer_id = c.customer_id and c.customer_state = :customer_state where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -389,7 +394,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails a root-correlated NOT EXISTS closed for a plain sibling INNER JOIN prerequisite', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -409,7 +414,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails a root-correlated NOT EXISTS closed for a parameterized sibling INNER JOIN prerequisite', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state = :order_state where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -427,7 +432,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('does not retain a false absence claim for a literal sibling INNER JOIN prerequisite', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state = 'open' where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -442,7 +447,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('does not retain a false absence claim for a non-equality sibling INNER JOIN prerequisite', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state <> 'closed' where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -457,7 +462,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('keeps a root-correlated NOT EXISTS independent of a sibling LEFT JOIN', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id and o.order_state = :order_state where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -476,7 +481,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails a root-correlated NOT EXISTS closed when an outer-WHERE parameter null-rejects a LEFT relation', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -496,7 +501,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails a root-correlated NOT EXISTS closed when an outer-WHERE literal null-rejects a LEFT relation', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = 'open' and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);",
       'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -513,7 +518,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails a root-correlated NOT EXISTS closed through a LEFT-then-INNER population chain', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id join order_item i on i.order_id = o.order_id where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id)); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -531,7 +536,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('classifies null-rejected LEFT population closure independently of WHERE term ordering', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where o.order_state = :order_state and c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -546,7 +551,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('finds a transitive INNER population prerequisite across a longer LEFT chain', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id left join order_item i on i.order_id = o.order_id join catalog_item p on p.item_id = i.item_id where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table catalog_item (item_id integer primary key); create table order_item (order_item_id integer primary key, order_id integer not null references purchase_order(order_id), item_id integer not null references catalog_item(item_id)); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
       'customer',
@@ -561,7 +566,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('deduplicates identical JOIN-ON and outer-WHERE parameter constraints', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state = :order_state where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from order_item i where i.order_id = o.order_id);',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -574,7 +579,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves multiple outer-WHERE intermediate constraints across a two-hop JOIN boundary', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select c.customer_id, o.order_id, i.item_id from customer c join purchase_order o on o.customer_id = c.customer_id join order_item i on i.order_id = o.order_id where c.customer_id = :customer_id and o.order_id = :order_a and o.order_id = :order_b;',
       'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
       'customer',
@@ -596,7 +601,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     ['exists', 'rows_may_be_present', false],
     ['not exists', 'empty_result_required', true],
   ] as const)('retains a bounded related step for %s', (operator, expectation, empty) => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       `select m.member_id, m.display_label from member as m where m.member_id = :member_id and ${operator} (select 1 from subscription as s where s.member_id = m.member_id);`,
       'create table member (member_id integer primary key, display_label text not null); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
       'member',
@@ -615,7 +620,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves safe EXISTS parameter filters and fails closed on unrepresented filters', () => {
-    const filtered = generateFixtureExtractionPlanV0(input(
+    const filtered = generateFixtureExtractionPlan(input(
       'select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state = :subscription_state);',
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
       'member',
@@ -628,7 +633,7 @@ describe('generateFixtureExtractionPlanV0', () => {
       resultExpectation: { kind: 'empty_result_required' },
     });
 
-    const literalFiltered = generateFixtureExtractionPlanV0(input(
+    const literalFiltered = generateFixtureExtractionPlan(input(
       "select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state = 'active');",
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
       'member',
@@ -641,7 +646,7 @@ describe('generateFixtureExtractionPlanV0', () => {
       resultExpectation: { kind: 'empty_result_required' },
     });
 
-    const nonEqualityFiltered = generateFixtureExtractionPlanV0(input(
+    const nonEqualityFiltered = generateFixtureExtractionPlan(input(
       "select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state <> 'inactive');",
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
       'member',
@@ -654,7 +659,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for semantically distinct equalities on the correlated foreign-key column', () => {
-    const differentParameter = generateFixtureExtractionPlanV0(input(
+    const differentParameter = generateFixtureExtractionPlan(input(
       'select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.member_id = :other_member_id);',
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id));',
       'member',
@@ -668,7 +673,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(differentParameter.blockedReasons.map((reason) => reason.code))
       .toEqual(['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
 
-    const numericLiteral = generateFixtureExtractionPlanV0(input(
+    const numericLiteral = generateFixtureExtractionPlan(input(
       'select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.member_id = 999);',
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id));',
       'member',
@@ -682,7 +687,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(numericLiteral.blockedReasons.map((reason) => reason.code))
       .toEqual(['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
 
-    const identicalParameter = generateFixtureExtractionPlanV0(input(
+    const identicalParameter = generateFixtureExtractionPlan(input(
       'select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.member_id = :member_id);',
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id));',
       'member',
@@ -697,7 +702,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves only parser-round-trip-stable literal equalities', () => {
-    const quoted = generateFixtureExtractionPlanV0(input(
+    const quoted = generateFixtureExtractionPlan(input(
       "select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.marker = 'O''Reilly');",
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), marker text);',
       'member',
@@ -706,7 +711,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expectReadySql(quoted);
     expect(quoted.steps[1].sql).toBe("select marker, member_id, subscription_id from subscription where member_id = :member_id and marker = 'O''Reilly';");
 
-    const unicode = generateFixtureExtractionPlanV0(input(
+    const unicode = generateFixtureExtractionPlan(input(
       "select m.member_id from member m where m.member_id = :member_id and exists (select 1 from subscription s where s.member_id = m.member_id and s.marker = '東京');",
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), marker text);',
       'member',
@@ -715,7 +720,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expectReadySql(unicode);
     expect(unicode.steps[1].sql).toContain("marker = '東京'");
 
-    const numeric = generateFixtureExtractionPlanV0(input(
+    const numeric = generateFixtureExtractionPlan(input(
       'select m.member_id from member m where m.member_id = :member_id and exists (select 1 from subscription s where s.member_id = m.member_id and s.marker_code = 42);',
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), marker_code integer);',
       'member',
@@ -724,7 +729,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expectReadySql(numeric);
     expect(numeric.steps[1].sql).toContain('marker_code = 42');
 
-    const backslash = generateFixtureExtractionPlanV0(input(
+    const backslash = generateFixtureExtractionPlan(input(
       String.raw`select m.member_id from member m where m.member_id = :member_id and exists (select 1 from subscription s where s.member_id = m.member_id and s.marker = 'C:\temp');`,
       'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), marker text);',
       'member',
@@ -737,7 +742,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('preserves a related local parameter predicate for the aggregate stretch scenario', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select a.account_id, a.display_label, coalesce(sum(p.amount), 0)::integer as paid_amount, count(p.payment_id)::integer as payment_count from billing_account as a left join synthetic_payment as p on p.account_id = a.account_id and p.payment_state = :payment_state where a.account_id = :account_id group by a.account_id, a.display_label;',
       'create table billing_account (account_id integer primary key, display_label text not null); create table synthetic_payment (payment_id integer primary key, account_id integer not null references billing_account(account_id), payment_state text not null, amount integer not null);',
       'billing_account',
@@ -754,7 +759,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('flattens a referenced SELECT-only CTE and excludes an unused sibling CTE', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'with chosen as (select t.ticket_id, t.subject from support_ticket t where t.ticket_id = :ticket_id), unused as (select a.audit_id from audit_log a) select ticket_id, subject from chosen;',
       'create table support_ticket (ticket_id integer primary key, subject text not null); create table audit_log (audit_id integer primary key);',
       'support_ticket',
@@ -767,7 +772,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('blocks a DML CTE with RETURNING in catalog order and emits no SQL', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       "with changed as (update synthetic_document set document_state = 'archived' where document_id = :document_id returning document_id, document_state) select document_id, document_state from changed;",
       'create table synthetic_document (document_id integer primary key, document_state text not null);',
       'synthetic_document',
@@ -780,13 +785,13 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('returns the aligned fail-closed outcomes for required negative variants', () => {
-    const missingKey = generateFixtureExtractionPlanV0({
+    const missingKey = generateFixtureExtractionPlan({
       ...input('select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;', 'create table support_ticket (ticket_id integer primary key);', 'support_ticket', 'ticket_id'),
       reproductionKey: { parameterNames: [], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
     });
     expect([missingKey.status, missingKey.reproductionKey.status, missingKey.blockedReasons.map((item) => item.code)]).toEqual(['blocked', 'blocked', ['REPRODUCTION_KEY_REQUIRED']]);
 
-    const nonEquality = generateFixtureExtractionPlanV0(input(
+    const nonEquality = generateFixtureExtractionPlan(input(
       'select p.parent_id, c.child_id from range_parent as p join range_child as c on c.parent_score > p.minimum_score where p.parent_id = :parent_id;',
       'create table range_parent (parent_id integer primary key, minimum_score integer not null); create table range_child (child_id integer primary key, parent_score integer not null);',
       'range_parent',
@@ -796,7 +801,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(nonEquality.steps.map((step) => step.sql)).toEqual(['select minimum_score, parent_id from range_parent where parent_id = :parent_id;', null]);
     expect(nonEquality.blockedReasons.map((item) => item.code)).toEqual(['NON_EQUALITY_JOIN_UNSUPPORTED']);
 
-    const ambiguousSchema = generateFixtureExtractionPlanV0(input(
+    const ambiguousSchema = generateFixtureExtractionPlan(input(
       'select p.parent_id from parent as p where p.parent_id = :parent_id;',
       'create table public.parent (parent_id integer primary key); create table audit.parent (parent_id integer primary key);',
       'parent',
@@ -805,7 +810,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect([ambiguousSchema.status, ambiguousSchema.reproductionKey.status, ambiguousSchema.blockedReasons.map((item) => item.code)])
       .toEqual(['blocked', 'ambiguous', ['ROOT_RELATION_UNRESOLVED']]);
 
-    const missingFk = generateFixtureExtractionPlanV0(input(
+    const missingFk = generateFixtureExtractionPlan(input(
       'select p.parent_id, c.child_id from fk_parent as p join fk_child as c on c.parent_id = p.parent_id where p.parent_id = :parent_id;',
       'create table fk_parent (parent_id integer primary key); create table fk_child (child_id integer primary key, parent_id integer not null);',
       'fk_parent',
@@ -814,7 +819,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(missingFk.status).toBe('partial');
     expect(missingFk.blockedReasons.map((item) => item.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
 
-    const wildcard = generateFixtureExtractionPlanV0(input(
+    const wildcard = generateFixtureExtractionPlan(input(
       'select u.* from unknown_projection as u where u.id = :id;',
       undefined,
       'unknown_projection',
@@ -823,7 +828,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect([wildcard.status, wildcard.reproductionKey.status, wildcard.blockedReasons.map((item) => item.code)])
       .toEqual(['blocked', 'blocked', ['UNRESOLVED_WILDCARD']]);
 
-    const recursive = generateFixtureExtractionPlanV0(input(
+    const recursive = generateFixtureExtractionPlan(input(
       'with recursive chain(node_id, parent_id) as (select n.node_id, n.parent_id from hierarchy_node as n where n.node_id = :node_id union all select n.node_id, n.parent_id from hierarchy_node as n join chain as c on n.parent_id = c.node_id) select node_id, parent_id from chain;',
       'create table hierarchy_node (node_id integer primary key, parent_id integer null references hierarchy_node(node_id));',
       'hierarchy_node',
@@ -832,7 +837,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect([recursive.status, recursive.reproductionKey.status, recursive.blockedReasons.map((item) => item.code)])
       .toEqual(['blocked', 'blocked', ['RECURSIVE_CTE_UNSUPPORTED']]);
 
-    const unbounded = generateFixtureExtractionPlanV0(input(
+    const unbounded = generateFixtureExtractionPlan(input(
       'select e.event_id, e.event_kind from synthetic_event as e where e.event_kind = :event_kind;',
       'create table synthetic_event (event_id integer primary key, event_kind text not null);',
       'synthetic_event',
@@ -843,7 +848,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('does not first-match an ambiguous related relation across schemas', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select p.parent_id, c.child_id from public.parent p join child c on c.parent_id = p.parent_id where p.parent_id = :parent_id;',
       'create table public.parent (parent_id integer primary key); create table public.child (child_id integer primary key, parent_id integer not null references public.parent(parent_id)); create table audit.child (child_id integer primary key, parent_id integer not null references audit.parent(parent_id)); create table audit.parent (parent_id integer primary key);',
       'public.parent',
@@ -855,7 +860,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed when used schema keys or foreign keys reference nonexistent columns', () => {
-    const malformedRoot = generateFixtureExtractionPlanV0(input(
+    const malformedRoot = generateFixtureExtractionPlan(input(
       'select t.ticket_id from support_ticket t where t.missing_id = :missing_id;',
       'create table support_ticket (ticket_id integer, primary key (missing_id));',
       'support_ticket',
@@ -865,7 +870,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(malformedRoot.steps).toEqual([]);
     expect(malformedRoot.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
 
-    const malformedSource = generateFixtureExtractionPlanV0(input(
+    const malformedSource = generateFixtureExtractionPlan(input(
       'select p.parent_id, c.child_id from parent p join child c on c.missing_parent_id = p.parent_id where p.parent_id = :parent_id;',
       'create table parent (parent_id integer primary key); create table child (child_id integer primary key, foreign key (missing_parent_id) references parent(parent_id));',
       'parent',
@@ -875,7 +880,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(malformedSource.steps).toEqual([]);
     expect(malformedSource.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
 
-    const malformedReference = generateFixtureExtractionPlanV0(input(
+    const malformedReference = generateFixtureExtractionPlan(input(
       'select p.parent_id, c.child_id from parent p join child c on c.parent_id = p.parent_id where p.parent_id = :parent_id;',
       'create table parent (parent_id integer primary key); create table child (child_id integer primary key, parent_id integer, foreign key (parent_id) references parent(missing_parent_id));',
       'parent',
@@ -887,7 +892,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('rejects related positional parameters before emitting a bounded step', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select p.id, c.id from parent p join child c on c.parent_id = p.id and c.state = $1 where p.id = :id;',
       'create table parent (id integer primary key); create table child (id integer primary key, parent_id integer references parent(id), state text);',
       'parent',
@@ -901,7 +906,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('blocks involved or unattributed schema diagnostics conservatively', () => {
-    const involved = generateFixtureExtractionPlanV0({
+    const involved = generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       ddl: [{
         filePath: 'support_ticket.sql',
@@ -914,7 +919,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(involved.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
     expect(involved.sourceEvidence.some((evidence) => evidence.kind === 'schema_diagnostic')).toBe(true);
 
-    const directFacts = generateFixtureExtractionPlanV0({
+    const directFacts = generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       schemaFacts: {
         kind: 'schema-facts',
@@ -934,7 +939,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(directFacts.steps).toEqual([]);
     expect(directFacts.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
 
-    const unrelated = generateFixtureExtractionPlanV0({
+    const unrelated = generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       ddl: [
         { filePath: 'support_ticket.sql', sql: 'create table support_ticket (ticket_id integer primary key);' },
@@ -946,7 +951,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(unrelated.steps).toEqual([]);
     expect(unrelated.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
 
-    const mixedFile = generateFixtureExtractionPlanV0({
+    const mixedFile = generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       ddl: [
         { filePath: 'support.sql', sql: 'create table support_ticket (ticket_id integer primary key);' },
@@ -960,7 +965,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('blocks a reproduction parameter mapped to multiple normalized root columns', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id and t.owner_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, owner_id integer not null);',
       'support_ticket',
@@ -973,7 +978,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed when parser facts cannot distinguish quoted from case-variant identifiers', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select p."ID" from "Parent" p where p."ID" = :id;',
       'create table "Parent" ("ID" integer primary key);',
       'Parent',
@@ -989,14 +994,14 @@ describe('generateFixtureExtractionPlanV0', () => {
     const sentinel = 'fixture-secret-sentinel';
     let error: unknown;
     try {
-      generateFixtureExtractionPlanV0({
+      generateFixtureExtractionPlan({
         ...input('select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;', 'create table support_ticket (ticket_id integer primary key);', 'support_ticket', 'ticket_id'),
         bindings: { ticket_id: sentinel },
-      } as unknown as FixtureExtractionInputV0);
+      } as unknown as FixtureExtractionInput);
     } catch (caught) {
       error = caught;
     }
-    expect(error).toBeInstanceOf(FixtureExtractionInputErrorV0);
+    expect(error).toBeInstanceOf(FixtureExtractionInputError);
     expect(error).toMatchObject({ code: 'VALUE_BEARING_INPUT_FORBIDDEN' });
     expect(String(error)).not.toContain(sentinel);
   });
@@ -1004,17 +1009,17 @@ describe('generateFixtureExtractionPlanV0', () => {
   it.each(['binding', 'bindings', 'bindingValue', 'bindingValues', 'value', 'values', 'providedValues'])
   ('rejects forbidden input field %s at the top-level boundary', (field) => {
     const sentinel = `sentinel-${field}`;
-    expect(() => generateFixtureExtractionPlanV0({
+    expect(() => generateFixtureExtractionPlan({
       ...input('select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;', 'create table support_ticket (ticket_id integer primary key);', 'support_ticket', 'ticket_id'),
       [field]: sentinel,
-    } as unknown as FixtureExtractionInputV0)).toThrow(expect.objectContaining({
+    } as unknown as FixtureExtractionInput)).toThrow(expect.objectContaining({
       code: 'VALUE_BEARING_INPUT_FORBIDDEN',
       message: 'Value-bearing input is forbidden for fixture extraction.',
     }));
   });
 
-  it('blocks a composite root in minimum V0 without emitting capture SQL', () => {
-    const plan = generateFixtureExtractionPlanV0({
+  it('blocks a composite root in minimum  without emitting capture SQL', () => {
+    const plan = generateFixtureExtractionPlan({
       sql: 'select t.tenant_id, t.ticket_id from tenant_ticket t where t.tenant_id = :tenant_id and t.ticket_id = :ticket_id;',
       ddl: [{ sql: 'create table tenant_ticket (tenant_id integer not null, ticket_id integer not null, primary key (tenant_id, ticket_id));' }],
       reproductionKey: {
@@ -1029,20 +1034,20 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('rejects malformed SchemaFacts with the fixed input-shape error', () => {
-    expect(() => generateFixtureExtractionPlanV0({
+    expect(() => generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       schemaFacts: {
         kind: 'schema-facts',
         version: 1,
         tables: { support_ticket: null },
-      } as unknown as FixtureExtractionInputV0['schemaFacts'],
+      } as unknown as FixtureExtractionInput['schemaFacts'],
       reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
     })).toThrow(expect.objectContaining({
       code: 'INPUT_SHAPE_INVALID',
       message: 'Fixture extraction input has an invalid shape.',
     }));
 
-    expect(() => generateFixtureExtractionPlanV0({
+    expect(() => generateFixtureExtractionPlan({
       sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       schemaFacts: {
         kind: 'schema-facts',
@@ -1063,7 +1068,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for an unsupported scalar subquery instead of claiming ready closure', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select t.ticket_id, (select max(a.audit_id) from audit_log a) as last_audit from support_ticket t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key); create table audit_log (audit_id integer primary key);',
       'support_ticket',
@@ -1075,7 +1080,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for set operations until complete branch proof exists', () => {
-    const plan = generateFixtureExtractionPlanV0(input(
+    const plan = generateFixtureExtractionPlan(input(
       'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id union all select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key);',
       'support_ticket',
@@ -1091,9 +1096,9 @@ describe('generateFixtureExtractionPlanV0', () => {
     const ddlA = { sql: 'create table account (account_id integer primary key, display_label text not null);' };
     const ddlB = { sql: 'create table account_note (note_id integer primary key, account_id integer not null references account(account_id));' };
     const base = { sql, reproductionKey: { parameterNames: ['account_id'], rootRelation: 'account', rootColumns: ['account_id'] } } as const;
-    const left = generateFixtureExtractionPlanV0({ ...base, ddl: [ddlA, ddlB] });
-    const right = generateFixtureExtractionPlanV0({ ...base, ddl: [ddlB, ddlA] });
-    expect(canonicalFixtureExtractionPlanJsonV0(left)).toBe(canonicalFixtureExtractionPlanJsonV0(right));
+    const left = generateFixtureExtractionPlan({ ...base, ddl: [ddlA, ddlB] });
+    const right = generateFixtureExtractionPlan({ ...base, ddl: [ddlB, ddlA] });
+    expect(canonicalFixtureExtractionPlanJson(left)).toBe(canonicalFixtureExtractionPlanJson(right));
 
     const evidenceIds = new Set(left.sourceEvidence.map((item) => item.id));
     const stepIds = new Set(left.steps.map((item) => item.id));
@@ -1121,12 +1126,12 @@ describe('generateFixtureExtractionPlanV0', () => {
     };
     const alpha = { code: 'alpha', message: 'First warning.', severity: 'warning' as const };
     const beta = { code: 'beta', message: 'Second warning.', severity: 'warning' as const };
-    const left = generateFixtureExtractionPlanV0({ ...base, schemaFacts: { ...schemaFacts, diagnostics: [alpha, beta] } });
-    const right = generateFixtureExtractionPlanV0({ ...base, schemaFacts: { ...schemaFacts, diagnostics: [beta, alpha] } });
+    const left = generateFixtureExtractionPlan({ ...base, schemaFacts: { ...schemaFacts, diagnostics: [alpha, beta] } });
+    const right = generateFixtureExtractionPlan({ ...base, schemaFacts: { ...schemaFacts, diagnostics: [beta, alpha] } });
 
     expect(left.status).toBe('blocked');
     expect(right.status).toBe('blocked');
-    expect(canonicalFixtureExtractionPlanJsonV0(left)).toBe(canonicalFixtureExtractionPlanJsonV0(right));
+    expect(canonicalFixtureExtractionPlanJson(left)).toBe(canonicalFixtureExtractionPlanJson(right));
     expect(left.sourceEvidence.map((evidence) => evidence.sourceId)).toEqual([
       'schema-diagnostic:0001:alpha',
       'schema-diagnostic:0002:beta',
@@ -1134,7 +1139,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('blocks top-level DML and volatile function sources before lineage analysis', () => {
-    const dml = generateFixtureExtractionPlanV0(input(
+    const dml = generateFixtureExtractionPlan(input(
       "update support_ticket set subject = 'changed' where ticket_id = :ticket_id returning ticket_id;",
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1142,7 +1147,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     ));
     expect(dml.blockedReasons.map((item) => item.code)).toEqual(['DML_STATEMENT_UNSUPPORTED', 'RETURNING_UNSUPPORTED']);
 
-    const volatile = generateFixtureExtractionPlanV0(input(
+    const volatile = generateFixtureExtractionPlan(input(
       'select r.value from random_rows() as r where r.value = :value;',
       'create table random_rows (value integer primary key);',
       'random_rows',
@@ -1152,7 +1157,7 @@ describe('generateFixtureExtractionPlanV0', () => {
   });
 
   it('fails closed for scalar functions whose volatility is not proven', () => {
-    const unclassified = generateFixtureExtractionPlanV0(input(
+    const unclassified = generateFixtureExtractionPlan(input(
       'select lower(t.subject) from support_ticket as t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1162,7 +1167,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(unclassified.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
     expect(unclassified.steps).toEqual([]);
 
-    const resultShapeAffecting = generateFixtureExtractionPlanV0(input(
+    const resultShapeAffecting = generateFixtureExtractionPlan(input(
       'select distinct on (lower(t.subject)) t.ticket_id from support_ticket as t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1172,7 +1177,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(resultShapeAffecting.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
     expect(resultShapeAffecting.steps).toEqual([]);
 
-    const populationAffecting = generateFixtureExtractionPlanV0(input(
+    const populationAffecting = generateFixtureExtractionPlan(input(
       "select a.account_id from billing_account as a left join synthetic_payment as p on p.account_id = a.account_id and lower(p.payment_state) = 'paid' where a.account_id = :account_id;",
       'create table billing_account (account_id integer primary key); create table synthetic_payment (payment_id integer primary key, account_id integer not null references billing_account(account_id), payment_state text not null);',
       'billing_account',
@@ -1182,7 +1187,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(populationAffecting.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
     expect(populationAffecting.steps).toEqual([]);
 
-    const qualifiedLookalike = generateFixtureExtractionPlanV0(input(
+    const qualifiedLookalike = generateFixtureExtractionPlan(input(
       'select custom.sum(t.ticket_id) from support_ticket as t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1192,7 +1197,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(qualifiedLookalike.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
     expect(qualifiedLookalike.steps).toEqual([]);
 
-    const knownVolatile = generateFixtureExtractionPlanV0(input(
+    const knownVolatile = generateFixtureExtractionPlan(input(
       'select random(), t.subject from support_ticket as t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1202,7 +1207,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(knownVolatile.blockedReasons.map((item) => item.code)).toEqual(['VOLATILE_SOURCE_UNSUPPORTED']);
     expect(knownVolatile.steps).toEqual([]);
 
-    const functionFree = generateFixtureExtractionPlanV0(input(
+    const functionFree = generateFixtureExtractionPlan(input(
       'select t.subject from support_ticket as t where t.ticket_id = :ticket_id;',
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',
@@ -1214,7 +1219,7 @@ describe('generateFixtureExtractionPlanV0', () => {
 
   it('blocks parser-classified environment state without matching SQL text', () => {
     for (const expression of ['current_timestamp', 'current_date']) {
-      const plan = generateFixtureExtractionPlanV0(input(
+      const plan = generateFixtureExtractionPlan(input(
         `select ${expression}, t.subject from support_ticket as t where t.ticket_id = :ticket_id;`,
         'create table support_ticket (ticket_id integer primary key, subject text not null);',
         'support_ticket',
@@ -1236,7 +1241,7 @@ describe('generateFixtureExtractionPlanV0', () => {
       'session_user',
       'user',
     ]) {
-      const plan = generateFixtureExtractionPlanV0(input(
+      const plan = generateFixtureExtractionPlan(input(
         `select ${expression}, t.subject from support_ticket as t where t.ticket_id = :ticket_id;`,
         'create table support_ticket (ticket_id integer primary key, subject text not null);',
         'support_ticket',
@@ -1246,7 +1251,7 @@ describe('generateFixtureExtractionPlanV0', () => {
       expect(plan.steps).toEqual([]);
     }
 
-    const populationAffecting = generateFixtureExtractionPlanV0(input(
+    const populationAffecting = generateFixtureExtractionPlan(input(
       'select t.subject from support_ticket as t where t.ticket_id = :ticket_id and t.updated_at <= current_timestamp;',
       'create table support_ticket (ticket_id integer primary key, subject text not null, updated_at timestamp not null);',
       'support_ticket',
@@ -1255,7 +1260,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(populationAffecting.blockedReasons.map((item) => item.code)).toEqual(['ENVIRONMENT_STATE_UNSUPPORTED']);
     expect(populationAffecting.steps).toEqual([]);
 
-    const textLiteral = generateFixtureExtractionPlanV0(input(
+    const textLiteral = generateFixtureExtractionPlan(input(
       "select 'current_date' as label, t.subject from support_ticket as t where t.ticket_id = :ticket_id;",
       'create table support_ticket (ticket_id integer primary key, subject text not null);',
       'support_ticket',

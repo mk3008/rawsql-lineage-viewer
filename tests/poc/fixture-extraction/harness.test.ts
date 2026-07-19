@@ -1,6 +1,6 @@
 import { SqlParser, SimpleSelectQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
-import { generateFixtureExtractionPlanV0 } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlanV0';
+import { generateFixtureExtractionPlan } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlan';
 import { acceptedHarnessCases } from './cases/acceptedCases';
 import { assertExpectedCapture, buildParameterizedInsert, requireExecutableStep } from './harness';
 import { compileNamedParameters } from './namedParameters';
@@ -9,7 +9,7 @@ import { compareStructuredResults } from './results';
 describe('fixture extraction external harness plan gate', () => {
   for (const scenario of acceptedHarnessCases) {
     it(`${scenario.id} honors its accepted plan status without executing SQL`, () => {
-      const plan = generateFixtureExtractionPlanV0({
+      const plan = generateFixtureExtractionPlan({
         sql: scenario.sql,
         ddl: [{ sql: scenario.ddl }],
         reproductionKey: scenario.reproductionKey,
