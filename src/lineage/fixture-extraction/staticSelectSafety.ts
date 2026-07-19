@@ -7,6 +7,7 @@ import {
   InsertQuery,
   MergeQuery,
   ParenSource,
+  RawString,
   SimpleSelectQuery,
   SqlParser,
   SubQuerySource,
@@ -31,8 +32,23 @@ const BLOCKED_CODE_RANK: Partial<Record<FixtureExtractionBlockedCodeV0, number>>
   RETURNING_UNSUPPORTED: 3,
   DML_CTE_UNSUPPORTED: 4,
   RECURSIVE_CTE_UNSUPPORTED: 5,
+  ENVIRONMENT_STATE_UNSUPPORTED: 6,
   VOLATILE_SOURCE_UNSUPPORTED: 7,
 };
+
+const ENVIRONMENT_STATE_RAW_VALUES = new Set([
+  'current_catalog',
+  'current_date',
+  'current_role',
+  'current_schema',
+  'current_time',
+  'current_timestamp',
+  'current_user',
+  'localtime',
+  'localtimestamp',
+  'session_user',
+  'user',
+]);
 
 /** Parser-backed recursive preflight. Syntax acceptance is not execution authorization. */
 export function inspectStaticSelectSafetyV0(sql: string): StaticSelectSafetyResultV0 {
@@ -84,7 +100,8 @@ function visitSelect(query: SimpleSelectQuery | BinarySelectQuery, path: string,
   }
 
   const values = [
-    query.selectClause,
+    ...query.selectClause.items.map((item) => item.value),
+    query.selectClause.distinct,
     query.whereClause?.condition,
     query.havingClause?.condition,
     ...(query.groupByClause?.grouping ?? []),
@@ -127,6 +144,9 @@ function visitValue(value: unknown, path: string, blockers: StaticSelectSafetyBl
   if (value instanceof InlineQuery) {
     visitSelectQueryLike(value.selectQuery, `${path}.inline`, blockers, false);
     return;
+  }
+  if (value instanceof RawString && ENVIRONMENT_STATE_RAW_VALUES.has(value.value.toLowerCase())) {
+    blockers.push(blocker('ENVIRONMENT_STATE_UNSUPPORTED', path, `environment:${value.value.toLowerCase()}`));
   }
   if (value instanceof FunctionCall) {
     const functionName = identifierValue(value.name);

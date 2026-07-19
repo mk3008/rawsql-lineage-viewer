@@ -455,4 +455,57 @@ describe('generateFixtureExtractionPlanV0', () => {
     expectReadySql(functionFree);
     expect(functionFree.steps).toHaveLength(1);
   });
+
+  it('blocks parser-classified environment state without matching SQL text', () => {
+    for (const expression of ['current_timestamp', 'current_date']) {
+      const plan = generateFixtureExtractionPlanV0(input(
+        `select ${expression}, t.subject from support_ticket as t where t.ticket_id = :ticket_id;`,
+        'create table support_ticket (ticket_id integer primary key, subject text not null);',
+        'support_ticket',
+        'ticket_id',
+      ));
+      expect(plan.status).toBe('blocked');
+      expect(plan.blockedReasons.map((item) => item.code)).toEqual(['ENVIRONMENT_STATE_UNSUPPORTED']);
+      expect(plan.steps).toEqual([]);
+    }
+
+    for (const expression of [
+      'current_catalog',
+      'current_role',
+      'current_schema',
+      'current_time',
+      'current_user',
+      'localtime',
+      'localtimestamp',
+      'session_user',
+      'user',
+    ]) {
+      const plan = generateFixtureExtractionPlanV0(input(
+        `select ${expression}, t.subject from support_ticket as t where t.ticket_id = :ticket_id;`,
+        'create table support_ticket (ticket_id integer primary key, subject text not null);',
+        'support_ticket',
+        'ticket_id',
+      ));
+      expect(plan.blockedReasons.map((item) => item.code)).toEqual(['ENVIRONMENT_STATE_UNSUPPORTED']);
+      expect(plan.steps).toEqual([]);
+    }
+
+    const populationAffecting = generateFixtureExtractionPlanV0(input(
+      'select t.subject from support_ticket as t where t.ticket_id = :ticket_id and t.updated_at <= current_timestamp;',
+      'create table support_ticket (ticket_id integer primary key, subject text not null, updated_at timestamp not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(populationAffecting.blockedReasons.map((item) => item.code)).toEqual(['ENVIRONMENT_STATE_UNSUPPORTED']);
+    expect(populationAffecting.steps).toEqual([]);
+
+    const textLiteral = generateFixtureExtractionPlanV0(input(
+      "select 'current_date' as label, t.subject from support_ticket as t where t.ticket_id = :ticket_id;",
+      'create table support_ticket (ticket_id integer primary key, subject text not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expectReadySql(textLiteral);
+    expect(textLiteral.steps).toHaveLength(1);
+  });
 });
