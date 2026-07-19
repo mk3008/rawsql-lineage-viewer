@@ -870,7 +870,7 @@ function deriveSteps(graph: OccurrenceGraph, rootDraft: BoundedDraft, evidence: 
         edge,
         anchor,
         evidence,
-        hasSiblingInnerJoinPopulationPrerequisite(graph, edge),
+        hasPopulationRequiredJoinPrerequisite(graph, edge),
       );
       drafts.push(draft);
       if (!isUnknownDraft(draft)) boundedByOccurrence.set(edge.related, draft);
@@ -894,21 +894,39 @@ function deriveSteps(graph: OccurrenceGraph, rootDraft: BoundedDraft, evidence: 
   return drafts;
 }
 
-function hasSiblingInnerJoinPopulationPrerequisite(graph: OccurrenceGraph, edge: OccurrenceEdge): boolean {
+function hasPopulationRequiredJoinPrerequisite(graph: OccurrenceGraph, edge: OccurrenceEdge): boolean {
   if (edge.kind !== 'exists' || !edge.notExists) return false;
-  return graph.edges.some((candidate) => (
-    candidate !== edge
-    && candidate.kind === 'join'
-    && candidate.anchor === edge.anchor
-    && ['join', 'inner join'].includes(candidate.joinType)
+  const reachableOccurrences = new Set<Occurrence>([edge.anchor]);
+  const reachableJoinEdges = new Set<OccurrenceEdge>();
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const candidate of graph.edges) {
+      if (candidate.kind !== 'join' || reachableJoinEdges.has(candidate) || !reachableOccurrences.has(candidate.anchor)) continue;
+      reachableJoinEdges.add(candidate);
+      if (!reachableOccurrences.has(candidate.related)) {
+        reachableOccurrences.add(candidate.related);
+        progress = true;
+      }
+    }
+  }
+  return [...reachableJoinEdges].some((candidate) => (
+    ['join', 'inner join'].includes(candidate.joinType)
+    || (candidate.joinType === 'left join' && isNullRejectedPopulationOccurrence(candidate.related))
   ));
+}
+
+function isNullRejectedPopulationOccurrence(occurrence: Occurrence): boolean {
+  return occurrence.populationParameterEqualities.length > 0
+    || occurrence.populationStaticEqualities.length > 0
+    || occurrence.unsafePopulationPredicate;
 }
 
 function deriveRelatedStep(
   edge: OccurrenceEdge,
   anchor: BoundedDraft,
   evidence: EvidenceRegistry,
-  hasSiblingInnerJoinPrerequisite = false,
+  hasPopulationPrerequisite = false,
 ): StepDraft {
   const attemptedHopCount = anchor.hop + 1;
   const derivation: FixtureExtractionPredicateDerivationV0 = edge.kind === 'exists'
@@ -919,7 +937,7 @@ function deriveRelatedStep(
   if (attemptedHopCount > 2) {
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
-  if (hasSiblingInnerJoinPrerequisite) {
+  if (hasPopulationPrerequisite) {
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
   if (edge.unsafePredicate || anchor.occurrence.unsafePopulationPredicate) {

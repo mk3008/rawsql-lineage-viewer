@@ -475,6 +475,91 @@ describe('generateFixtureExtractionPlanV0', () => {
     });
   });
 
+  it('fails a root-correlated NOT EXISTS closed when an outer-WHERE parameter null-rejects a LEFT relation', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    const orderStep = plan.steps.find((step) => step.relationName === 'purchase_order');
+    const alertStep = plan.steps.find((step) => step.relationName === 'customer_alert');
+    expect(plan.status).toBe('partial');
+    expect(orderStep?.sql).toContain('order_state = :order_state');
+    expect(alertStep).toMatchObject({
+      sql: null,
+      resultExpectation: { kind: 'rows_may_be_present' },
+      boundary: { status: 'unknown' },
+    });
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('fails a root-correlated NOT EXISTS closed when an outer-WHERE literal null-rejects a LEFT relation', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      "select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where c.customer_id = :customer_id and o.order_state = 'open' and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);",
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    const orderStep = plan.steps.find((step) => step.relationName === 'purchase_order');
+    const alertStep = plan.steps.find((step) => step.relationName === 'customer_alert');
+    expect(plan.status).toBe('partial');
+    expect(orderStep?.sql).toContain("order_state = 'open'");
+    expect(alertStep?.sql).toBeNull();
+    expect(alertStep?.resultExpectation.kind).toBe('rows_may_be_present');
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('fails a root-correlated NOT EXISTS closed through a LEFT-then-INNER population chain', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id join order_item i on i.order_id = o.order_id where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id)); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    const alertStep = plan.steps.find((step) => step.relationName === 'customer_alert');
+    expect(plan.status).toBe('partial');
+    expect(alertStep).toMatchObject({
+      sql: null,
+      resultExpectation: { kind: 'rows_may_be_present' },
+      boundary: { status: 'unknown' },
+    });
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('classifies null-rejected LEFT population closure independently of WHERE term ordering', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id where o.order_state = :order_state and c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    const alertStep = plan.steps.find((step) => step.relationName === 'customer_alert');
+    expect(plan.status).toBe('partial');
+    expect(alertStep?.sql).toBeNull();
+    expect(alertStep?.resultExpectation.kind).toBe('rows_may_be_present');
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('finds a transitive INNER population prerequisite across a longer LEFT chain', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id from customer c left join purchase_order o on o.customer_id = c.customer_id left join order_item i on i.order_id = o.order_id join catalog_item p on p.item_id = i.item_id where c.customer_id = :customer_id and not exists (select 1 from customer_alert a where a.customer_id = c.customer_id);',
+      'create table customer (customer_id integer primary key); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table catalog_item (item_id integer primary key); create table order_item (order_item_id integer primary key, order_id integer not null references purchase_order(order_id), item_id integer not null references catalog_item(item_id)); create table customer_alert (alert_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    const alertStep = plan.steps.find((step) => step.relationName === 'customer_alert');
+    expect(plan.status).toBe('partial');
+    expect(alertStep?.sql).toBeNull();
+    expect(alertStep?.resultExpectation.kind).toBe('rows_may_be_present');
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
   it('deduplicates identical JOIN-ON and outer-WHERE parameter constraints', () => {
     const plan = generateFixtureExtractionPlanV0(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state = :order_state where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from order_item i where i.order_id = o.order_id);',
