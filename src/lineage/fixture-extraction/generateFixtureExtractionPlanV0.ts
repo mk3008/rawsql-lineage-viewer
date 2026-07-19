@@ -866,7 +866,12 @@ function deriveSteps(graph: OccurrenceGraph, rootDraft: BoundedDraft, evidence: 
       if (drafts.some((draft) => draft.occurrence === edge.related)) continue;
       const anchor = boundedByOccurrence.get(edge.anchor);
       if (!anchor) continue;
-      const draft = deriveRelatedStep(edge, anchor, evidence);
+      const draft = deriveRelatedStep(
+        edge,
+        anchor,
+        evidence,
+        hasSiblingInnerJoinPopulationPrerequisite(graph, edge),
+      );
       drafts.push(draft);
       if (!isUnknownDraft(draft)) boundedByOccurrence.set(edge.related, draft);
       progress = true;
@@ -889,7 +894,22 @@ function deriveSteps(graph: OccurrenceGraph, rootDraft: BoundedDraft, evidence: 
   return drafts;
 }
 
-function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence: EvidenceRegistry): StepDraft {
+function hasSiblingInnerJoinPopulationPrerequisite(graph: OccurrenceGraph, edge: OccurrenceEdge): boolean {
+  if (edge.kind !== 'exists' || !edge.notExists) return false;
+  return graph.edges.some((candidate) => (
+    candidate !== edge
+    && candidate.kind === 'join'
+    && candidate.anchor === edge.anchor
+    && ['join', 'inner join'].includes(candidate.joinType)
+  ));
+}
+
+function deriveRelatedStep(
+  edge: OccurrenceEdge,
+  anchor: BoundedDraft,
+  evidence: EvidenceRegistry,
+  hasSiblingInnerJoinPrerequisite = false,
+): StepDraft {
   const attemptedHopCount = anchor.hop + 1;
   const derivation: FixtureExtractionPredicateDerivationV0 = edge.kind === 'exists'
     ? 'exists_dependency'
@@ -897,6 +917,9 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   const evidenceKind = edge.kind === 'exists' ? 'exists' : 'join';
   const relationEvidence = createRelatedEvidence(evidence, edge.related, undefined, edge.evidencePath, evidenceKind);
   if (attemptedHopCount > 2) {
+    return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
+  }
+  if (hasSiblingInnerJoinPrerequisite) {
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
   if (edge.unsafePredicate || anchor.occurrence.unsafePopulationPredicate) {
