@@ -676,10 +676,50 @@ function collectWhere(
       });
       continue;
     }
-    if (!(term instanceof BinaryExpression) || rawValue(term.operator) !== '=') continue;
-    const parameter = resolveColumnParameter(term.left, term.right, aliases, termPath, 'where');
-    if (parameter && localSet.has(parameter.occurrence)) parameter.occurrence.parameterEqualities.push(parameter.equality);
+    if (term instanceof BinaryExpression && rawValue(term.operator) === '=') {
+      const parameter = resolveColumnParameter(term.left, term.right, aliases, termPath, 'where');
+      if (parameter && localSet.has(parameter.occurrence)) {
+        parameter.occurrence.parameterEqualities.push(parameter.equality);
+        addWhereParameterEquality(graph, parameter.occurrence, parameter.equality);
+        continue;
+      }
+      const staticEquality = resolveColumnLiteral(term.left, term.right, aliases, termPath);
+      if (staticEquality && localSet.has(staticEquality.occurrence)) {
+        addWhereStaticEquality(graph, staticEquality.occurrence, staticEquality.equality);
+        continue;
+      }
+      const pair = resolveColumnPair(term.left, term.right, aliases);
+      if (pair) {
+        const localPairOccurrences = [pair.left.occurrence, pair.right.occurrence].filter((occurrence) => localSet.has(occurrence));
+        if (localPairOccurrences.length === 1) continue;
+      }
+    }
+    const referencedOccurrences = localOccurrences.filter((occurrence) => referencesOccurrence(term, occurrence, aliases));
+    markWherePredicateUnsafe(graph, referencedOccurrences.length > 0 ? referencedOccurrences : localOccurrences);
   }
+}
+
+function addWhereParameterEquality(graph: OccurrenceGraph, occurrence: Occurrence, equality: ParameterEquality): void {
+  for (const edge of graph.edges.filter((item) => item.related === occurrence)) {
+    if (edge.localParameterEqualities.some((item) => (
+      normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.parameter === equality.parameter
+    ))) continue;
+    edge.localParameterEqualities.push(equality);
+  }
+}
+
+function addWhereStaticEquality(graph: OccurrenceGraph, occurrence: Occurrence, equality: StaticEquality): void {
+  for (const edge of graph.edges.filter((item) => item.related === occurrence)) {
+    if (edge.localStaticEqualities.some((item) => (
+      normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.literalSql === equality.literalSql
+    ))) continue;
+    edge.localStaticEqualities.push(equality);
+  }
+}
+
+function markWherePredicateUnsafe(graph: OccurrenceGraph, occurrences: Occurrence[]): void {
+  const occurrenceSet = new Set(occurrences);
+  graph.edges.filter((edge) => occurrenceSet.has(edge.related)).forEach((edge) => { edge.unsafePredicate = true; });
 }
 
 function resolveColumnPair(left: unknown, right: unknown, aliases: Map<string, Occurrence>): EqualityPair | undefined {
