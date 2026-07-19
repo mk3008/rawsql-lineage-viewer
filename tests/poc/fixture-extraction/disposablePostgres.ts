@@ -62,7 +62,7 @@ export class DisposablePostgres {
     try {
       containerId = execFileSync('docker', [
         'run', '--rm', '-d', '--name', containerName,
-        '--label', 'rawsql.fixture-extraction=attempt-1',
+        '--label', 'rawsql.fixture-extraction=attempt-2',
         '-p', '127.0.0.1::5432',
         '--tmpfs', '/var/lib/postgresql/data:rw,noexec,nosuid,size=256m',
         '--env-file', envFile,

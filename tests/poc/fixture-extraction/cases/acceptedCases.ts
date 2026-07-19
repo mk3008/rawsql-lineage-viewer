@@ -6,13 +6,19 @@ export interface SourceRelationFixture {
   readonly rows: readonly (readonly Scalar[])[];
 }
 
+export interface ExpectedCaptureResult {
+  readonly columns: readonly string[];
+  readonly ordered?: boolean;
+  readonly rows: readonly (readonly Scalar[])[];
+}
+
 export interface AcceptedHarnessCase {
   readonly bindings: Readonly<Record<string, Scalar>>;
   readonly ddl: string;
   readonly expectedBlockedCode?: 'DML_CTE_UNSUPPORTED';
   readonly expectedPlanStatus: 'blocked' | 'ready';
   readonly expectedResultRows?: number;
-  readonly expectedStepRows?: Readonly<Record<string, number>>;
+  readonly expectedCaptures?: Readonly<Record<string, ExpectedCaptureResult>>;
   readonly id: string;
   readonly orderedResult: boolean;
   readonly purpose: string;
@@ -52,7 +58,12 @@ where t.ticket_id = :ticket_id;`,
       ],
     }],
     expectedPlanStatus: 'ready',
-    expectedStepRows: { support_ticket: 1 },
+    expectedCaptures: {
+      support_ticket: {
+        columns: ['priority', 'subject', 'ticket_id'],
+        rows: [[2, 'synthetic ticket alpha', 101]],
+      },
+    },
     expectedResultRows: 1,
     orderedResult: false,
   },
@@ -99,7 +110,19 @@ create table account_note (
       },
     ],
     expectedPlanStatus: 'ready',
-    expectedStepRows: { account: 1, account_note: 2 },
+    expectedCaptures: {
+      account: {
+        columns: ['account_id', 'display_label'],
+        rows: [[200, 'synthetic account amber']],
+      },
+      account_note: {
+        columns: ['account_id', 'note_body', 'note_id'],
+        rows: [
+          [200, 'synthetic first note', 3001],
+          [200, null, 3002],
+        ],
+      },
+    },
     expectedResultRows: 2,
     orderedResult: true,
   },
@@ -163,7 +186,27 @@ create table order_item (
       },
     ],
     expectedPlanStatus: 'ready',
-    expectedStepRows: { customer: 1, purchase_order: 2, order_item: 3 },
+    expectedCaptures: {
+      customer: {
+        columns: ['customer_id', 'display_label'],
+        rows: [[310, 'synthetic customer green']],
+      },
+      purchase_order: {
+        columns: ['customer_id', 'order_id', 'order_state'],
+        rows: [
+          [310, 4101, 'open'],
+          [310, 4102, 'closed'],
+        ],
+      },
+      order_item: {
+        columns: ['item_id', 'order_id', 'quantity', 'sku'],
+        rows: [
+          [5101, 4101, 2, 'SYN-A'],
+          [5102, 4101, 1, 'SYN-B'],
+          [5103, 4102, 4, 'SYN-C'],
+        ],
+      },
+    },
     expectedResultRows: 3,
     orderedResult: true,
   },
@@ -214,7 +257,16 @@ create table subscription (
       },
     ],
     expectedPlanStatus: 'ready',
-    expectedStepRows: { member: 1, subscription: 2 },
+    expectedCaptures: {
+      member: {
+        columns: ['display_label', 'member_id'],
+        rows: [['synthetic member violet', 500]],
+      },
+      subscription: {
+        columns: ['member_id', 'subscription_id', 'subscription_state'],
+        rows: [[500, 6001, 'active']],
+      },
+    },
     expectedResultRows: 1,
     orderedResult: false,
   },
@@ -260,7 +312,16 @@ create table blocking_alert (
       },
     ],
     expectedPlanStatus: 'ready',
-    expectedStepRows: { workspace: 1, blocking_alert: 0 },
+    expectedCaptures: {
+      workspace: {
+        columns: ['display_label', 'workspace_id'],
+        rows: [['synthetic workspace orange', 700]],
+      },
+      blocking_alert: {
+        columns: ['alert_code', 'alert_id', 'workspace_id'],
+        rows: [],
+      },
+    },
     expectedResultRows: 1,
     orderedResult: false,
   },

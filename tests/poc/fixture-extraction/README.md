@@ -4,11 +4,13 @@ This test-only harness proves the accepted fixture-extraction plans against synt
 disposable PostgreSQL source and target databases. Product code remains static and
 database-free; all Docker, credentials, SQL execution, and row transfer live here.
 
-The committed case metadata is a focused projection of the accepted scenario oracle
-with SHA256 `2E2C05A44F3B9A332145AF6C111A1001DFC8FA6472AC44042F6215DAFBD4AFFD`.
+The committed case metadata is derived from the accepted scenario oracle with SHA256
+`2E2C05A44F3B9A332145AF6C111A1001DFC8FA6472AC44042F6215DAFBD4AFFD`.
+Its `fxsel-04` capture expectation is reconciled with the final generator plan, which
+retains the `subscription_state = 'active'` predicate.
 It covers the five required `ready` scenarios and the required blocked DML CTE. The
-optional aggregate scenario is intentionally not executed because its accepted plan is
-`partial`, not a complete executable fixture plan.
+optional aggregate scenario also has a static `ready` plan, but its runtime utility
+evidence remains unexecuted/partial and is intentionally outside this required harness.
 
 Run the static and mechanical gates:
 

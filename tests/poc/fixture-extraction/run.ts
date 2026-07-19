@@ -6,13 +6,14 @@ import { runHarnessCase, type ScenarioEvidence } from './harness';
 
 const evidencePath = resolve(
   process.cwd(),
-  'tmp/orchestration/fixture-extraction-select-poc/evidence/external-harness-attempt-1.json',
+  'tmp/orchestration/fixture-extraction-select-poc/evidence/external-harness-attempt-2.json',
 );
 
 interface RunEvidence {
-  authoritativeHashes: {
-    acceptedGeneratorReportSha256: string;
-    scenarioOracleSha256: string;
+  provenance: {
+    finalGeneratorBaseCommit: string;
+    fxsel04Reconciliation: string;
+    sourceScenarioOracleSha256: string;
   };
   cleanup: CleanupEvidence | null;
   completedAt: string | null;
@@ -32,9 +33,10 @@ interface RunEvidence {
 
 async function main(): Promise<void> {
   const evidence: RunEvidence = {
-    authoritativeHashes: {
-      acceptedGeneratorReportSha256: '149B6EF97B1CACC59111DF3F82C83BC23BADF4ED05AEFDDD61A0979E951C3243',
-      scenarioOracleSha256: '2E2C05A44F3B9A332145AF6C111A1001DFC8FA6472AC44042F6215DAFBD4AFFD',
+    provenance: {
+      finalGeneratorBaseCommit: 'f06f5c84e8e1f722746cdfc1a7ab2b6f9c1483a5',
+      fxsel04Reconciliation: 'subscription capture retains the active-state predicate',
+      sourceScenarioOracleSha256: '2E2C05A44F3B9A332145AF6C111A1001DFC8FA6472AC44042F6215DAFBD4AFFD',
     },
     cleanup: null,
     completedAt: null,

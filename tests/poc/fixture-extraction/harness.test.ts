@@ -2,7 +2,7 @@ import { SqlParser, SimpleSelectQuery } from 'rawsql-ts';
 import { describe, expect, it } from 'vitest';
 import { generateFixtureExtractionPlanV0 } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlanV0';
 import { acceptedHarnessCases } from './cases/acceptedCases';
-import { buildParameterizedInsert, requireExecutableStep } from './harness';
+import { assertExpectedCapture, buildParameterizedInsert, requireExecutableStep } from './harness';
 import { compileNamedParameters } from './namedParameters';
 import { compareStructuredResults } from './results';
 
@@ -25,6 +25,8 @@ describe('fixture extraction external harness plan gate', () => {
 
       expect(plan.blockedReasons).toEqual([]);
       expect(plan.steps.length).toBeGreaterThan(0);
+      expect(plan.steps.map((step) => step.relationName).sort())
+        .toEqual(Object.keys(scenario.expectedCaptures ?? {}).sort());
       for (const step of plan.steps) {
         const executable = requireExecutableStep(scenario.id, step);
         expect(SqlParser.parse(executable.sql)).toBeInstanceOf(SimpleSelectQuery);
@@ -52,6 +54,21 @@ describe('fixture extraction external harness mechanics', () => {
   it('builds generic INSERT text with positional values only', () => {
     expect(buildParameterizedInsert('public.fixture_row', ['id', 'nullable_value']))
       .toBe('insert into "public"."fixture_row" ("id", "nullable_value") values ($1, $2)');
+  });
+
+  it('rejects same-count captures with wrong columns or scalar values', () => {
+    expect(() => assertExpectedCapture(
+      'synthetic-case',
+      'synthetic_relation',
+      { columns: ['id', 'state'], rows: [[1, 'active']] },
+      { columns: ['id', 'wrong_state'], rows: [[1, 'active']] },
+    )).toThrow('did not match exact synthetic columns and rows');
+    expect(() => assertExpectedCapture(
+      'synthetic-case',
+      'synthetic_relation',
+      { columns: ['id', 'state'], rows: [[1, 'active']] },
+      { columns: ['id', 'state'], rows: [[1, 'paused']] },
+    )).toThrow('did not match exact synthetic columns and rows');
   });
 
   it('compares unordered results as multisets and preserves duplicate and NULL evidence', () => {

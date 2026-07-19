@@ -3,7 +3,12 @@ import { SqlParser, SimpleSelectQuery } from 'rawsql-ts';
 import type { Client } from 'pg';
 import { generateFixtureExtractionPlanV0 } from '../../../src/lineage/fixture-extraction/generateFixtureExtractionPlanV0';
 import type { FixtureExtractionStepV0 } from '../../../src/lineage/fixture-extraction/fixtureExtractionPlanV0';
-import type { AcceptedHarnessCase, Scalar, SourceRelationFixture } from './cases/acceptedCases';
+import type {
+  AcceptedHarnessCase,
+  ExpectedCaptureResult,
+  Scalar,
+  SourceRelationFixture,
+} from './cases/acceptedCases';
 import { compileNamedParameters } from './namedParameters';
 import { compareStructuredResults, type StructuredResult } from './results';
 
@@ -11,6 +16,8 @@ export interface CaptureEvidence {
   readonly boundaryStatus: 'bounded';
   readonly emptyResultRequired: boolean;
   readonly emptyResultRequiredSatisfied: boolean;
+  readonly expectedColumnsMatch: true;
+  readonly expectedRowsMatch: true;
   readonly executedSqlHash: string;
   readonly generatedSqlHash: string;
   readonly parameterMapping: readonly { readonly name: string; readonly position: number }[];
@@ -89,10 +96,9 @@ export async function runHarnessCase(
     const step = requireExecutableStep(scenario.id, stepById.get(stepId));
     const statement = compileNamedParameters(step.sql, step.parameterNames, scenario.bindings);
     const result = await queryStructured(source, statement.text, statement.values);
-    const expectedRows = scenario.expectedStepRows?.[step.relationName];
-    if (expectedRows === undefined || result.rows.length !== expectedRows) {
-      throw new Error(`${scenario.id}: ${step.relationName} capture row count did not match the accepted oracle.`);
-    }
+    const expected = scenario.expectedCaptures?.[step.relationName];
+    if (!expected) throw new Error(`${scenario.id}: ${step.relationName} has no accepted capture oracle.`);
+    const exactAssertion = assertExpectedCapture(scenario.id, step.relationName, expected, result);
     const emptyResultRequired = step.resultExpectation.kind === 'empty_result_required';
     if (emptyResultRequired && result.rows.length !== 0) {
       throw new Error(`${scenario.id}: required absence evidence was not empty.`);
@@ -102,6 +108,8 @@ export async function runHarnessCase(
       boundaryStatus: 'bounded',
       emptyResultRequired,
       emptyResultRequiredSatisfied: emptyResultRequired && result.rows.length === 0,
+      expectedColumnsMatch: exactAssertion.expectedColumnsMatch,
+      expectedRowsMatch: exactAssertion.expectedRowsMatch,
       executedSqlHash: hash(statement.text),
       generatedSqlHash: hash(step.sql),
       parameterMapping: statement.mapping,
@@ -135,6 +143,19 @@ export async function runHarnessCase(
     targetOriginalResult,
     transferredRowCount,
   };
+}
+
+export function assertExpectedCapture(
+  scenarioId: string,
+  relationName: string,
+  expected: ExpectedCaptureResult,
+  actual: StructuredResult,
+): { expectedColumnsMatch: true; expectedRowsMatch: true } {
+  const comparison = compareStructuredResults(expected, actual, expected.ordered ?? false);
+  if (!comparison.match) {
+    throw new Error(`${scenarioId}: ${relationName} capture did not match exact synthetic columns and rows.`);
+  }
+  return { expectedColumnsMatch: true, expectedRowsMatch: true };
 }
 
 export function requireExecutableStep(scenarioId: string, step: FixtureExtractionStepV0 | undefined) {
