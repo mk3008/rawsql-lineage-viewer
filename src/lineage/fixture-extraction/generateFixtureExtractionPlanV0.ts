@@ -12,7 +12,6 @@ import {
   ParenSource,
   SimpleSelectQuery,
   SqlParser,
-  SqlFormatter,
   SubQuerySource,
   TableSource,
   UnaryExpression,
@@ -146,7 +145,6 @@ interface StrictSchemaIndex {
 
 const FORBIDDEN_INPUT_KEYS = new Set(['binding', 'bindings', 'bindingValue', 'bindingValues', 'value', 'values', 'providedValues']);
 const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const STATIC_LITERAL_FORMATTER = new SqlFormatter({} as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 const BLOCKED_CATALOG: Record<FixtureExtractionBlockedCodeV0, {
   message: string;
@@ -274,12 +272,12 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
       sourcePath: `${malformedSchemaOccurrence.path}.schema-table`,
     }]);
   }
-  const blockingDiagnostics = findBlockingSchemaDiagnostics(input, schemaFacts, graph.occurrences);
+  const blockingDiagnostics = findBlockingSchemaDiagnostics(schemaFacts);
   if (blockingDiagnostics.length > 0) {
-    return blockedBeforeRoot(input, source, 'SCHEMA_FACTS_REQUIRED', 'blocked', blockingDiagnostics.map(({ diagnostic, index }) => ({
+    return blockedBeforeRoot(input, source, 'SCHEMA_FACTS_REQUIRED', 'blocked', blockingDiagnostics.map((diagnostic, index) => ({
       kind: 'schema_diagnostic',
       sourceId: `schema-diagnostic:${String(index + 1).padStart(4, '0')}:${diagnostic.code}`,
-      sourcePath: `schemaFacts.diagnostics[${String(index).padStart(4, '0')}]`,
+      sourcePath: `schemaFacts.diagnostics.canonical[${String(index).padStart(4, '0')}]`,
     })));
   }
   const caseAmbiguousRelation = graph.occurrences.find((occurrence) => occurrence.caseSensitiveIdentityUnproven);
@@ -812,6 +810,15 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   const relatedColumn = fkResult.relatedColumn;
   const anchorColumn = fkResult.anchorColumn;
   const directParameter = anchor.parameterByColumn.get(normalizeIdentifier(anchorColumn));
+  const sameColumnParameters = edge.localParameterEqualities
+    .filter((item) => normalizeIdentifier(item.column) === normalizeIdentifier(relatedColumn));
+  const sameColumnStaticEqualities = edge.localStaticEqualities
+    .filter((item) => normalizeIdentifier(item.column) === normalizeIdentifier(relatedColumn));
+  if (!directParameter
+    ? sameColumnParameters.length > 0 || sameColumnStaticEqualities.length > 0
+    : sameColumnParameters.some((item) => item.parameter !== directParameter) || sameColumnStaticEqualities.length > 0) {
+    return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
+  }
   const localParameters = edge.localParameterEqualities
     .filter((item) => normalizeIdentifier(item.column) !== normalizeIdentifier(relatedColumn))
     .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.parameter, right.parameter));
@@ -1214,33 +1221,12 @@ function createStrictSchemaIndex(schemaFacts: SchemaFacts | undefined): StrictSc
   return index;
 }
 
-function findBlockingSchemaDiagnostics(
-  input: FixtureExtractionInputV0,
-  schemaFacts: SchemaFacts | undefined,
-  occurrences: readonly Occurrence[],
-): Array<{ diagnostic: SchemaFactsDiagnostic; index: number }> {
+function findBlockingSchemaDiagnostics(schemaFacts: SchemaFacts | undefined): SchemaFactsDiagnostic[] {
   const diagnostics = schemaFacts?.diagnostics ?? [];
-  if (diagnostics.length === 0) return [];
-  if (input.schemaFacts !== undefined || !input.ddl) {
-    return diagnostics.map((diagnostic, index) => ({ diagnostic, index }));
-  }
-  const tablesByFile = new Map<string, SchemaTableFacts[]>();
-  for (const ddl of input.ddl) {
-    if (!ddl.filePath) continue;
-    const parsed = parseSchemaFactsFromDdl([{ filePath: ddl.filePath, sql: ddl.sql }]);
-    tablesByFile.set(ddl.filePath, [
-      ...(tablesByFile.get(ddl.filePath) ?? []),
-      ...Object.values(parsed.tables),
-    ]);
-  }
-  return diagnostics.flatMap((diagnostic, index) => {
-    if (!diagnostic.filePath) return [{ diagnostic, index }];
-    const fileTables = tablesByFile.get(diagnostic.filePath);
-    if (!fileTables || fileTables.length === 0) return [{ diagnostic, index }];
-    const involved = fileTables.some((table) => occurrences.some((occurrence) =>
-      relationMatches(occurrence.relationName, qualifiedTableName(table))));
-    return involved ? [{ diagnostic, index }] : [];
-  });
+  return [...diagnostics].sort((left, right) => compareCodeUnits(left.code, right.code)
+    || compareCodeUnits(left.filePath ?? '', right.filePath ?? '')
+    || compareCodeUnits(left.severity, right.severity)
+    || compareCodeUnits(left.message, right.message));
 }
 
 function hasTableCrossFieldIntegrity(table: SchemaTableFacts, index: StrictSchemaIndex): boolean {
@@ -1415,11 +1401,43 @@ function rawValue(value: unknown): string {
 }
 
 function formatStaticLiteral(literal: LiteralValue): string | undefined {
+  let candidate: string;
+  if (literal.isStringLiteral) {
+    if (typeof literal.value !== 'string'
+      || literal.value.includes('\\')
+      || /[\u0000-\u001f\u007f]/.test(literal.value)
+      || !hasOnlyDoubledQuoteEscapes(literal.value)) return undefined;
+    candidate = `'${literal.value}'`;
+  } else if (literal.value === null) {
+    candidate = 'null';
+  } else if (typeof literal.value === 'boolean') {
+    candidate = literal.value ? 'true' : 'false';
+  } else if (typeof literal.value === 'number' && Number.isFinite(literal.value)) {
+    candidate = String(literal.value);
+  } else {
+    return undefined;
+  }
   try {
-    return STATIC_LITERAL_FORMATTER.format(literal).formattedSql.trim() || undefined;
+    const statement = SqlParser.parse(`select 1 where 1 = ${candidate}`);
+    if (!(statement instanceof SimpleSelectQuery) || !(statement.whereClause?.condition instanceof BinaryExpression)) return undefined;
+    const reparsed = statement.whereClause.condition.right;
+    return reparsed instanceof LiteralValue
+      && reparsed.value === literal.value
+      && reparsed.isStringLiteral === literal.isStringLiteral
+      ? candidate
+      : undefined;
   } catch {
     return undefined;
   }
+}
+
+function hasOnlyDoubledQuoteEscapes(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] !== "'") continue;
+    if (value[index + 1] !== "'") return false;
+    index += 1;
+  }
+  return true;
 }
 
 function identifierValue(value: unknown): string {
