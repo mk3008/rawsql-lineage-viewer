@@ -266,6 +266,128 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
   });
 
+  it('preserves a root-WHERE parameter through a dependent NOT EXISTS boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state = :customer_state and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);',
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[0]).toMatchObject({
+      sql: 'select customer_id, customer_state from customer where customer_id = :customer_id and customer_state = :customer_state;',
+      parameterNames: ['customer_id', 'customer_state'],
+    });
+    expect(plan.steps[1]).toMatchObject({
+      parameterNames: ['customer_id', 'customer_state'],
+      resultExpectation: { kind: 'empty_result_required' },
+      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 1 },
+    });
+    expect(plan.steps[1].sql).toContain('select customer_id\n  from customer');
+    expect(plan.steps[1].sql).toContain('where customer_id = :customer_id and customer_state = :customer_state');
+  });
+
+  it('preserves a root-WHERE literal through a dependent NOT EXISTS boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      "select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state = 'active' and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);",
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[0].sql).toContain("customer_state = 'active'");
+    expect(plan.steps[1].sql).toContain("customer_state = 'active'");
+    expect(plan.steps[1]).toMatchObject({
+      parameterNames: ['customer_id'],
+      resultExpectation: { kind: 'empty_result_required' },
+    });
+  });
+
+  it('fails closed for a root-WHERE non-equality on a dependent NOT EXISTS boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      "select c.customer_id from customer c where c.customer_id = :customer_id and c.customer_state <> 'closed' and not exists (select 1 from purchase_order o where o.customer_id = c.customer_id);",
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expect(plan.status).toBe('partial');
+    expect(plan.steps[0].sql).toBe('select customer_id, customer_state from customer where customer_id = :customer_id;');
+    expect(plan.steps[1]).toMatchObject({
+      sql: null,
+      resultExpectation: { kind: 'rows_may_be_present' },
+      boundary: { status: 'unknown' },
+    });
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('preserves an anchor-side JOIN parameter through both propagation hops', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state = :customer_state where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[0].sql).toContain('customer_state = :customer_state');
+    expect(plan.steps[1].sql).toContain('customer_state = :customer_state');
+    expect(plan.steps[2]).toMatchObject({
+      dependsOnStepIds: ['fixture-step:002'],
+      loadAfterStepIds: ['fixture-step:002'],
+      parameterNames: ['customer_id', 'customer_state'],
+      resultExpectation: { kind: 'empty_result_required' },
+      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2 },
+    });
+    expect(plan.steps[2].sql).toContain('customer_state = :customer_state');
+  });
+
+  it('preserves an anchor-side JOIN literal through a dependent NOT EXISTS boundary', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state = 'active' where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);",
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expectReadySql(plan);
+    expect(plan.steps[0].sql).toContain("customer_state = 'active'");
+    expect(plan.steps[1].sql).toContain("customer_state = 'active'");
+    expect(plan.steps[2].sql).toContain("customer_state = 'active'");
+    expect(plan.steps[2].resultExpectation.kind).toBe('empty_result_required');
+  });
+
+  it('fails anchor-side JOIN non-equality propagation closed', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      "select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and c.customer_state <> 'closed' where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);",
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expect(plan.status).toBe('partial');
+    expect(plan.steps[1].sql).toBeNull();
+    expect(plan.steps[2].sql).toBeNull();
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
+  it('fails an anchor-side outer-JOIN constraint closed instead of filtering the anchor row', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select c.customer_id, o.order_id from customer c left join purchase_order o on o.customer_id = c.customer_id and c.customer_state = :customer_state where c.customer_id = :customer_id and not exists (select 1 from order_item i where i.order_id = o.order_id);',
+      'create table customer (customer_id integer primary key, customer_state text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id)); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id));',
+      'customer',
+      'customer_id',
+    ));
+
+    expect(plan.status).toBe('partial');
+    expect(plan.steps[0].sql).toBe('select customer_id, customer_state from customer where customer_id = :customer_id;');
+    expect(plan.steps[1].sql).toBeNull();
+    expect(plan.steps[2].sql).toBeNull();
+    expect(plan.steps.some((step) => step.resultExpectation.kind === 'empty_result_required')).toBe(false);
+  });
+
   it('deduplicates identical JOIN-ON and outer-WHERE parameter constraints', () => {
     const plan = generateFixtureExtractionPlanV0(input(
       'select c.customer_id, o.order_id from customer c join purchase_order o on o.customer_id = c.customer_id and o.order_state = :order_state where c.customer_id = :customer_id and o.order_state = :order_state and not exists (select 1 from order_item i where i.order_id = o.order_id);',

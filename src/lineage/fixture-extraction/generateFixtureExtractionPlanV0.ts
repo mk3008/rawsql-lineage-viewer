@@ -75,9 +75,12 @@ interface Occurrence {
   occurrenceId: string;
   parameterEqualities: ParameterEquality[];
   path: string;
+  populationParameterEqualities: ParameterEquality[];
+  populationStaticEqualities: StaticEquality[];
   relationName: string;
   tableResolution?: 'ambiguous' | 'missing' | 'resolved';
   table?: SchemaTableFacts;
+  unsafePopulationPredicate: boolean;
 }
 
 interface EqualityPair {
@@ -318,18 +321,37 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
   const evidence = new EvidenceRegistry();
   const root = rootResult.root;
   const rootEvidenceKeys = createRootEvidence(evidence, root, rootResult.keyKind, rootResult.rootEquality.evidencePath);
-  const rootPredicate = rootResult.mappings
-    .map(({ rootColumn, parameterName }) => `${quoteIdentifier(rootColumn)} = :${parameterName}`)
-    .join(' and ');
+  rootResult.mappings.forEach((mapping) => addOccurrenceParameterEquality(root, {
+    column: mapping.rootColumn,
+    evidencePath: rootResult.rootEquality.evidencePath,
+    kind: 'where',
+    parameter: mapping.parameterName,
+  }));
+  const rootParameters = [...root.populationParameterEqualities]
+    .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.parameter, right.parameter));
+  const rootStatics = [...root.populationStaticEqualities]
+    .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.literalSql, right.literalSql));
+  if (rootParameters.some((item) => !root.table || !tableHasColumn(root.table, item.column) || !PARAMETER_NAME.test(item.parameter))
+    || rootStatics.some((item) => !root.table || !tableHasColumn(root.table, item.column))) {
+    return blockedBeforeRoot(input, source, 'SCHEMA_FACTS_REQUIRED', 'blocked', []);
+  }
+  const rootPredicate = [
+    ...rootParameters.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
+    ...rootStatics.map((item) => `${quoteIdentifier(item.column)} = ${item.literalSql}`),
+  ].join(' and ');
+  const rootConstraintsByColumn = new Map<string, PropagatedConstraint[]>();
+  rootParameters.forEach((item) => addPropagatedConstraint(rootConstraintsByColumn, item.column, { kind: 'parameter', value: item.parameter }));
+  rootStatics.forEach((item) => addPropagatedConstraint(rootConstraintsByColumn, item.column, { kind: 'static', value: item.literalSql }));
+  const rootParameterNames = collectParameterNamesFromSql(`select * from ${quoteRelation(root.relationName)} where ${rootPredicate};`);
   const rootDraft: BoundedDraft = {
     boundaryReason: 'root_key_parameter_equality',
-    boundaryRelationColumns: rootResult.mappings.map((mapping) => mapping.rootColumn).sort(compareCodeUnits),
+    boundaryRelationColumns: [...rootParameters.map((item) => item.column), ...rootStatics.map((item) => item.column)].sort(compareCodeUnits),
     derivation: 'root_predicate',
     evidenceKeys: rootEvidenceKeys,
     hop: 0,
     occurrence: root,
-    constraintsByColumn: new Map(rootResult.mappings.map((mapping) => [normalizeIdentifier(mapping.rootColumn), [{ kind: 'parameter', value: mapping.parameterName } satisfies PropagatedConstraint]])),
-    parameterNames: rootResult.mappings.map((mapping) => mapping.parameterName).sort(compareCodeUnits),
+    constraintsByColumn: rootConstraintsByColumn,
+    parameterNames: rootParameterNames,
     predicateSql: rootPredicate,
     resultExpectation: rowsMayBePresent(),
     sql: buildDirectSelect(root, rootPredicate),
@@ -549,7 +571,10 @@ function collectSource(
       occurrenceId: '',
       parameterEqualities: [],
       path,
+      populationParameterEqualities: [],
+      populationStaticEqualities: [],
       relationName,
+      unsafePopulationPredicate: false,
     };
     graph.occurrences.push(occurrence);
     return [occurrence];
@@ -564,6 +589,11 @@ function collectJoinEdge(join: JoinClause, related: Occurrence, aliases: Map<str
   const equalityPairs: EqualityPair[] = [];
   const predicateOccurrences: Occurrence[] = [];
   const localParameterEqualities: ParameterEquality[] = [];
+  const joinType = rawValue(join.joinType).toLowerCase();
+  const supportsAnchorPopulationConstraint = joinType.includes('join')
+    && !joinType.includes('left')
+    && !joinType.includes('right')
+    && !joinType.includes('full');
   let unsafePredicate = !(join.condition instanceof JoinOnClause);
   const terms = join.condition instanceof JoinOnClause ? flattenAnd(join.condition.condition) : [];
   for (const [index, term] of terms.entries()) {
@@ -574,6 +604,12 @@ function collectJoinEdge(join: JoinClause, related: Occurrence, aliases: Map<str
         if (pair) predicateOccurrences.push(pair.left.occurrence, pair.right.occurrence);
       }
       if (referencesOccurrence(term, related, aliases)) unsafePredicate = true;
+      const anchorOccurrences = [...new Set(aliases.values())]
+        .filter((occurrence) => occurrence !== related && referencesOccurrence(term, occurrence, aliases));
+      if (anchorOccurrences.length > 0) {
+        predicateOccurrences.push(...anchorOccurrences);
+        markWherePredicateUnsafe(graph, anchorOccurrences);
+      }
       continue;
     }
     const pair = resolveColumnPair(term.left, term.right, aliases);
@@ -582,9 +618,27 @@ function collectJoinEdge(join: JoinClause, related: Occurrence, aliases: Map<str
       continue;
     }
     const parameter = resolveColumnParameter(term.left, term.right, aliases, termPath, 'join');
-    if (parameter && parameter.occurrence === related) {
-      related.parameterEqualities.push(parameter.equality);
-      localParameterEqualities.push(parameter.equality);
+    if (parameter) {
+      if (parameter.occurrence === related) {
+        related.parameterEqualities.push(parameter.equality);
+        localParameterEqualities.push(parameter.equality);
+      } else if (supportsAnchorPopulationConstraint) {
+        predicateOccurrences.push(parameter.occurrence);
+        addWhereParameterEquality(graph, parameter.occurrence, parameter.equality);
+      } else {
+        predicateOccurrences.push(parameter.occurrence);
+        markWherePredicateUnsafe(graph, [parameter.occurrence]);
+      }
+      continue;
+    }
+    const staticEquality = resolveColumnLiteral(term.left, term.right, aliases, termPath);
+    if (staticEquality && staticEquality.occurrence !== related) {
+      predicateOccurrences.push(staticEquality.occurrence);
+      if (supportsAnchorPopulationConstraint) {
+        addWhereStaticEquality(graph, staticEquality.occurrence, staticEquality.equality);
+      } else {
+        markWherePredicateUnsafe(graph, [staticEquality.occurrence]);
+      }
       continue;
     }
     if (referencesOccurrence(term, related, aliases)) unsafePredicate = true;
@@ -596,7 +650,7 @@ function collectJoinEdge(join: JoinClause, related: Occurrence, aliases: Map<str
     anchor: anchor ?? related,
     equalityPairs,
     evidencePath: path,
-    joinType: rawValue(join.joinType).toLowerCase(),
+    joinType,
     kind: 'join',
     localParameterEqualities,
     localStaticEqualities: [],
@@ -700,6 +754,7 @@ function collectWhere(
 }
 
 function addWhereParameterEquality(graph: OccurrenceGraph, occurrence: Occurrence, equality: ParameterEquality): void {
+  addOccurrenceParameterEquality(occurrence, equality);
   for (const edge of graph.edges.filter((item) => item.related === occurrence)) {
     if (edge.localParameterEqualities.some((item) => (
       normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.parameter === equality.parameter
@@ -709,6 +764,7 @@ function addWhereParameterEquality(graph: OccurrenceGraph, occurrence: Occurrenc
 }
 
 function addWhereStaticEquality(graph: OccurrenceGraph, occurrence: Occurrence, equality: StaticEquality): void {
+  addOccurrenceStaticEquality(occurrence, equality);
   for (const edge of graph.edges.filter((item) => item.related === occurrence)) {
     if (edge.localStaticEqualities.some((item) => (
       normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.literalSql === equality.literalSql
@@ -719,7 +775,22 @@ function addWhereStaticEquality(graph: OccurrenceGraph, occurrence: Occurrence, 
 
 function markWherePredicateUnsafe(graph: OccurrenceGraph, occurrences: Occurrence[]): void {
   const occurrenceSet = new Set(occurrences);
+  occurrenceSet.forEach((occurrence) => { occurrence.unsafePopulationPredicate = true; });
   graph.edges.filter((edge) => occurrenceSet.has(edge.related)).forEach((edge) => { edge.unsafePredicate = true; });
+}
+
+function addOccurrenceParameterEquality(occurrence: Occurrence, equality: ParameterEquality): void {
+  if (occurrence.populationParameterEqualities.some((item) => (
+    normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.parameter === equality.parameter
+  ))) return;
+  occurrence.populationParameterEqualities.push(equality);
+}
+
+function addOccurrenceStaticEquality(occurrence: Occurrence, equality: StaticEquality): void {
+  if (occurrence.populationStaticEqualities.some((item) => (
+    normalizeIdentifier(item.column) === normalizeIdentifier(equality.column) && item.literalSql === equality.literalSql
+  ))) return;
+  occurrence.populationStaticEqualities.push(equality);
 }
 
 function resolveColumnPair(left: unknown, right: unknown, aliases: Map<string, Occurrence>): EqualityPair | undefined {
@@ -828,7 +899,7 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   if (attemptedHopCount > 2) {
     return unknownDraft(edge, anchor, derivation, relationEvidence, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   }
-  if (edge.unsafePredicate) {
+  if (edge.unsafePredicate || anchor.occurrence.unsafePopulationPredicate) {
     const codes: FixtureExtractionBlockedCodeV0[] = edge.kind === 'join' && edge.equalityPairs.length === 0
       ? ['NON_EQUALITY_JOIN_UNSUPPORTED']
       : ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED'];
@@ -855,7 +926,11 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   const relatedColumn = fkResult.relatedColumn;
   const anchorColumn = fkResult.anchorColumn;
   const anchorConstraints = anchor.constraintsByColumn.get(normalizeIdentifier(anchorColumn)) ?? [];
-  const directParameter = anchorConstraints.length === 1 && anchorConstraints[0].kind === 'parameter'
+  const anchorPopulationConstraintCount = anchor.occurrence.populationParameterEqualities.length
+    + anchor.occurrence.populationStaticEqualities.length;
+  const directParameter = anchorPopulationConstraintCount <= 1
+    && anchorConstraints.length === 1
+    && anchorConstraints[0].kind === 'parameter'
     ? anchorConstraints[0].value
     : undefined;
   const sameColumnParameters = edge.localParameterEqualities
@@ -895,9 +970,6 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
     localStaticEqualities.forEach((item) => addPropagatedConstraint(constraintsByColumn, item.column, { kind: 'static', value: item.literalSql }));
     boundaryReason = edge.kind === 'exists' ? 'correlated_exists_key_equality' : 'direct_key_equality_propagation';
   } else {
-    if (attemptedHopCount !== 2) {
-      return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
-    }
     predicateSql = [
       `${quoteIdentifier(relatedColumn)} in (\n  select ${quoteIdentifier(anchorColumn)}\n  from ${quoteRelation(anchor.occurrence.relationName)}\n  where ${anchor.predicateSql}\n)`,
       ...localParameters.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
