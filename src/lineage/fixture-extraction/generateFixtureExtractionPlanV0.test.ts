@@ -23,6 +23,7 @@ function expectReadySql(plan: ReturnType<typeof generateFixtureExtractionPlanV0>
     expect(step.blockedReasonCodes).toEqual([]);
     expect(SqlParser.parse(step.sql!)).toBeInstanceOf(SimpleSelectQuery);
     expect(step.sql).not.toMatch(/\blimit\b/i);
+    expect(step.parameterNames.every((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))).toBe(true);
   }
 }
 
@@ -108,7 +109,7 @@ describe('generateFixtureExtractionPlanV0', () => {
 
   it('uses a bounded nested key subquery for the second hop', () => {
     const plan = generateFixtureExtractionPlanV0(input(
-      'select c.customer_id, o.order_id, i.item_id, i.sku, i.quantity from customer as c join purchase_order as o on o.customer_id = c.customer_id join order_item as i on i.order_id = o.order_id where c.customer_id = :customer_id order by o.order_id, i.item_id;',
+      'select c.customer_id, o.order_id, i.item_id, i.sku, i.quantity from customer as c join purchase_order as o on o.customer_id = c.customer_id join order_item as i on i.order_id = o.order_id and i.sku = :sku where c.customer_id = :customer_id order by o.order_id, i.item_id;',
       'create table customer (customer_id integer primary key, display_label text not null); create table purchase_order (order_id integer primary key, customer_id integer not null references customer(customer_id), order_state text not null); create table order_item (item_id integer primary key, order_id integer not null references purchase_order(order_id), sku text not null, quantity integer not null);',
       'customer',
       'customer_id',
@@ -120,9 +121,10 @@ describe('generateFixtureExtractionPlanV0', () => {
       dependsOnStepIds: ['fixture-step:002'],
       loadAfterStepIds: ['fixture-step:002'],
       predicateDerivation: 'foreign_key_dependency',
-      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2, relationColumns: ['order_id'] },
+      parameterNames: ['customer_id', 'sku'],
+      boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2, relationColumns: ['order_id', 'sku'] },
     });
-    expect(plan.steps[2].sql).toBe('select item_id, order_id, quantity, sku\nfrom order_item\nwhere order_id in (\n  select order_id\n  from purchase_order\n  where customer_id = :customer_id\n);');
+    expect(plan.steps[2].sql).toBe('select item_id, order_id, quantity, sku\nfrom order_item\nwhere order_id in (\n  select order_id\n  from purchase_order\n  where customer_id = :customer_id\n) and sku = :sku;');
   });
 
   it.each([
@@ -130,7 +132,7 @@ describe('generateFixtureExtractionPlanV0', () => {
     ['not exists', 'empty_result_required', true],
   ] as const)('retains a bounded related step for %s', (operator, expectation, empty) => {
     const plan = generateFixtureExtractionPlanV0(input(
-      `select m.member_id, m.display_label from member as m where m.member_id = :member_id and ${operator} (select 1 from subscription as s where s.member_id = m.member_id and s.subscription_state = 'active');`,
+      `select m.member_id, m.display_label from member as m where m.member_id = :member_id and ${operator} (select 1 from subscription as s where s.member_id = m.member_id);`,
       'create table member (member_id integer primary key, display_label text not null); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
       'member',
       'member_id',
@@ -145,6 +147,45 @@ describe('generateFixtureExtractionPlanV0', () => {
       boundary: { status: 'bounded', reason: 'correlated_exists_key_equality', hopCount: 1 },
     });
     expect(plan.steps[1].resultExpectation.note).toBe(empty ? 'The required reproduction state may be an empty result for this relation.' : null);
+  });
+
+  it('preserves safe EXISTS parameter filters and fails closed on unrepresented filters', () => {
+    const filtered = generateFixtureExtractionPlanV0(input(
+      'select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state = :subscription_state);',
+      'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
+      'member',
+      'member_id',
+    ));
+    expectReadySql(filtered);
+    expect(filtered.steps[1]).toMatchObject({
+      sql: 'select member_id, subscription_id, subscription_state from subscription where member_id = :member_id and subscription_state = :subscription_state;',
+      parameterNames: ['member_id', 'subscription_state'],
+      resultExpectation: { kind: 'empty_result_required' },
+    });
+
+    const literalFiltered = generateFixtureExtractionPlanV0(input(
+      "select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state = 'active');",
+      'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
+      'member',
+      'member_id',
+    ));
+    expectReadySql(literalFiltered);
+    expect(literalFiltered.steps[1]).toMatchObject({
+      sql: "select member_id, subscription_id, subscription_state from subscription where member_id = :member_id and subscription_state = 'active';",
+      parameterNames: ['member_id'],
+      resultExpectation: { kind: 'empty_result_required' },
+    });
+
+    const nonEqualityFiltered = generateFixtureExtractionPlanV0(input(
+      "select m.member_id from member m where m.member_id = :member_id and not exists (select 1 from subscription s where s.member_id = m.member_id and s.subscription_state <> 'inactive');",
+      'create table member (member_id integer primary key); create table subscription (subscription_id integer primary key, member_id integer not null references member(member_id), subscription_state text not null);',
+      'member',
+      'member_id',
+    ));
+    expect(nonEqualityFiltered.status).toBe('partial');
+    expect(nonEqualityFiltered.steps[1]).toMatchObject({ sql: null, resultExpectation: { kind: 'rows_may_be_present' } });
+    expect(nonEqualityFiltered.blockedReasons.map((reason) => reason.code))
+      .toEqual(['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
   });
 
   it('preserves a related local parameter predicate for the aggregate stretch scenario', () => {
@@ -265,6 +306,110 @@ describe('generateFixtureExtractionPlanV0', () => {
     expect(plan.blockedReasons.map((reason) => reason.code)).toEqual(['RELATION_UNRESOLVED']);
   });
 
+  it('fails closed when used schema keys or foreign keys reference nonexistent columns', () => {
+    const malformedRoot = generateFixtureExtractionPlanV0(input(
+      'select t.ticket_id from support_ticket t where t.missing_id = :missing_id;',
+      'create table support_ticket (ticket_id integer, primary key (missing_id));',
+      'support_ticket',
+      'missing_id',
+    ));
+    expect(malformedRoot.status).toBe('blocked');
+    expect(malformedRoot.steps).toEqual([]);
+    expect(malformedRoot.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
+
+    const malformedSource = generateFixtureExtractionPlanV0(input(
+      'select p.parent_id, c.child_id from parent p join child c on c.missing_parent_id = p.parent_id where p.parent_id = :parent_id;',
+      'create table parent (parent_id integer primary key); create table child (child_id integer primary key, foreign key (missing_parent_id) references parent(parent_id));',
+      'parent',
+      'parent_id',
+    ));
+    expect(malformedSource.status).toBe('blocked');
+    expect(malformedSource.steps).toEqual([]);
+    expect(malformedSource.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
+
+    const malformedReference = generateFixtureExtractionPlanV0(input(
+      'select p.parent_id, c.child_id from parent p join child c on c.parent_id = p.parent_id where p.parent_id = :parent_id;',
+      'create table parent (parent_id integer primary key); create table child (child_id integer primary key, parent_id integer, foreign key (parent_id) references parent(missing_parent_id));',
+      'parent',
+      'parent_id',
+    ));
+    expect(malformedReference.status).toBe('blocked');
+    expect(malformedReference.steps).toEqual([]);
+    expect(malformedReference.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
+  });
+
+  it('rejects related positional parameters before emitting a bounded step', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select p.id, c.id from parent p join child c on c.parent_id = p.id and c.state = $1 where p.id = :id;',
+      'create table parent (id integer primary key); create table child (id integer primary key, parent_id integer references parent(id), state text);',
+      'parent',
+      'id',
+    ));
+    expect(plan.status).toBe('blocked');
+    expect(plan.steps).toEqual([]);
+    expect(plan.steps.flatMap((step) => step.parameterNames).every((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))).toBe(true);
+    expect(plan.steps.some((step) => step.sql?.includes(':1'))).toBe(false);
+    expect(plan.blockedReasons.map((reason) => reason.code)).toEqual(['PARAMETER_PROPAGATION_UNPROVEN']);
+  });
+
+  it('blocks involved or non-isolatable schema diagnostics but ignores an isolated unrelated file', () => {
+    const involved = generateFixtureExtractionPlanV0({
+      sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
+      ddl: [{
+        filePath: 'support_ticket.sql',
+        sql: 'create table support_ticket (ticket_id integer primary key); alter table support_ticket bogus action;',
+      }],
+      reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
+    });
+    expect(involved.status).toBe('blocked');
+    expect(involved.steps).toEqual([]);
+    expect(involved.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
+    expect(involved.sourceEvidence.some((evidence) => evidence.kind === 'schema_diagnostic')).toBe(true);
+
+    const directFacts = generateFixtureExtractionPlanV0({
+      sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
+      schemaFacts: {
+        kind: 'schema-facts',
+        version: 1,
+        tables: {
+          support_ticket: {
+            name: 'support_ticket',
+            columns: { ticket_id: { name: 'ticket_id', type: 'integer' } },
+            primaryKey: ['ticket_id'],
+          },
+        },
+        diagnostics: [{ code: 'ddl_parse_warning', message: 'Skipped DDL.', severity: 'warning' }],
+      },
+      reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
+    });
+    expect(directFacts.status).toBe('blocked');
+    expect(directFacts.steps).toEqual([]);
+    expect(directFacts.blockedReasons.map((reason) => reason.code)).toEqual(['SCHEMA_FACTS_REQUIRED']);
+
+    const unrelated = generateFixtureExtractionPlanV0({
+      sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
+      ddl: [
+        { filePath: 'support_ticket.sql', sql: 'create table support_ticket (ticket_id integer primary key);' },
+        { filePath: 'unrelated.sql', sql: 'create table unrelated (id integer primary key); alter table unrelated bogus action;' },
+      ],
+      reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
+    });
+    expectReadySql(unrelated);
+  });
+
+  it('blocks a reproduction parameter mapped to multiple normalized root columns', () => {
+    const plan = generateFixtureExtractionPlanV0(input(
+      'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id and t.owner_id = :ticket_id;',
+      'create table support_ticket (ticket_id integer primary key, owner_id integer not null);',
+      'support_ticket',
+      'ticket_id',
+    ));
+    expect(plan.status).toBe('blocked');
+    expect(plan.steps).toEqual([]);
+    expect(plan.reproductionKey.columnParameterMappings).toEqual([]);
+    expect(plan.blockedReasons.map((reason) => reason.code)).toEqual(['REPRODUCTION_KEY_AMBIGUOUS']);
+  });
+
   it('fails closed when parser facts cannot distinguish quoted from case-variant identifiers', () => {
     const plan = generateFixtureExtractionPlanV0(input(
       'select p."ID" from "Parent" p where p."ID" = :id;',
@@ -329,6 +474,25 @@ describe('generateFixtureExtractionPlanV0', () => {
         version: 1,
         tables: { support_ticket: null },
       } as unknown as FixtureExtractionInputV0['schemaFacts'],
+      reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
+    })).toThrow(expect.objectContaining({
+      code: 'INPUT_SHAPE_INVALID',
+      message: 'Fixture extraction input has an invalid shape.',
+    }));
+
+    expect(() => generateFixtureExtractionPlanV0({
+      sql: 'select t.ticket_id from support_ticket t where t.ticket_id = :ticket_id;',
+      schemaFacts: {
+        kind: 'schema-facts',
+        version: 1,
+        tables: {
+          support_ticket: {
+            name: 'support_ticket',
+            columns: { ticket_id: { name: 'ticket_id' } },
+            primaryKey: ['missing_id'],
+          },
+        },
+      },
       reproductionKey: { parameterNames: ['ticket_id'], rootRelation: 'support_ticket', rootColumns: ['ticket_id'] },
     })).toThrow(expect.objectContaining({
       code: 'INPUT_SHAPE_INVALID',

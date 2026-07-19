@@ -6,11 +6,13 @@ import {
   InlineQuery,
   JoinClause,
   JoinOnClause,
+  LiteralValue,
   ParameterExpression,
   ParenExpression,
   ParenSource,
   SimpleSelectQuery,
   SqlParser,
+  SqlFormatter,
   SubQuerySource,
   TableSource,
   UnaryExpression,
@@ -21,6 +23,7 @@ import { analyzeSql } from '../rawsqlAdapter';
 import {
   parseSchemaFactsFromDdl,
   type SchemaFacts,
+  type SchemaFactsDiagnostic,
   type SchemaForeignKeyFacts,
   type SchemaTableFacts,
 } from '../schemaFacts';
@@ -61,6 +64,12 @@ interface ParameterEquality {
   parameter: string;
 }
 
+interface StaticEquality {
+  column: string;
+  evidencePath: string;
+  literalSql: string;
+}
+
 interface Occurrence {
   alias: string;
   caseSensitiveIdentityUnproven: boolean;
@@ -84,6 +93,7 @@ interface OccurrenceEdge {
   joinType: string;
   kind: 'exists' | 'join';
   localParameterEqualities: ParameterEquality[];
+  localStaticEqualities: StaticEquality[];
   notExists: boolean;
   related: Occurrence;
   unsafePredicate: boolean;
@@ -136,6 +146,7 @@ interface StrictSchemaIndex {
 
 const FORBIDDEN_INPUT_KEYS = new Set(['binding', 'bindings', 'bindingValue', 'bindingValues', 'value', 'values', 'providedValues']);
 const PARAMETER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const STATIC_LITERAL_FORMATTER = new SqlFormatter({} as unknown as ConstructorParameters<typeof SqlFormatter>[0]);
 
 const BLOCKED_CATALOG: Record<FixtureExtractionBlockedCodeV0, {
   message: string;
@@ -200,6 +211,13 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
   };
   const safety = inspectStaticSelectSafetyV0(input.sql);
   if (!safety.ok) return globalBlockedPlan(input, source, safety.blockers);
+  if (collectParameterNamesFromAst(safety.statement).some((parameter) => !PARAMETER_NAME.test(parameter))) {
+    return blockedBeforeRoot(input, source, 'PARAMETER_PROPAGATION_UNPROVEN', 'blocked', [{
+      kind: 'parser_ast',
+      sourceId: 'parameter:unsupported-spelling',
+      sourcePath: 'statement.parameter',
+    }]);
+  }
 
   const schemaFacts = input.schemaFacts ?? (input.ddl ? parseSchemaFactsFromDdl([...input.ddl]) : undefined);
   try {
@@ -247,6 +265,23 @@ export function generateFixtureExtractionPlanV0(input: FixtureExtractionInputV0)
     occurrence.table = resolution.table;
     occurrence.tableResolution = resolution.status;
   });
+  const malformedSchemaOccurrence = graph.occurrences.find((occurrence) => occurrence.table
+    && !hasTableCrossFieldIntegrity(occurrence.table, schemaIndex));
+  if (malformedSchemaOccurrence) {
+    return blockedBeforeRoot(input, source, 'SCHEMA_FACTS_REQUIRED', 'blocked', [{
+      kind: 'schema_table',
+      sourceId: `${malformedSchemaOccurrence.path}:schema-cross-field`,
+      sourcePath: `${malformedSchemaOccurrence.path}.schema-table`,
+    }]);
+  }
+  const blockingDiagnostics = findBlockingSchemaDiagnostics(input, schemaFacts, graph.occurrences);
+  if (blockingDiagnostics.length > 0) {
+    return blockedBeforeRoot(input, source, 'SCHEMA_FACTS_REQUIRED', 'blocked', blockingDiagnostics.map(({ diagnostic, index }) => ({
+      kind: 'schema_diagnostic',
+      sourceId: `schema-diagnostic:${String(index + 1).padStart(4, '0')}:${diagnostic.code}`,
+      sourcePath: `schemaFacts.diagnostics[${String(index).padStart(4, '0')}]`,
+    })));
+  }
   const caseAmbiguousRelation = graph.occurrences.find((occurrence) => occurrence.caseSensitiveIdentityUnproven);
   if (caseAmbiguousRelation) {
     const isRoot = input.reproductionKey.rootRelation
@@ -376,20 +411,34 @@ function isSchemaFactsShape(value: unknown): value is SchemaFacts {
       || (table.schemaName !== undefined && typeof table.schemaName !== 'string')
       || !isOptionalStringArray(table.primaryKey)
       || !isOptionalNestedStringArray(table.uniqueKeys)) return false;
-    for (const column of Object.values(table.columns)) {
+    const normalizedColumns = new Set<string>();
+    for (const [columnKey, column] of Object.entries(table.columns)) {
       if (!isRecord(column)) return false;
       assertAllowedKeys(column, ['defaultSql', 'name', 'nullable', 'type']);
       if (typeof column.name !== 'string'
         || (column.defaultSql !== undefined && typeof column.defaultSql !== 'string')
         || (column.nullable !== undefined && typeof column.nullable !== 'boolean')
         || (column.type !== undefined && typeof column.type !== 'string')) return false;
+      const normalizedColumn = normalizeIdentifier(column.name);
+      if (normalizeIdentifier(columnKey) !== normalizedColumn || normalizedColumns.has(normalizedColumn)) return false;
+      normalizedColumns.add(normalizedColumn);
     }
+    const primaryKey = table.primaryKey as string[] | undefined;
+    const uniqueKeys = table.uniqueKeys as string[][] | undefined;
+    const keys: string[][] = [...(primaryKey ? [primaryKey] : []), ...(uniqueKeys ?? [])];
+    if (keys.some((key) => key.length === 0
+      || new Set(key.map(normalizeIdentifier)).size !== key.length
+      || key.some((column) => !normalizedColumns.has(normalizeIdentifier(column))))) return false;
     if (table.foreignKeys !== undefined) {
       if (!Array.isArray(table.foreignKeys)) return false;
       for (const foreignKey of table.foreignKeys) {
         if (!isRecord(foreignKey)) return false;
         assertAllowedKeys(foreignKey, ['columns', 'refColumns', 'refTable']);
         if (!isStringArray(foreignKey.columns) || !isStringArray(foreignKey.refColumns) || typeof foreignKey.refTable !== 'string') return false;
+        if (foreignKey.columns.length === 0 || foreignKey.columns.length !== foreignKey.refColumns.length
+          || new Set(foreignKey.columns.map(normalizeIdentifier)).size !== foreignKey.columns.length
+          || new Set(foreignKey.refColumns.map(normalizeIdentifier)).size !== foreignKey.refColumns.length
+          || foreignKey.columns.some((column) => !normalizedColumns.has(normalizeIdentifier(column)))) return false;
       }
     }
   }
@@ -547,6 +596,7 @@ function collectJoinEdge(join: JoinClause, related: Occurrence, aliases: Map<str
     joinType: rawValue(join.joinType).toLowerCase(),
     kind: 'join',
     localParameterEqualities,
+    localStaticEqualities: [],
     notExists: false,
     related,
     unsafePredicate,
@@ -574,11 +624,40 @@ function collectWhere(
       const nestedAliases = new Map(aliases);
       nestedAliases.set(normalizeIdentifier(related.alias), related);
       nestedAliases.set(normalizeIdentifier(baseRelationName(related.relationName)), related);
-      const correlations = collectColumnPairs(exists.query instanceof SimpleSelectQuery ? exists.query.whereClause?.condition : undefined, nestedAliases)
-        .filter((pair) => (pair.left.occurrence === related && !localSet.has(pair.right.occurrence))
-          || (pair.right.occurrence === related && !localSet.has(pair.left.occurrence))
-          || (pair.left.occurrence === related && aliases.has(normalizeIdentifier(pair.right.occurrence.alias)))
-          || (pair.right.occurrence === related && aliases.has(normalizeIdentifier(pair.left.occurrence.alias))));
+      const correlations: EqualityPair[] = [];
+      const localParameterEqualities: ParameterEquality[] = [];
+      const localStaticEqualities: StaticEquality[] = [];
+      const outerOccurrences = new Set(aliases.values());
+      let unsafePredicate = !(exists.query instanceof SimpleSelectQuery) || !exists.query.whereClause;
+      const nestedTerms = exists.query instanceof SimpleSelectQuery
+        ? flattenAnd(exists.query.whereClause?.condition)
+        : [];
+      for (const [nestedIndex, nestedTerm] of nestedTerms.entries()) {
+        const nestedPath = `${termPath}.exists.where[${String(nestedIndex).padStart(4, '0')}]`;
+        if (nestedTerm instanceof BinaryExpression && rawValue(nestedTerm.operator) === '=') {
+          const pair = resolveColumnPair(nestedTerm.left, nestedTerm.right, nestedAliases);
+          if (pair) {
+            const other = pair.left.occurrence === related
+              ? pair.right.occurrence
+              : pair.right.occurrence === related ? pair.left.occurrence : undefined;
+            if (other && outerOccurrences.has(other)) {
+              correlations.push(pair);
+              continue;
+            }
+          }
+          const parameter = resolveColumnParameter(nestedTerm.left, nestedTerm.right, nestedAliases, nestedPath, 'where');
+          if (parameter?.occurrence === related) {
+            localParameterEqualities.push(parameter.equality);
+            continue;
+          }
+          const staticEquality = resolveColumnLiteral(nestedTerm.left, nestedTerm.right, nestedAliases, nestedPath);
+          if (staticEquality?.occurrence === related) {
+            localStaticEqualities.push(staticEquality.equality);
+            continue;
+          }
+        }
+        unsafePredicate = true;
+      }
       const anchor = correlations.flatMap((pair) => [pair.left.occurrence, pair.right.occurrence]).find((occurrence) => occurrence !== related);
       graph.edges.push({
         anchor: anchor ?? related,
@@ -586,10 +665,11 @@ function collectWhere(
         evidencePath: termPath,
         joinType: 'exists',
         kind: 'exists',
-        localParameterEqualities: [],
+        localParameterEqualities,
+        localStaticEqualities,
         notExists: exists.notExists,
         related,
-        unsafePredicate: !anchor || correlations.length === 0,
+        unsafePredicate: unsafePredicate || !anchor || correlations.length === 0,
       });
       continue;
     }
@@ -597,14 +677,6 @@ function collectWhere(
     const parameter = resolveColumnParameter(term.left, term.right, aliases, termPath, 'where');
     if (parameter && localSet.has(parameter.occurrence)) parameter.occurrence.parameterEqualities.push(parameter.equality);
   }
-}
-
-function collectColumnPairs(condition: unknown, aliases: Map<string, Occurrence>): EqualityPair[] {
-  return flattenAnd(condition).flatMap((term) => {
-    if (!(term instanceof BinaryExpression) || rawValue(term.operator) !== '=') return [];
-    const pair = resolveColumnPair(term.left, term.right, aliases);
-    return pair ? [pair] : [];
-  });
 }
 
 function resolveColumnPair(left: unknown, right: unknown, aliases: Map<string, Occurrence>): EqualityPair | undefined {
@@ -633,6 +705,28 @@ function resolveColumnParameter(
   return {
     occurrence: resolved.occurrence,
     equality: { column: resolved.column, evidencePath, kind, parameter: rawValue(parameter.name) },
+  };
+}
+
+function resolveColumnLiteral(
+  left: unknown,
+  right: unknown,
+  aliases: Map<string, Occurrence>,
+  evidencePath: string,
+): { equality: StaticEquality; occurrence: Occurrence } | undefined {
+  const column = left instanceof ColumnReference && right instanceof LiteralValue
+    ? left
+    : right instanceof ColumnReference && left instanceof LiteralValue
+      ? right
+      : undefined;
+  const literal = left instanceof LiteralValue ? left : right instanceof LiteralValue ? right : undefined;
+  if (!column || !literal) return undefined;
+  const resolved = resolveColumn(column, aliases);
+  const literalSql = formatStaticLiteral(literal);
+  if (!resolved || !literalSql) return undefined;
+  return {
+    occurrence: resolved.occurrence,
+    equality: { column: resolved.column, evidencePath, literalSql },
   };
 }
 
@@ -719,26 +813,53 @@ function deriveRelatedStep(edge: OccurrenceEdge, anchor: BoundedDraft, evidence:
   const anchorColumn = fkResult.anchorColumn;
   const directParameter = anchor.parameterByColumn.get(normalizeIdentifier(anchorColumn));
   const localParameters = edge.localParameterEqualities
-    .filter((item) => item.column !== relatedColumn)
+    .filter((item) => normalizeIdentifier(item.column) !== normalizeIdentifier(relatedColumn))
     .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.parameter, right.parameter));
+  const localStaticEqualities = edge.localStaticEqualities
+    .filter((item) => normalizeIdentifier(item.column) !== normalizeIdentifier(relatedColumn))
+    .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.literalSql, right.literalSql));
+  if (localParameters.some((item) => !tableHasColumn(edge.related.table!, item.column))) {
+    return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['SCHEMA_FACTS_REQUIRED']);
+  }
+  if (localStaticEqualities.some((item) => !tableHasColumn(edge.related.table!, item.column))) {
+    return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['SCHEMA_FACTS_REQUIRED']);
+  }
+  if (localParameters.some((item) => !PARAMETER_NAME.test(item.parameter))) {
+    return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
+  }
   let predicateSql: string;
   let boundaryReason: BoundedDraft['boundaryReason'];
   const parameterByColumn = new Map<string, string>();
   if (directParameter) {
     const predicates = [{ column: relatedColumn, parameter: directParameter }, ...localParameters.map((item) => ({ column: item.column, parameter: item.parameter }))]
       .sort((left, right) => compareCodeUnits(left.column, right.column) || compareCodeUnits(left.parameter, right.parameter));
-    predicateSql = predicates.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`).join(' and ');
+    predicateSql = [
+      ...predicates.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
+      ...localStaticEqualities.map((item) => `${quoteIdentifier(item.column)} = ${item.literalSql}`),
+    ].join(' and ');
     predicates.forEach((item) => parameterByColumn.set(normalizeIdentifier(item.column), item.parameter));
     boundaryReason = edge.kind === 'exists' ? 'correlated_exists_key_equality' : 'direct_key_equality_propagation';
   } else {
     if (attemptedHopCount !== 2) {
       return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
     }
-    predicateSql = `${quoteIdentifier(relatedColumn)} in (\n  select ${quoteIdentifier(anchorColumn)}\n  from ${quoteRelation(anchor.occurrence.relationName)}\n  where ${anchor.predicateSql}\n)`;
+    predicateSql = [
+      `${quoteIdentifier(relatedColumn)} in (\n  select ${quoteIdentifier(anchorColumn)}\n  from ${quoteRelation(anchor.occurrence.relationName)}\n  where ${anchor.predicateSql}\n)`,
+      ...localParameters.map((item) => `${quoteIdentifier(item.column)} = :${item.parameter}`),
+      ...localStaticEqualities.map((item) => `${quoteIdentifier(item.column)} = ${item.literalSql}`),
+    ].join(' and ');
+    localParameters.forEach((item) => parameterByColumn.set(normalizeIdentifier(item.column), item.parameter));
     boundaryReason = 'nested_foreign_key_subquery';
   }
   const parameterNames = collectParameterNamesFromSql(`select * from ${quoteRelation(edge.related.relationName)} where ${predicateSql};`);
-  const boundaryColumns = [relatedColumn, ...localParameters.map((item) => item.column)].sort(compareCodeUnits);
+  if (parameterNames.some((parameter) => !PARAMETER_NAME.test(parameter))) {
+    return unknownDraft(edge, anchor, derivation, evidenceKeys, attemptedHopCount, ['PARAMETER_PROPAGATION_UNPROVEN', 'CAPTURE_BOUNDARY_UNBOUNDED']);
+  }
+  const boundaryColumns = [
+    relatedColumn,
+    ...localParameters.map((item) => item.column),
+    ...localStaticEqualities.map((item) => item.column),
+  ].sort(compareCodeUnits);
   const resultExpectation = edge.kind === 'exists' && edge.notExists ? emptyResultRequired() : rowsMayBePresent();
   const sql = buildDirectSelect(edge.related, predicateSql);
   return {
@@ -785,11 +906,13 @@ function resolveForeignKey(edge: OccurrenceEdge):
   const pair = edge.equalityPairs[0];
   const relatedColumn = pair.left.occurrence === edge.related ? pair.left.column : pair.right.column;
   const anchorColumn = pair.left.occurrence === edge.anchor ? pair.left.column : pair.right.column;
+  if (!tableHasColumn(edge.related.table, relatedColumn) || !tableHasColumn(edge.anchor.table, anchorColumn)) return { status: 'missing' };
   const candidates = (edge.related.table.foreignKeys ?? []).filter((foreignKey) => foreignKey.columns.length === 1
     && foreignKey.refColumns.length === 1
     && normalizeIdentifier(foreignKey.columns[0]) === normalizeIdentifier(relatedColumn)
     && normalizeIdentifier(foreignKey.refColumns[0]) === normalizeIdentifier(anchorColumn)
     && foreignKeyTargets(foreignKey.refTable, edge.related.table!, edge.anchor.table!)
+    && foreignKeyHasExistingColumns(foreignKey, edge.related.table!, edge.anchor.table!)
     && isTableUniqueKey(edge.anchor.table!, [anchorColumn]));
   if (candidates.length === 1) return { status: 'resolved', anchorColumn, foreignKey: candidates[0], relatedColumn, relatedIsChild: true };
   if (candidates.length > 1) return { status: 'ambiguous' };
@@ -798,6 +921,7 @@ function resolveForeignKey(edge: OccurrenceEdge):
     && normalizeIdentifier(foreignKey.columns[0]) === normalizeIdentifier(anchorColumn)
     && normalizeIdentifier(foreignKey.refColumns[0]) === normalizeIdentifier(relatedColumn)
     && foreignKeyTargets(foreignKey.refTable, edge.anchor.table!, edge.related.table!)
+    && foreignKeyHasExistingColumns(foreignKey, edge.anchor.table!, edge.related.table!)
     && isTableUniqueKey(edge.related.table!, [relatedColumn]));
   if (reverse.length === 1) return { status: 'resolved', anchorColumn, foreignKey: reverse[0], relatedColumn, relatedIsChild: false };
   return reverse.length > 1 ? { status: 'ambiguous' } : { status: 'missing' };
@@ -828,6 +952,15 @@ function resolveRoot(
   const rootTable = root.table!;
   const columns = rootColumns ? [...rootColumns] : rootTable.primaryKey?.length === 1 ? [...rootTable.primaryKey] : [];
   if (columns.length !== 1 || parameterNames.length !== columns.length || new Set(columns.map(normalizeIdentifier)).size !== columns.length) {
+    return { ok: false, codes: ['REPRODUCTION_KEY_AMBIGUOUS'], status: 'ambiguous' };
+  }
+  if (columns.some((column) => !tableHasColumn(rootTable, column))) {
+    return { ok: false, codes: ['SCHEMA_FACTS_REQUIRED'], status: 'blocked' };
+  }
+  const mappedColumns = new Set(root.parameterEqualities
+    .filter((item) => item.kind === 'where' && item.parameter === parameterNames[0])
+    .map((item) => normalizeIdentifier(item.column)));
+  if (mappedColumns.size > 1) {
     return { ok: false, codes: ['REPRODUCTION_KEY_AMBIGUOUS'], status: 'ambiguous' };
   }
   const keyKind = isSameKey(rootTable.primaryKey, columns) ? 'primary' : (rootTable.uniqueKeys ?? []).some((key) => isSameKey(key, columns)) ? 'unique' : undefined;
@@ -1081,6 +1214,56 @@ function createStrictSchemaIndex(schemaFacts: SchemaFacts | undefined): StrictSc
   return index;
 }
 
+function findBlockingSchemaDiagnostics(
+  input: FixtureExtractionInputV0,
+  schemaFacts: SchemaFacts | undefined,
+  occurrences: readonly Occurrence[],
+): Array<{ diagnostic: SchemaFactsDiagnostic; index: number }> {
+  const diagnostics = schemaFacts?.diagnostics ?? [];
+  if (diagnostics.length === 0) return [];
+  if (input.schemaFacts !== undefined || !input.ddl) {
+    return diagnostics.map((diagnostic, index) => ({ diagnostic, index }));
+  }
+  const tablesByFile = new Map<string, SchemaTableFacts[]>();
+  for (const ddl of input.ddl) {
+    if (!ddl.filePath) continue;
+    const parsed = parseSchemaFactsFromDdl([{ filePath: ddl.filePath, sql: ddl.sql }]);
+    tablesByFile.set(ddl.filePath, [
+      ...(tablesByFile.get(ddl.filePath) ?? []),
+      ...Object.values(parsed.tables),
+    ]);
+  }
+  return diagnostics.flatMap((diagnostic, index) => {
+    if (!diagnostic.filePath) return [{ diagnostic, index }];
+    const fileTables = tablesByFile.get(diagnostic.filePath);
+    if (!fileTables || fileTables.length === 0) return [{ diagnostic, index }];
+    const involved = fileTables.some((table) => occurrences.some((occurrence) =>
+      relationMatches(occurrence.relationName, qualifiedTableName(table))));
+    return involved ? [{ diagnostic, index }] : [];
+  });
+}
+
+function hasTableCrossFieldIntegrity(table: SchemaTableFacts, index: StrictSchemaIndex): boolean {
+  const keys = [...(table.primaryKey ? [table.primaryKey] : []), ...(table.uniqueKeys ?? [])];
+  if (keys.some((key) => key.length === 0
+    || new Set(key.map(normalizeIdentifier)).size !== key.length
+    || key.some((column) => !tableHasColumn(table, column)))) return false;
+  for (const foreignKey of table.foreignKeys ?? []) {
+    if (foreignKey.columns.length === 0 || foreignKey.columns.length !== foreignKey.refColumns.length
+      || new Set(foreignKey.columns.map(normalizeIdentifier)).size !== foreignKey.columns.length
+      || new Set(foreignKey.refColumns.map(normalizeIdentifier)).size !== foreignKey.refColumns.length
+      || foreignKey.columns.some((column) => !tableHasColumn(table, column))) return false;
+    const targetName = foreignKey.refTable.includes('.')
+      ? foreignKey.refTable
+      : table.schemaName ? `${table.schemaName}.${foreignKey.refTable}` : foreignKey.refTable;
+    const target = resolveStrictTable(index, targetName);
+    if (target.status === 'ambiguous') return false;
+    if (target.table && (!foreignKey.refColumns.every((column) => tableHasColumn(target.table!, column))
+      || !isTableUniqueKey(target.table, foreignKey.refColumns))) return false;
+  }
+  return true;
+}
+
 function resolveStrictTable(index: StrictSchemaIndex, relationName: string): {
   status: 'ambiguous' | 'missing' | 'resolved';
   table?: SchemaTableFacts;
@@ -1113,7 +1296,10 @@ function captureColumnNames(occurrence: Occurrence): string[] {
 }
 
 function collectParameterNamesFromSql(sql: string): string[] {
-  const statement = SqlParser.parse(sql);
+  return collectParameterNamesFromAst(SqlParser.parse(sql));
+}
+
+function collectParameterNamesFromAst(statement: unknown): string[] {
   const names = new Set<string>();
   const seen = new Set<object>();
   const visit = (value: unknown): void => {
@@ -1228,6 +1414,14 @@ function rawValue(value: unknown): string {
   return '';
 }
 
+function formatStaticLiteral(literal: LiteralValue): string | undefined {
+  try {
+    return STATIC_LITERAL_FORMATTER.format(literal).formattedSql.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function identifierValue(value: unknown): string {
   return rawValue(value);
 }
@@ -1262,7 +1456,26 @@ function isSameKey(left: readonly string[] | undefined, right: readonly string[]
 }
 
 function isTableUniqueKey(table: SchemaTableFacts, columns: readonly string[]): boolean {
-  return isSameKey(table.primaryKey, columns) || (table.uniqueKeys ?? []).some((key) => isSameKey(key, columns));
+  return columns.length > 0
+    && columns.every((column) => tableHasColumn(table, column))
+    && (isSameKey(table.primaryKey, columns) || (table.uniqueKeys ?? []).some((key) => isSameKey(key, columns)));
+}
+
+function tableHasColumn(table: SchemaTableFacts, column: string): boolean {
+  const normalized = normalizeIdentifier(column);
+  return Object.entries(table.columns).some(([columnKey, facts]) =>
+    normalizeIdentifier(columnKey) === normalized && normalizeIdentifier(facts.name) === normalized);
+}
+
+function foreignKeyHasExistingColumns(
+  foreignKey: SchemaForeignKeyFacts,
+  child: SchemaTableFacts,
+  parent: SchemaTableFacts,
+): boolean {
+  return foreignKey.columns.length > 0
+    && foreignKey.columns.length === foreignKey.refColumns.length
+    && foreignKey.columns.every((column) => tableHasColumn(child, column))
+    && foreignKey.refColumns.every((column) => tableHasColumn(parent, column));
 }
 
 function quoteIdentifier(value: string): string {
