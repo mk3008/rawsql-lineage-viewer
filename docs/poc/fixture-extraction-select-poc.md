@@ -173,7 +173,7 @@ production lifecycle guarantee.
 Keep the generator internal and preserve fail-closed behavior for forms the
 experimental classifier recognizes. Before considering a public or production surface:
 
-1. instrument assisted human steps, omission-driven retries, and elapsed time in units
+1. instrument human-assisted steps, omission-driven retries, and elapsed time in units
    comparable with a manual baseline;
 2. inventory query-bearing AST node types and add broader adversarial schemas and SQL
    shapes, requiring each inventoried form to produce a statically proven bounded plan

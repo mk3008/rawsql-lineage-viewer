@@ -130,6 +130,8 @@ describe('generateFixtureExtractionPlan', () => {
       boundary: { status: 'bounded', reason: 'nested_foreign_key_subquery', hopCount: 2, relationColumns: ['order_id', 'sku'] },
     });
     expect(plan.steps[2].sql).toBe('select item_id, order_id, quantity, sku\nfrom order_item\nwhere order_id in (\n  select order_id\n  from purchase_order\n  where customer_id = :customer_id\n) and sku = :sku;');
+    expect(plan.limitations.find((limitation) => limitation.code === 'TWO_HOP_PROPAGATION_LIMIT')?.message)
+      .toBe('Static key propagation is limited to two hops in this PoC.');
   });
 
   it('preserves every intermediate-key constraint in a two-hop NOT EXISTS boundary', () => {

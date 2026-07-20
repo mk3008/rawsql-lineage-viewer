@@ -186,7 +186,7 @@ const LIMITATION_CATALOG: Record<FixtureExtractionLimitationCode, { message: str
   SENSITIVE_COLUMN_POLICY_NOT_EVALUATED: { rank: 2, message: 'Sensitive column policy was not evaluated.' },
   GENERATED_IDENTITY_LOADING_OUTSIDE_POC: { rank: 3, message: 'Generated and identity column loading is outside the PoC.' },
   LARGE_OBJECT_MIGRATION_OUTSIDE_POC: { rank: 4, message: 'Large object migration is outside the PoC.' },
-  TWO_HOP_PROPAGATION_LIMIT: { rank: 5, message: 'Static key propagation is limited to two hops in .' },
+  TWO_HOP_PROPAGATION_LIMIT: { rank: 5, message: 'Static key propagation is limited to two hops in this PoC.' },
   PARTIAL_PLAN_INCOMPLETE: { rank: 6, message: 'This partial plan is not a complete reproduction fixture.' },
 };
 
