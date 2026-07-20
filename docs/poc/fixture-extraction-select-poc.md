@@ -21,9 +21,11 @@ The harness executed **10/10 generated captures**, verified their exact columns
 and unordered row multisets, and transferred **13 synthetic rows** in total.
 
 The required DML CTE case failed closed with zero generated captures and zero DML
-execution. The `NOT EXISTS` scenario preserved the required zero-row child capture.
-The accepted run also completed container, port, temporary-directory, and synthetic
-credential cleanup.
+execution. The accepted `NOT EXISTS` runtime case preserved its required absence as a
+zero-row child capture. It does not generalize to other `NOT EXISTS` shapes that must
+retain matching child rows, including the opposite case where those rows make the
+original query return zero rows. The accepted run also completed container, port,
+temporary-directory, and synthetic credential cleanup.
 
 These results support continued investigation. They do not establish end-to-end
 migration-work reduction, elapsed-time savings, or production suitability.
@@ -31,7 +33,8 @@ migration-work reduction, elapsed-time savings, or production suitability.
 ## Evidence separation
 
 - **Repository evidence** covers static generation, parser-backed SQL, fail-closed
-  classifications, product-boundary scans, tests, type checking, and builds.
+  classifications for forms recognized by the experimental classifier,
+  product-boundary scans, tests, type checking, and builds.
 - **Supplementary runtime evidence** comes from the accepted disposable local
   PostgreSQL harness run. It covers only the five required supported synthetic cases,
   the required blocked DML case, and that run's cleanup.
@@ -55,7 +58,9 @@ The boundary is:
 - The plan carries parameter names and bounded `SELECT` text, not binding values or
   captured rows.
 - Unsupported or unproven population, schema, volatility, environment-state, and
-  propagation cases fail closed instead of emitting an executable step.
+  propagation cases recognized by the experimental classifier fail closed instead of
+  emitting an executable step. Query-bearing AST forms that have not yet been
+  inventoried are a known follow-up boundary, not a complete fail-closed guarantee.
 - Ready SQL is parser-backed and bounded by proven key and foreign-key evidence for
   the supported experimental shapes.
 - No fixture-loading API is exposed. Product `INSERT`, `COPY`, CSV/JSON transfer,
@@ -103,7 +108,7 @@ therefore remain **partial and unexecuted**.
 | H1 — bounded plan generation is feasible | Demonstrated | Exact relation sets and bounded parser-valid `SELECT` plans were produced for the five required supported cases and the optional static case. This is limited to the evaluated experimental shapes. |
 | H2 — generated captures can reproduce an observation | Demonstrated | The five executed supported synthetic cases matched after transferring only generated capture results. Optional aggregate and real or remote data were not executed. |
 | H3 — fixture extraction reduces migration cost | Partially demonstrated | A narrow SELECT-authoring proxy improved, but assisted end-to-end human steps, historical omission retries, and elapsed time were not measured in comparable units. |
-| H4 — unsupported work can fail closed | Demonstrated for tested forms | The DML CTE produced zero steps and zero execution. Required negative tests and eleven tested environment/session expressions also blocked with zero steps. This does not cover every unsupported SQL form. |
+| H4 — unsupported work can fail closed | Demonstrated for recognized, tested forms | The DML CTE produced zero steps and zero execution. Required negative tests, a scalar subquery, set operations, and eleven tested environment/session expressions also blocked. Query-bearing AST node types have not been exhaustively inventoried, so this does not cover every unsupported SQL form. |
 | H5 — the product execution boundary can remain intact | Demonstrated within the PoC | Core scans found no database, network, process, or credential execution surface; all DB-backed evaluation remains under `tests/poc`. |
 
 ## SELECT-authoring proxy
@@ -144,6 +149,14 @@ production lifecycle guarantee.
   production environment, or real credential was used.
 - The supported grammar and propagation shapes are intentionally narrow. This is not
   arbitrary SQL support.
+- Query-bearing AST coverage is not exhaustive. Scalar subqueries have a tested
+  fail-closed path, while `ARRAY(SELECT ...)`-style array/query expressions and other
+  expression nodes that contain queries require an explicit AST-node inventory. Each
+  inventoried form must eventually produce a statically proven bounded plan or fail
+  closed explicitly; that inventory is follow-up work, not a requirement of this PoC.
+- Runtime `NOT EXISTS` evidence is limited to the accepted case whose correlated child
+  capture must remain empty. It does not prove matching-child retention or the
+  opposite zero-result population case for general `NOT EXISTS` shapes.
 - Static readiness does not imply runtime reproduction unless the scenario was actually
   executed. The optional aggregate remains unexecuted.
 - The harness demonstrates test-only transfer; it does not provide product loading,
@@ -157,12 +170,14 @@ production lifecycle guarantee.
 
 **Promising, but more evidence is required.**
 
-Keep the generator internal and fail-closed. Before considering a public or production
-surface:
+Keep the generator internal and preserve fail-closed behavior for forms the
+experimental classifier recognizes. Before considering a public or production surface:
 
 1. instrument assisted human steps, omission-driven retries, and elapsed time in units
    comparable with a manual baseline;
-2. add broader adversarial schemas and SQL shapes without weakening the static boundary;
+2. inventory query-bearing AST node types and add broader adversarial schemas and SQL
+   shapes, requiring each inventoried form to produce a statically proven bounded plan
+   or fail closed explicitly;
 3. execute the optional aggregate only if aggregate support remains a product goal; and
 4. repeat runtime evaluation on a larger, explicitly approved synthetic corpus before
    discussing generality or production readiness.
