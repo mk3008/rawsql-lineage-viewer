@@ -63,6 +63,20 @@ does not generate or run aggregate/grain observation probes. Database
 execution, runtime data retrieval, credential handling, binding-value
 serialization, publishing, and remote MCP hosting are unsupported.
 
+### Experimental fixture-extraction MCP tool
+
+`create_fixture_extraction_plan` is a separate, experimental MCP tool for
+generating static fixture-capture `SELECT` plans. It accepts exactly one SQL
+source plus inline or workspace-confined DDL/schema facts and explicit,
+value-free reproduction-key metadata. It returns bounded capture `SELECT`s only
+when its narrow static checks can prove a boundary; otherwise it returns an
+explicit `partial` or `blocked` `fixture-extraction-plan` (schema version 0).
+
+It does not accept parameter values, query a database, inspect or transfer rows,
+load fixtures, or support arbitrary SQL. A ready plan is not a production
+migration guarantee. See [the MCP tool contract](docs/mcp-fixture-extraction.md)
+for a request example and limitations.
+
 ## MVP Scope
 
 - Load a sample SQL query on first visit.

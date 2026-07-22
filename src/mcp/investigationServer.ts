@@ -9,6 +9,8 @@ import { createInvestigationPlan, InvestigationPlanInputError, investigationInpu
 import { discoverInvestigationTargets, InvestigationTargetSelectionError, resolveInvestigationTarget, type InvestigationTargetDiscoveryInputV1 } from '../lineage/investigationTargetDiscovery';
 import { diagnosticProblemIntents, type ProblemIntent } from '../lineage/problemIntent';
 import type { DdlInput, SchemaFacts } from '../lineage/schemaFacts';
+import { FixtureExtractionInputError, type FixtureExtractionInput } from '../lineage/fixture-extraction/fixtureExtractionPlan';
+import { generateFixtureExtractionPlan } from '../lineage/fixture-extraction/generateFixtureExtractionPlan';
 
 const EXCLUDED_DIRECTORIES = new Set(['.git', 'node_modules', 'dist', 'build', 'coverage']);
 const MAX_DIRECTORY_DEPTH = 8;
@@ -55,6 +57,23 @@ export interface CreateInvestigationPlanMcpInput {
 
 export type InvestigationStaticAnalysisMcpInput = Omit<CreateInvestigationPlanMcpInput,
   'parameterBindings' | 'parameterDefinitions' | 'symptom' | 'targetColumn' | 'targetId' | 'targetNode'>;
+
+/** Value-free request for the experimental static fixture-capture planner. */
+export interface CreateFixtureExtractionPlanMcpInput extends InvestigationStaticAnalysisMcpInput {
+  reproductionKey?: unknown;
+}
+
+const fixtureReproductionKeySchema = z.object({
+  parameterNames: z.array(z.string()).optional().describe('SQL parameter names only; never supply parameter values.'),
+  rootColumns: z.array(z.string()).optional().describe('Optional root-relation columns matched by the reproduction-key parameters.'),
+  rootRelation: z.string().optional().describe('Optional root physical relation used to bound capture SELECT steps.'),
+}).catchall(z.unknown()).describe('Explicit value-free reproduction-key metadata. Binding values and row values are forbidden.');
+const fixtureExtractionInputSchema = z.object({
+  ...staticAnalysisInputSchema,
+  reproductionKey: fixtureReproductionKeySchema.describe('Required explicit reproduction-key metadata. It may contain parameterNames, rootRelation, and rootColumns only; all parameter or row values are forbidden.'),
+}).passthrough();
+const fixtureInputAllowedKeys = new Set([...Object.keys(staticAnalysisInputSchema), 'reproductionKey']);
+const fixtureInputValueBearingKeys = new Set(['binding', 'bindings', 'bindingValue', 'bindingValues', 'parameterBindings', 'providedValues', 'value', 'values']);
 
 export type PrepareSqlInvestigationMcpInput = InvestigationStaticAnalysisMcpInput & {
   symptom?: unknown;
@@ -154,6 +173,23 @@ export function normalizeInvestigationStaticAnalysisInput(
     ...(schemaFacts ? { schemaFacts } : {}),
     sql,
   };
+}
+
+/** Reuses MCP workspace confinement while keeping fixture extraction strictly value-free. */
+export function normalizeCreateFixtureExtractionPlanInput(
+  workspace: string,
+  value: CreateFixtureExtractionPlanMcpInput,
+): FixtureExtractionInput {
+  for (const key of Object.keys(value as Record<string, unknown>)) {
+    if (fixtureInputValueBearingKeys.has(key)) throw new FixtureExtractionInputError('VALUE_BEARING_INPUT_FORBIDDEN');
+    if (!fixtureInputAllowedKeys.has(key)) throw new FixtureExtractionInputError('INPUT_SHAPE_INVALID');
+  }
+  const staticInput = normalizeInvestigationStaticAnalysisInput(workspace, value);
+  const input: FixtureExtractionInput = {
+    ...staticInput,
+    reproductionKey: value.reproductionKey as FixtureExtractionInput['reproductionKey'],
+  };
+  return input;
 }
 
 /**
@@ -300,6 +336,22 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       }
     },
   );
+  server.registerTool(
+    'create_fixture_extraction_plan',
+    {
+      description: 'Generate an experimental, static, fail-closed fixture-capture SELECT plan from SQL, explicit DDL/schema facts, and a value-free reproduction key. It never connects to a database, executes SQL, reads rows, accepts parameter values, or loads fixtures. The result is only bounded capture SELECT text or an explicit partial/blocked plan; it is not arbitrary-SQL or production migration automation.',
+      inputSchema: fixtureExtractionInputSchema,
+    },
+    async (request) => {
+      try {
+        return mcpSuccess(generateFixtureExtractionPlan(normalizeCreateFixtureExtractionPlanInput(workspaceRoot, request)));
+      } catch (error) {
+        const failure = mcpFailure(error);
+        if (failure) return failure;
+        throw error;
+      }
+    },
+  );
   return server;
 }
 
@@ -311,7 +363,7 @@ function mcpSuccess(value: object): { content: Array<{ text: string; type: 'text
 }
 
 function mcpFailure(error: unknown): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
-  if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError)) return undefined;
+  if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError || error instanceof FixtureExtractionInputError)) return undefined;
   return {
     content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message, version: 1 }) }],
     isError: true,
