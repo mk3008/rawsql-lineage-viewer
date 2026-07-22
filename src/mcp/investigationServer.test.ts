@@ -188,7 +188,7 @@ describe('create_investigation_plan MCP adapter', () => {
     const workspace = temporaryWorkspace();
     writeFileSync(resolve(workspace, 'query.sql'), 'select status from orders where status = :status');
     mkdirSync(resolve(workspace, 'ddl'));
-    writeFileSync(resolve(workspace, 'ddl', 'schema.sql'), 'create table orders (status text);');
+    writeFileSync(resolve(workspace, 'ddl', 'schema.sql'), 'create table orders (status text primary key);');
     const before = readFileSync(resolve(workspace, 'query.sql'), 'utf8');
     const transport = new StdioClientTransport({
       args: ['--import', 'tsx', resolve(process.cwd(), 'src/mcp/investigationServer.ts'), '--workspace', workspace],
@@ -205,6 +205,7 @@ describe('create_investigation_plan MCP adapter', () => {
         'discover_investigation_targets',
         'prepare_sql_investigation',
         'create_investigation_plan',
+        'create_fixture_extraction_plan',
       ]);
       const prepareTool = listed.tools.find((tool) => tool.name === 'prepare_sql_investigation')!;
       expect(prepareTool.description).toContain('without a pre-known target');
@@ -241,6 +242,43 @@ describe('create_investigation_plan MCP adapter', () => {
       expect(parameterDefinitionItems?.properties).not.toHaveProperty('value');
 
       const staticRequest = { sqlPath: 'query.sql', ddlDirectories: ['ddl'] };
+      const fixtureTool = listed.tools.find((tool) => tool.name === 'create_fixture_extraction_plan')!;
+      expect(fixtureTool.description).toContain('static, fail-closed fixture-capture SELECT plan');
+      expect(fixtureTool.description).toContain('never connects to a database, executes SQL, reads rows, accepts parameter values, or loads fixtures');
+      expect(fixtureTool.description).toContain('not arbitrary-SQL or production migration automation');
+      expect(fixtureTool.inputSchema.properties).toHaveProperty('reproductionKey');
+      const fixtureRequest = {
+        ...staticRequest,
+        reproductionKey: { parameterNames: ['status'], rootColumns: ['status'], rootRelation: 'orders' },
+      };
+      const fixtureFirst = await client.callTool({ name: 'create_fixture_extraction_plan', arguments: fixtureRequest });
+      const fixtureSecond = await client.callTool({ name: 'create_fixture_extraction_plan', arguments: fixtureRequest });
+      expect(fixtureFirst.isError).not.toBe(true);
+      expect(fixtureFirst.structuredContent).toEqual(fixtureSecond.structuredContent);
+      expect(fixtureFirst.structuredContent).toMatchObject({
+        kind: 'fixture-extraction-plan',
+        schemaVersion: 0,
+        status: 'ready',
+        reproductionKey: { parameterNames: ['status'], rootColumns: ['status'], rootRelation: 'orders', status: 'resolved' },
+      });
+      const fixtureValueInput = await client.callTool({
+        name: 'create_fixture_extraction_plan',
+        arguments: { ...staticRequest, reproductionKey: { parameterNames: ['status'], rootColumns: ['status'], rootRelation: 'orders', values: ['secret'] } },
+      });
+      expect(fixtureValueInput.isError).toBe(true);
+      expect(JSON.parse((fixtureValueInput.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'VALUE_BEARING_INPUT_FORBIDDEN', kind: 'invalid_input' });
+      const fixtureBindingInput = await client.callTool({
+        name: 'create_fixture_extraction_plan',
+        arguments: { ...fixtureRequest, parameterBindings: { status: 'secret' } },
+      });
+      expect(fixtureBindingInput.isError).toBe(true);
+      expect(JSON.parse((fixtureBindingInput.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'VALUE_BEARING_INPUT_FORBIDDEN', kind: 'invalid_input' });
+      const fixtureSchemaConflict = await client.callTool({
+        name: 'create_fixture_extraction_plan',
+        arguments: { ddl: 'create table orders (status text)', schemaFactsPath: 'schema-facts.json', sql: 'select status from orders where status = :status', reproductionKey: fixtureRequest.reproductionKey },
+      });
+      expect(fixtureSchemaConflict.isError).toBe(true);
+      expect(JSON.parse((fixtureSchemaConflict.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'SCHEMA_INPUT_CONFLICT', kind: 'invalid_input' });
       const analysis = await client.callTool({ name: 'analyze_investigation_sql', arguments: staticRequest });
       const discovery = await client.callTool({ name: 'discover_investigation_targets', arguments: staticRequest });
       expect(analysis.structuredContent).toMatchObject({ analysisMode: 'original', kind: 'investigation-analysis-summary', version: 1 });
