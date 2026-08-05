@@ -64,6 +64,7 @@ test('renders the sample SQL lineage graph on first load', async ({ page }) => {
   await expect(page.getByTestId('rf__node-cte_recent_orders')).not.toBeAttached();
   await expect(page.getByTestId('rf__node-main_output')).toBeVisible();
   await expect(page.getByRole('tab', { name: 'New' })).toHaveAttribute('aria-selected', 'true');
+  await expect(page.getByRole('tab', { name: 'Audit' })).toHaveCount(0);
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-node-title-button')).toHaveClass(/lineage-comment-selected/);
   await expect(page.getByTestId('rf__node-main_output').locator('.lineage-column-selected')).toHaveCount(0);
   await expect(page.getByTestId('rf__edge-cte_order_totals-main_output')).toBeAttached();
