@@ -264,11 +264,14 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       inputSchema: staticAnalysisInputSchema,
     },
     async (request) => {
+      let workspaceSource: WorkspaceResolution['source'] | undefined;
       try {
-        const result = discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)).analysis;
+        const requestWorkspace = await resolveRequestWorkspace(server, workspaceRoot, request);
+        workspaceSource = requestWorkspace.source;
+        const result = discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(requestWorkspace.path, request)).analysis;
         return mcpSuccess(result);
       } catch (error) {
-        const failure = mcpFailure(error);
+        const failure = mcpFailure(error, workspaceSource);
         if (failure) return failure;
         throw error;
       }
@@ -281,10 +284,13 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       inputSchema: staticAnalysisInputSchema,
     },
     async (request) => {
+      let workspaceSource: WorkspaceResolution['source'] | undefined;
       try {
-        return mcpSuccess(discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(workspaceRoot, request)));
+        const requestWorkspace = await resolveRequestWorkspace(server, workspaceRoot, request);
+        workspaceSource = requestWorkspace.source;
+        return mcpSuccess(discoverInvestigationTargets(normalizeInvestigationStaticAnalysisInput(requestWorkspace.path, request)));
       } catch (error) {
-        const failure = mcpFailure(error);
+        const failure = mcpFailure(error, workspaceSource);
         if (failure) return failure;
         throw error;
       }
@@ -303,10 +309,13 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       },
     },
     async (request) => {
+      let workspaceSource: WorkspaceResolution['source'] | undefined;
       try {
-        return mcpSuccess(prepareSqlInvestigation(workspaceRoot, request));
+        const requestWorkspace = await resolveRequestWorkspace(server, workspaceRoot, request);
+        workspaceSource = requestWorkspace.source;
+        return mcpSuccess(prepareSqlInvestigation(requestWorkspace.path, request));
       } catch (error) {
-        const failure = mcpFailure(error);
+        const failure = mcpFailure(error, workspaceSource);
         if (failure) return failure;
         throw error;
       }
@@ -327,10 +336,13 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       },
     },
     async (request) => {
+      let workspaceSource: WorkspaceResolution['source'] | undefined;
       try {
-        return mcpSuccess(createInvestigationPlan(normalizeCreateInvestigationPlanInput(workspaceRoot, request)));
+        const requestWorkspace = await resolveRequestWorkspace(server, workspaceRoot, request);
+        workspaceSource = requestWorkspace.source;
+        return mcpSuccess(createInvestigationPlan(normalizeCreateInvestigationPlanInput(requestWorkspace.path, request)));
       } catch (error) {
-        const failure = mcpFailure(error);
+        const failure = mcpFailure(error, workspaceSource);
         if (failure) return failure;
         throw error;
       }
@@ -343,10 +355,13 @@ export function createInvestigationMcpServer(workspace: string): McpServer {
       inputSchema: fixtureExtractionInputSchema,
     },
     async (request) => {
+      let workspaceSource: WorkspaceResolution['source'] | undefined;
       try {
-        return mcpSuccess(generateFixtureExtractionPlan(normalizeCreateFixtureExtractionPlanInput(workspaceRoot, request)));
+        const requestWorkspace = await resolveRequestWorkspace(server, workspaceRoot, request);
+        workspaceSource = requestWorkspace.source;
+        return mcpSuccess(generateFixtureExtractionPlan(normalizeCreateFixtureExtractionPlanInput(requestWorkspace.path, request)));
       } catch (error) {
-        const failure = mcpFailure(error);
+        const failure = mcpFailure(error, workspaceSource);
         if (failure) return failure;
         throw error;
       }
@@ -362,10 +377,69 @@ function mcpSuccess(value: object): { content: Array<{ text: string; type: 'text
   };
 }
 
-function mcpFailure(error: unknown): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
+interface WorkspaceResolution {
+  path: string;
+  source: 'client-provided workspace root' | 'configured --workspace';
+}
+
+/**
+ * Prefer the workspace root that the MCP client explicitly exposes for this
+ * request. The configured root remains a compatibility fallback for clients
+ * that do not implement MCP Roots.
+ */
+async function resolveRequestWorkspace(
+  server: McpServer,
+  configuredWorkspace: string,
+  input: Record<string, unknown>,
+): Promise<WorkspaceResolution> {
+  if (!usesWorkspacePath(input)) {
+    return { path: configuredWorkspace, source: 'configured --workspace' };
+  }
+  if (!server.server.getClientCapabilities()?.roots) {
+    return { path: configuredWorkspace, source: 'configured --workspace' };
+  }
+
+  let roots: Array<{ uri: string }>;
+  try {
+    ({ roots } = await server.server.listRoots());
+  } catch {
+    throw new McpInputError('WORKSPACE_ROOT_UNAVAILABLE', 'The MCP client advertised workspace roots but did not provide one.');
+  }
+  if (roots.length === 0) {
+    throw new McpInputError('WORKSPACE_ROOT_UNAVAILABLE', 'The MCP client did not provide a workspace root.');
+  }
+  if (roots.length !== 1) {
+    throw new McpInputError('WORKSPACE_ROOT_AMBIGUOUS', 'The MCP client provided multiple workspace roots; a single workspace root is required for relative paths.');
+  }
+
+  let path: string;
+  try {
+    const uri = new URL(roots[0].uri);
+    if (uri.protocol !== 'file:') throw new Error('not a file URI');
+    path = fileURLToPath(uri);
+  } catch {
+    throw new McpInputError('WORKSPACE_ROOT_INVALID', 'The MCP client workspace root must be a local file URI.');
+  }
+  return { path: workspaceRealpath(path), source: 'client-provided workspace root' };
+}
+
+function usesWorkspacePath(input: Record<string, unknown>): boolean {
+  return input.sqlPath !== undefined
+    || input.ddlFiles !== undefined
+    || input.ddlDirectories !== undefined
+    || input.schemaFactsPath !== undefined;
+}
+
+function mcpFailure(
+  error: unknown,
+  workspaceSource?: WorkspaceResolution['source'],
+): { content: Array<{ text: string; type: 'text' }>; isError: true } | undefined {
   if (!(error instanceof McpInputError || error instanceof InvestigationPlanInputError || error instanceof InvestigationTargetSelectionError || error instanceof FixtureExtractionInputError)) return undefined;
+  const message = error instanceof McpInputError && error.code === 'PATH_NOT_FOUND' && workspaceSource
+    ? `${error.message} (Resolved against the ${workspaceSource}.)`
+    : error.message;
   return {
-    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message: error.message, version: 1 }) }],
+    content: [{ type: 'text', text: JSON.stringify({ code: error.code, kind: 'invalid_input', message, version: 1 }) }],
     isError: true,
   };
 }

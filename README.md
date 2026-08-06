@@ -35,6 +35,13 @@ rawsql-lineage investigate --sql query.sql --target-node main_output --target-co
 rawsql-lineage-mcp --workspace /absolute/path/to/workspace
 ```
 
+For `sqlPath`, `ddlFiles`, `ddlDirectories`, and `schemaFactsPath`, the MCP
+server prefers the single local workspace root supplied by an MCP client through
+the standard Roots capability. Clients without that capability keep using the
+configured `--workspace` root. Relative paths never accept `..` or absolute
+paths; a `PATH_NOT_FOUND` response identifies whether the client-provided or
+configured workspace root was used, without exposing its filesystem path.
+
 JavaScript and TypeScript consumers can import the versioned static contracts
 and planner from `sql-lineage-viewer`, including
 `discoverInvestigationTargets`, `resolveInvestigationTarget`, and
