@@ -1,8 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ListRootsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createInvestigationPlanForCli } from '../cli/diagnose';
 import { createInvestigationPlan } from '../lineage/investigationPlan';
@@ -16,6 +18,84 @@ afterEach(() => {
 });
 
 describe('create_investigation_plan MCP adapter', () => {
+  it('uses the MCP client workspace root for all public tools and every workspace-relative schema input', async () => {
+    const configuredWorkspace = temporaryWorkspace();
+    const callerWorkspace = temporaryWorkspace();
+    mkdirSync(resolve(callerWorkspace, 'nested'));
+    mkdirSync(resolve(callerWorkspace, 'nested', 'ddl'));
+    writeFileSync(resolve(callerWorkspace, 'nested', 'input.sql'), 'SELECT customer_id, sum(amount) AS total_amount FROM public.orders GROUP BY customer_id;');
+    writeFileSync(resolve(callerWorkspace, 'nested', 'ddl', 'schema.sql'), 'CREATE TABLE public.orders (order_id bigint PRIMARY KEY, customer_id bigint NOT NULL, amount numeric NOT NULL);');
+    writeFileSync(resolve(callerWorkspace, 'nested', 'facts.json'), JSON.stringify({ tables: {} }));
+
+    const transport = new StdioClientTransport({
+      args: ['--import', 'tsx', resolve(process.cwd(), 'src/mcp/investigationServer.ts'), '--workspace', configuredWorkspace],
+      command: process.execPath,
+      cwd: process.cwd(),
+      stderr: 'pipe',
+    });
+    const client = new Client(
+      { name: 'investigation-server-roots-test', version: '1.0.0' },
+      { capabilities: { roots: { listChanged: false } } },
+    );
+    client.setRequestHandler(ListRootsRequestSchema, () => ({
+      roots: [{ name: 'caller-workspace', uri: pathToFileURL(callerWorkspace).href }],
+    }));
+    await client.connect(transport);
+    try {
+      const base = { contractVersion: 1, ddlFiles: ['nested/ddl/schema.sql'], sqlPath: 'nested/input.sql' };
+      const calls = await Promise.all([
+        client.callTool({ name: 'analyze_investigation_sql', arguments: base }),
+        client.callTool({ name: 'discover_investigation_targets', arguments: base }),
+        client.callTool({ name: 'prepare_sql_investigation', arguments: base }),
+        client.callTool({ name: 'create_investigation_plan', arguments: { ...base, targetColumn: 'total_amount' } }),
+      ]);
+      expect(calls.every((result) => result.isError !== true)).toBe(true);
+
+      const fromPath = await client.callTool({ name: 'analyze_investigation_sql', arguments: base });
+      const fromInline = await client.callTool({
+        name: 'analyze_investigation_sql',
+        arguments: {
+          contractVersion: 1,
+          ddl: 'CREATE TABLE public.orders (order_id bigint PRIMARY KEY, customer_id bigint NOT NULL, amount numeric NOT NULL);',
+          sql: 'SELECT customer_id, sum(amount) AS total_amount FROM public.orders GROUP BY customer_id;',
+        },
+      });
+      expect(fromPath.structuredContent).toEqual(fromInline.structuredContent);
+
+      for (const schemaInput of [
+        { ddlDirectories: ['nested/ddl'] },
+        { ddlFiles: ['nested/ddl/schema.sql'] },
+        { schemaFactsPath: 'nested/facts.json' },
+      ]) {
+        const result = await client.callTool({
+          name: 'analyze_investigation_sql',
+          arguments: { contractVersion: 1, sqlPath: 'nested/input.sql', ...schemaInput },
+        });
+        expect(result.isError).not.toBe(true);
+      }
+
+      const missing = await client.callTool({
+        name: 'analyze_investigation_sql',
+        arguments: { contractVersion: 1, ddl: 'CREATE TABLE public.orders (id bigint);', sqlPath: 'nested/missing.sql' },
+      });
+      expect(missing.isError).toBe(true);
+      expect(JSON.parse((missing.content as Array<{ text: string }>)[0].text)).toMatchObject({
+        code: 'PATH_NOT_FOUND',
+        kind: 'invalid_input',
+        message: expect.stringContaining('client-provided workspace root'),
+      });
+
+      const traversal = await client.callTool({
+        name: 'analyze_investigation_sql',
+        arguments: { contractVersion: 1, ddl: 'CREATE TABLE public.orders (id bigint);', sqlPath: '../outside.sql' },
+      });
+      expect(traversal.isError).toBe(true);
+      expect(JSON.parse((traversal.content as Array<{ text: string }>)[0].text)).toMatchObject({ code: 'PATH_OUTSIDE_WORKSPACE', kind: 'invalid_input' });
+    } finally {
+      await client.close();
+    }
+  });
+
   it.each(['value_too_high', 'value_too_low', 'value_missing', 'missing_rows', 'duplicate_rows'])('accepts the public symptom %s', (symptom) => {
     const input = normalizeCreateInvestigationPlanInput(temporaryWorkspace(), { sql: 'select status from orders', symptom, targetColumn: 'status' });
     expect(input.symptom).toBe(symptom);
