@@ -2,10 +2,11 @@
 
 ## Codex Task Orchestration
 
-For a delegated or multi-step task, read `docs/codex-orchestration.md` and use
-the globally installed `$minimal-orchestration` skill. Keep lineage-slice
-assessment in the control task and do not push, open a pull request, merge, or
-deploy unless explicitly requested.
+For a delegated or multi-step task, read `docs/codex-orchestration.md`.
+The former `minimal-orchestration` requirement is retired; its installation
+or availability must not block work. Keep lineage-slice assessment in the
+control task and do not push, open a pull request, merge, or deploy unless
+explicitly requested.
 
 - Keep impact assessment and final reporting in the control task.
 - Give implementation work an isolated task and start unrelated work from `origin/main`.
