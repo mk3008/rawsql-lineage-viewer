@@ -2,8 +2,6 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 const repository = process.cwd();
 const root = mkdtempSync(resolve(tmpdir(), 'rawsql-lineage-package-smoke-'));
@@ -18,9 +16,7 @@ try {
     'LICENSE',
     'README.md',
     'bin/rawsql-lineage.mjs',
-    'bin/rawsql-lineage-mcp.mjs',
     'dist/package/cli.js',
-    'dist/package/mcp.js',
     'dist/package/public.js',
     'dist/package/types/domain/lineage.d.ts',
     'dist/package/types/lineage/columnDisplay.d.ts',
@@ -36,7 +32,6 @@ try {
     'dist/package/types/lineage/source-references/mergeColumnRefs.d.ts',
     'dist/package/types/lineage/source-references/resolveColumnReferences.d.ts',
     'dist/package/types/lineage/source-references/sourceReferences.types.d.ts',
-    'dist/package/types/mcp/investigationServer.d.ts',
     'dist/package/types/public.d.ts',
     'package.json',
   ];
@@ -108,29 +103,7 @@ try {
   writeFileSync(resolve(installRoot, 'tsconfig.json'), JSON.stringify({ compilerOptions: { module: 'NodeNext', moduleResolution: 'NodeNext', noEmit: true, skipLibCheck: true }, files: ['consumer.ts'] }));
   execFileSync(process.execPath, [resolve(repository, 'node_modules/typescript/bin/tsc'), '--project', resolve(installRoot, 'tsconfig.json')], { cwd: installRoot, stdio: 'inherit' });
 
-  const mcp = resolve(installRoot, 'node_modules/sql-lineage-viewer/bin/rawsql-lineage-mcp.mjs');
-  const transport = new StdioClientTransport({ command: process.execPath, args: [mcp, '--workspace', installRoot], cwd: installRoot, stderr: 'pipe' });
-  const client = new Client({ name: 'package-smoke', version: '1.0.0' });
-  await client.connect(transport);
-  try {
-    const tools = await client.listTools();
-    const toolNames = tools.tools.map((tool) => tool.name).sort();
-    const expectedTools = ['analyze_investigation_sql', 'create_investigation_plan', 'discover_investigation_targets', 'prepare_sql_investigation'].sort();
-    if (JSON.stringify(toolNames) !== JSON.stringify(expectedTools)) throw new Error(`Compiled MCP tool mismatch: ${toolNames.join(', ')}`);
-    const request = { sql: 'select 1 as value' };
-    const analysis = await client.callTool({ name: 'analyze_investigation_sql', arguments: request });
-    const mcpDiscovery = await client.callTool({ name: 'discover_investigation_targets', arguments: request });
-    if (analysis.isError || analysis.structuredContent?.kind !== 'investigation-analysis-summary') throw new Error('Compiled MCP analysis call failed.');
-    if (mcpDiscovery.isError || mcpDiscovery.structuredContent?.kind !== 'investigation-target-discovery') throw new Error('Compiled MCP discovery call failed.');
-    if (JSON.stringify((await client.callTool({ name: 'analyze_investigation_sql', arguments: request })).structuredContent) !== JSON.stringify(analysis.structuredContent)) throw new Error('Compiled MCP analysis output is not deterministic.');
-    if (JSON.stringify((await client.callTool({ name: 'discover_investigation_targets', arguments: request })).structuredContent) !== JSON.stringify(mcpDiscovery.structuredContent)) throw new Error('Compiled MCP discovery output is not deterministic.');
-    const typedMcpFailure = await client.callTool({ name: 'create_investigation_plan', arguments: { ...request, targetColumn: 'value', parameterDefinitions: [{ name: 'status', origin: 'original_query_parameter' }, { name: 'status', origin: 'investigation_key' }] } });
-    const typedMcpCode = typedMcpFailure.isError ? JSON.parse(typedMcpFailure.content[0].text).code : undefined;
-    if (typedMcpCode !== typedCliFailure.code) throw new Error('Compiled CLI and MCP typed error codes differ.');
-  } finally {
-    await client.close();
-  }
-  process.stdout.write(`${JSON.stringify({ cli: 'passed', cliDiscovery: 'passed', generatedChunks, mcp: 'protocol-passed', packedFiles: paths.length, publicImport: 'passed', typedErrorParity: 'passed' })}\n`);
+  process.stdout.write(`${JSON.stringify({ cli: 'passed', cliDiscovery: 'passed', generatedChunks, packedFiles: paths.length, publicImport: 'passed', typedCliError: 'passed' })}\n`);
 } finally {
   rmSync(root, { force: true, recursive: true });
 }

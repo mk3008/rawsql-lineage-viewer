@@ -3,7 +3,7 @@
 Status: **Normative**
 
 This document defines the product responsibility boundary for rawsql-lineage.
-It applies across the Core, Viewer, CLI, and MCP surfaces. It does not define a
+It applies across the Core, Viewer, and CLI surfaces. It does not define a
 versioned artifact schema, safety-label vocabulary, parameter-binding protocol,
 or probe-interpretation policy; separate versioned contracts may refine
 behavior without expanding this boundary implicitly.
@@ -72,11 +72,10 @@ query.
 | Core | Deterministic static compilation and the semantic content of emitted artifacts | Database access, runtime observation, root-cause decisions, or remediation |
 | Viewer | Rendering, tracing, auditing, and explaining supplied or locally compiled artifacts | Independently changing artifact meaning, deciding root cause, or claiming investigation completion |
 | CLI | Explicit local input/output transport for Core operations | Additional diagnostic semantics, database execution, or hidden runtime binding |
-| MCP | Structured tool transport for Core operations and results | LLM inference, autonomous investigation, database execution, or semantic divergence from Core |
 
 The Viewer MAY compile inputs locally through Core, but its product role remains
-an audit and explanation surface. CLI and MCP adapters MUST preserve Core
-semantics. A host using MCP may reason about returned artifacts, but that host
+an audit and explanation surface. CLI adapters MUST preserve Core
+semantics. An external host may reason about returned artifacts, but that host's
 reasoning is external to this product boundary.
 
 ## Explicit exclusions

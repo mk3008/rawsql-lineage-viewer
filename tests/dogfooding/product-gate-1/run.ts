@@ -1,15 +1,13 @@
 /*
  * Gate 1 intentionally owns fixture data and execution evidence only.  It
- * does not import the Planner: the CLI and stdio server are exercised as the
- * product boundaries a user/host would use.
+ * does not import the Planner: the CLI is exercised as the
+ * product boundary a user would use.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 type Scalar = boolean | number | string | null;
 type ParameterDefinition = { name: string; origin: string; required?: boolean; typeHint?: string };
@@ -62,42 +60,9 @@ async function runCase(id: string): Promise<void> {
     ], { cwd: publicDir, encoding: 'utf8' })) as Plan;
     writeJson(resolve(output, 'cli-plan.json'), cliPlan);
 
-    const mcp = await captureMcp(publicDir, request, bindings);
-    writeJson(resolve(output, 'mcp-transcript.json'), mcp);
-    const mcpPlan = mcp.response.structuredContent as Plan;
-    if (JSON.stringify(cliPlan) !== JSON.stringify(mcpPlan)) {
-      throw new Error(`${id}: CLI and MCP plans differ; see ${resolve(output, 'cli-plan.json')} and mcp-transcript.json`);
-    }
-    writeJson(resolve(output, 'plan-comparison.json'), { exactJsonEqual: true, compared: ['cli-plan.json', 'mcp-transcript.json#response.structuredContent'] });
     writeJson(resolve(output, 'probe-execution.json'), executeListedProbes(cliPlan, id, bindings));
   } finally {
     rmSync(parameterInputRoot, { force: true, recursive: true });
-  }
-}
-
-async function captureMcp(workspace: string, request: Request, bindings: Record<string, Scalar>): Promise<{ listTools: unknown; request: unknown; response: { content: unknown; isError?: boolean; structuredContent: unknown } }> {
-  const transport = new StdioClientTransport({
-    command: process.execPath,
-    args: ['--import', 'tsx', resolve(process.cwd(), 'src/mcp/investigationServer.ts'), '--workspace', workspace],
-    cwd: process.cwd(), stderr: 'pipe',
-  });
-  const client = new Client({ name: 'product-dogfooding-gate-1', version: '1.0.0' });
-  await client.connect(transport);
-  try {
-    const listed = await client.listTools();
-    const toolRequest = {
-      name: 'create_investigation_plan',
-      arguments: { sqlPath: 'query.sql', ddlDirectories: ['ddl'], targetNode: 'main_output', ...request, parameterBindings: bindings },
-    };
-    const response = await client.callTool(toolRequest);
-    if (response.isError || !response.structuredContent) throw new Error(`MCP returned an error: ${JSON.stringify(response.content)}`);
-    return {
-      listTools: listed,
-      request: toBindingSafeRequest(toolRequest, Object.keys(bindings)),
-      response: { content: response.content, isError: response.isError, structuredContent: response.structuredContent },
-    };
-  } finally {
-    await client.close();
   }
 }
 
@@ -166,15 +131,6 @@ function runPostgres(sql: string): string {
 
 function readJson<T>(file: string): T { return JSON.parse(readFileSync(file, 'utf8')) as T; }
 function writeJson(file: string, value: unknown): void { writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, 'utf8'); }
-
-export function toBindingSafeRequest(
-  request: { arguments: Record<string, unknown>; name: string },
-  providedBindingNames: string[],
-): unknown {
-  const safeArguments = { ...request.arguments };
-  delete safeArguments.parameterBindings;
-  return { arguments: { ...safeArguments, providedBindingNames: [...providedBindingNames].sort() }, name: request.name };
-}
 
 export function assertStaticInterpretationContracts(plan: Plan, scenario: string): void {
   const concernIds = new Set(plan.candidateConcerns.map((concern) => concern.id));

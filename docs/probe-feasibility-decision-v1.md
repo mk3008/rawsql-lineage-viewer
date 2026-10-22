@@ -1,5 +1,8 @@
 # Probe feasibility decision V1
 
+> MCP validation references below are historical following MCP retirement.
+> The Core/CLI probe feasibility decision remains unchanged.
+
 Status: utility ceiling accepted for Phase C. No new probe SQL is generated.
 
 This decision evaluates the additive

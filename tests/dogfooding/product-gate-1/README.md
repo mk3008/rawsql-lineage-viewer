@@ -1,5 +1,8 @@
 # Product Dogfooding Gate 1 fixture harness
 
+The current harness exercises CLI plans and external probe execution. MCP
+transport comparison was retired; old comparison evidence is historical.
+
 This directory is a reproducible product-boundary harness, not a Planner test
 suite.  Each case has only static, user-supplied inputs under `public/`.
 Database seed data, controls, and expected observations are isolated under
@@ -19,8 +22,7 @@ when a required binding is absent; do not commit, attach, or paste binding
 values into review evidence.
 
 The harness starts an ephemeral PostgreSQL 16 container, captures the actual
-CLI and stdio-MCP exchanges, compares their complete plan JSON exactly, and
-executes only `recommendedProbes` listed by that plan.  It rejects blocked,
+CLI exchanges and executes only `recommendedProbes` listed by that plan.  It rejects blocked,
 unknown, unexpectedly classified, or unresolved-parameter probes.  A probe's
 static classification does not authorize execution.  This external harness
 applies its own fixture-only policy, including an explicit read-only
@@ -36,7 +38,7 @@ PostgreSQL `PREPARE`/`EXECUTE` wrapper.  It never writes bindings, invocation
 arguments, or parameter input files to raw evidence.  Generated and prepared
 probe SQL contains placeholders only.  Seed/control/oracle files are never
 sent as planning context.  Private binding files are supplied only through the
-explicit CLI/MCP binding inputs and are never copied into plans or evidence.
+explicit CLI binding inputs and are never copied into plans or evidence.
 Each emitted probe also carries a static interpretation contract.  The harness
 checks its shape and concern references before external execution, but it does
 not persist a runtime interpretation, causal conclusion, or remediation claim.

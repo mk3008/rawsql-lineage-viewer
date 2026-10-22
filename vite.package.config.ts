@@ -7,14 +7,13 @@ export default defineConfig({
     lib: {
       entry: {
         cli: 'src/cli/diagnose.ts',
-        mcp: 'src/mcp/investigationServer.ts',
         public: 'src/public.ts',
       },
       formats: ['es'],
     },
     outDir: 'dist/package',
     rollupOptions: {
-      external: [/^node:/, /^@modelcontextprotocol\//, /^rawsql-ts(?:\/|$)/, /^zod(?:\/|$)/],
+      external: [/^node:/, /^rawsql-ts(?:\/|$)/],
       output: { entryFileNames: '[name].js' },
     },
   },

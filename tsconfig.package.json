@@ -9,7 +9,6 @@
     "rootDir": "src"
   },
   "include": [
-    "src/public.ts",
-    "src/mcp/investigationServer.ts"
+    "src/public.ts"
   ]
 }
