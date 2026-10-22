@@ -1,18 +1,17 @@
 # Codex Task Orchestration
 
-## Minimal Orchestration Authority
+## Task Tracking Authority
 
-For delegation, recovery, stale handling, or durable progress, use the globally
-installed `$minimal-orchestration` skill. It is authoritative for Root, Worker,
-and Runtime Adjudicator roles, state transitions, task packets, recovery, and
-generated progress views. Store its run ledger at
-`tmp/orchestration/<run-id>/ledger.json`, render it after every state
-transition, and keep worker reports as evidence rather than a second task-state
-authority. Do not hand-edit generated progress files.
+The former requirement to use the globally installed `minimal-orchestration`
+skill is retired. Do not require its installation, role protocol, run ledger,
+state transitions, Runtime Adjudicator packets, or generated progress views
+to start or continue work. Its absence is not a blocker.
 
-The remaining sections provide lineage-specific intake, worker-contract, and
-verification guidance. If they conflict with `$minimal-orchestration`, the skill
-takes precedence.
+Use the repository-specific intake, durable manifest, worker report, and
+verification requirements below. Keep existing run ledgers and generated
+progress files as historical task evidence; do not rewrite them or require
+new skill-specific files. This retirement does not change security,
+authorization, branch protection, review, testing, or deployment requirements.
 
 Use this guide when a request needs impact analysis and an isolated Codex implementation task. It is a delivery workflow, not a replacement for repository design guidance.
 
