@@ -1,5 +1,9 @@
 # Static Investigation Compiler Program Report
 
+> Historical record: MCP support was retired after this work. MCP commands,
+> entrypoints, test paths, and results below describe that earlier version;
+> they are not current usage instructions. Core, Viewer, and CLI remain supported.
+
 ## Accepted result
 
 - Accepted local program commit: `f74c8c7d70fea1576c63b5ea75015ce94f8d6b39`
@@ -126,7 +130,7 @@ Repository evidence:
 - [Package smoke](../../scripts/package-smoke.mjs)
 - [Package manifest](../../package.json)
 - [CLI entrypoint](../../bin/rawsql-lineage.mjs)
-- [MCP entrypoint](../../bin/rawsql-lineage-mcp.mjs)
+- [Historical MCP entrypoint](https://github.com/mk3008/rawsql-lineage-viewer/blob/98259a0089d4590f1806473b51838fa46d6d16e6/bin/rawsql-lineage-mcp.mjs)
 - [Public exports](../../src/public.ts)
 
 ## Historical Viewer validation

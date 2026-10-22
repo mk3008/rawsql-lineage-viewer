@@ -1,5 +1,9 @@
 # Product Dogfooding Gate 1 Report
 
+> Historical record: MCP support was retired after this work. MCP commands,
+> entrypoints, test paths, and results below describe that earlier version;
+> they are not current usage instructions. Core, Viewer, and CLI remain supported.
+
 Overall result: **meets**
 Gate status: **CLOSED**
 

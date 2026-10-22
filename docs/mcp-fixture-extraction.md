@@ -1,5 +1,9 @@
 # Experimental fixture-extraction MCP tool
 
+> Historical record: MCP support was retired after this work. MCP commands,
+> entrypoints, test paths, and results below describe that earlier version;
+> they are not current usage instructions. Core, Viewer, and CLI remain supported.
+
 `create_fixture_extraction_plan` produces an experimental, static
 `fixture-extraction-plan` from submitted SQL, explicit schema evidence, and an
 explicit value-free reproduction key. The plan uses `schemaVersion: 0`; its

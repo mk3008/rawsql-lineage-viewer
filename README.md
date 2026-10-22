@@ -7,14 +7,14 @@ Paste SQL and see the lineage graph in the browser.
 This is a static TypeScript web app intended for GitHub Pages. SQL is parsed locally with `rawsql-ts`; no backend, database, or upload step is required for the MVP.
 
 The normative [Product Boundary Contract](docs/product-boundary.md) defines how
-Core, Viewer, CLI, and MCP support static investigation and where responsibility
+Core, Viewer, and CLI support static investigation and where responsibility
 passes to an external investigator.
-The additive Core and MCP selection surface is defined in the
+The additive Core selection surface is defined in the
 [Target Discovery Contract](docs/target-discovery-contract.md).
 
-## Local package, CLI, and MCP distribution
+## Local package and CLI distribution
 
-This repository is private and is not published to npm. A clean checkout can
+The package is marked `private: true` and is not published to npm. A clean checkout can
 still produce and verify the consumer artifact locally:
 
 ```sh
@@ -32,35 +32,24 @@ The supported installed entrypoints are:
 rawsql-lineage discover --sql query.sql --contract-version 1
 rawsql-lineage investigate --sql query.sql --target-id target:001 --contract-version 1
 rawsql-lineage investigate --sql query.sql --target-node main_output --target-column total --contract-version 1
-rawsql-lineage-mcp --workspace /absolute/path/to/workspace
 ```
-
-For `sqlPath`, `ddlFiles`, `ddlDirectories`, and `schemaFactsPath`, the MCP
-server prefers the single local workspace root supplied by an MCP client through
-the standard Roots capability. Clients without that capability keep using the
-configured `--workspace` root. Relative paths never accept `..` or absolute
-paths; a `PATH_NOT_FOUND` response identifies whether the client-provided or
-configured workspace root was used, without exposing its filesystem path.
 
 JavaScript and TypeScript consumers can import the versioned static contracts
 and planner from `sql-lineage-viewer`, including
 `discoverInvestigationTargets`, `resolveInvestigationTarget`, and
 `createInvestigationPlanForTarget`. The direct `targetNode` / `targetColumn`
 planner input remains a caller-directed compatibility path; target discovery is
-the supported path when a caller needs Core to determine eligibility. MCP server construction is available
-from `sql-lineage-viewer/mcp`. Consumers do not need repository `src` files,
+the supported path when a caller needs Core to determine eligibility. Consumers do not need repository `src` files,
 `tsx`, parser instances, runtime rows, or parameter binding values. CLI errors
-are JSON objects with `kind`, `code`, `message`, and `version`; MCP tool errors
-use the same `invalid_input` kind and stable codes. Contract version 1 is the
+are JSON objects with `kind`, `code`, `message`, and `version`. Contract version 1 is the
 only accepted version.
 
-The CLI and MCP expose the same composable static flow: analyze the submitted
+The CLI exposes the same composable static flow: analyze the submitted
 artifact, discover selectable target identities, then create a plan with the
-selected `targetId`. MCP also exposes `prepare_sql_investigation` as a
-high-level convenience call. Discovery and planning are deterministic for the
+selected `targetId`. Discovery and planning are deterministic for the
 same SQL, DDL/schema facts, and parameter definitions.
 
-All three surfaces are DB-free: they parse only submitted SQL and explicitly
+All supported surfaces are DB-free: they parse only submitted SQL and explicitly
 supplied DDL/schema facts, do not connect to or query a database, and do not
 execute submitted SQL. They return static investigation artifacts and
 selection/prerequisite limits, not diagnoses, corrected SQL, query results, or
@@ -68,21 +57,18 @@ proof of root cause. The current utility ceiling is deliberate: prerequisite
 facts may state that an observation is supportable or blocked, but the package
 does not generate or run aggregate/grain observation probes. Database
 execution, runtime data retrieval, credential handling, binding-value
-serialization, publishing, and remote MCP hosting are unsupported.
+serialization and publishing are unsupported.
 
-### Experimental fixture-extraction MCP tool
+### Distribution boundaries
 
-`create_fixture_extraction_plan` is a separate, experimental MCP tool for
-generating static fixture-capture `SELECT` plans. It accepts exactly one SQL
-source plus inline or workspace-confined DDL/schema facts and explicit,
-value-free reproduction-key metadata. It returns bounded capture `SELECT`s only
-when its narrow static checks can prove a boundary; otherwise it returns an
-explicit `partial` or `blocked` `fixture-extraction-plan` (schema version 0).
+MCP support has been retired. The package no longer provides an MCP server,
+`rawsql-lineage-mcp` command, or `sql-lineage-viewer/mcp` export. Historical
+MCP reports describe earlier versions and are not current usage instructions.
 
-It does not accept parameter values, query a database, inspect or transfer rows,
-load fixtures, or support arbitrary SQL. A ready plan is not a production
-migration guarantee. See [the MCP tool contract](docs/mcp-fixture-extraction.md)
-for a request example and limitations.
+`npm run build:viewer` produces only the browser app in `dist/viewer`.
+GitHub Pages uploads only that directory. `npm run build:package` separately
+produces the local Core/CLI artifact in `dist/package`; `npm run build` builds
+both. The Node package is never part of the Pages upload.
 
 ## MVP Scope
 
@@ -182,5 +168,5 @@ The adapter still performs the final rawsql-ts-result-to-`LineageModel` conversi
 The Vite `base` path can be changed for GitHub Pages by setting `VITE_BASE_PATH`.
 
 ```bash
-VITE_BASE_PATH=/repository-name/ npm run build
+VITE_BASE_PATH=/repository-name/ npm run build:viewer
 ```

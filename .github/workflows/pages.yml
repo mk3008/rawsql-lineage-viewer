@@ -32,14 +32,17 @@ jobs:
         run: npm ci
 
       - name: Build
-        run: npm run build
+        run: npm run build:viewer
         env:
           VITE_BASE_PATH: /rawsql-lineage-viewer/
+
+      - name: Verify browser-only artifact
+        run: npm run smoke:viewer
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v4
         with:
-          path: dist
+          path: dist/viewer
 
   deploy:
     needs: build
